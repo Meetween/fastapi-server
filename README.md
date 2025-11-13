@@ -3,20 +3,13 @@
 A FastAPI-based server that's compatible with both Jigasi Whisper and Meetween transcription protocols.
 
 ## Installation
+1. **Install uv**
+https://docs.astral.sh/uv/getting-started/installation/
 
-1. **Install Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
 
 2. **Run the Server**:
    ```bash
-   python main.py
-   ```
-
-   Or with uvicorn directly:
-   ```bash
-   uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+   uv run main.py
    ```
 
 ## API Endpoints
