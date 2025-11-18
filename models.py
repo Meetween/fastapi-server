@@ -69,6 +69,7 @@ class MeetweenAudioRequest(BaseModel):
     type: Literal["audio"] = "audio"
     participant_id: str
     language: str = "en"
+    room_name: Optional[str]
     audio: str = Field(..., description="Base64 encoded audio data")
 
     @field_validator('audio')

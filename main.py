@@ -151,12 +151,10 @@ async def whisper_websocket(websocket: WebSocket, connection_id: str):
 async def meetween_websocket(websocket: WebSocket, connection_id: str):
     """
     Meetween WebSocket endpoint
-    Expects JSON messages with base64-encoded audio
-
-    Format for streaming audio:
+    Messageformat:
     {
       "type": "audio",
-      "participant_id": "abc123",
+      "participant_id": "participant123",
       "language": "en",
       "audio": "<base64-encoded-audio>"
     }
