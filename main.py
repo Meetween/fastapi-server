@@ -5,15 +5,18 @@ Supports WebSocket streaming for real-time transcription
 """
 import json
 import logging
+import uvicorn
 import uuid
 import os
+
 from typing import Dict, Optional, List
 from pathlib import Path
 from datetime import datetime
+
 from config import settings
 from core import EngineManager
+from api.routes import health
 
-import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
@@ -85,30 +88,6 @@ async def shutdown_event():
     caption_handlers.clear()
     
     logger.info("Server shutdown complete")
-
-
-# ===== REST API ENDPOINTS =====
-
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {
-        "service": "Meetween FastAPI Server",
-        "version": "1.0.0",
-        "status": "running",
-        "speechlmm_loaded": EngineManager.get_lmm() is not None,
-        "vad_loaded": EngineManager.get_vad() is not None
-    }
-
-
-@app.get("/health")
-async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy",
-        "speechlmm": "loaded" if EngineManager.get_lmm() else "not loaded",
-        "vad": "loaded" if EngineManager.get_vad() else "not loaded"
-    }
 
 
 @app.post("/api/transcribe", response_model=MeetweenTranscriptionResponse)
@@ -682,6 +661,7 @@ async def stop_recording(
             "recording_path": str(meeting_path)
         })
 
+app.include_router(health.router)
 
 if __name__ == "__main__":
     uvicorn.run(
