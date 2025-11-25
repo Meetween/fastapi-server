@@ -10,6 +10,7 @@ import os
 from typing import Dict, Optional, List
 from pathlib import Path
 from datetime import datetime
+from config import settings
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
@@ -40,8 +41,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
-    title="Meetween FastAPI Server",
-    version="1.0.0",
+    title=settings.app_name,
+    version=settings.app_version,
     description="SpeechLMM-powered transcription, captioning, and summarization API"
 )
 
@@ -54,7 +55,7 @@ active_connections: Dict[str, WebSocket] = {}
 caption_handlers: Dict[str, CaptionHandler] = {}
 
 # Recording storage configuration
-RECORDINGS_BASE_PATH = Path("/mnt/recordings")
+RECORDINGS_BASE_PATH = settings.recordings_base_path
 RECORDINGS_BASE_PATH.mkdir(parents=True, exist_ok=True)
 
 # Active meeting recordings
@@ -69,7 +70,8 @@ async def startup_event():
     logger.info("Server starting up...")
     
     # Load SpeechLMM model
-    model_path = os.getenv("SPEECHLMM_MODEL_PATH")
+    # model_path = os.getenv("SPEECHLMM_MODEL_PATH")
+    model_path = settings.speechlmm_model_path
     if not model_path:
         logger.error("SPEECHLMM_MODEL_PATH environment variable not set")
         raise RuntimeError("SPEECHLMM_MODEL_PATH is required")
@@ -89,7 +91,7 @@ async def startup_event():
         
         # Initialize VAD model
         try:
-            vad_model = SileroVAD(sample_rate=16000, threshold=0.5)
+            vad_model = SileroVAD(sample_rate=settings.vad_sample_rate, threshold=settings.vad_threshold)
             logger.info("VAD model loaded successfully")
         except Exception as e:
             logger.warning(f"Failed to load VAD model: {e}")
@@ -719,8 +721,8 @@ async def stop_recording(
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
-        host="0.0.0.0",
-        port=8000,
-        log_level="info",
+        host=settings.host,
+        port=settings.port,
+        log_level=settings.log_level.lower(),
         reload=False
     )
