@@ -11,6 +11,7 @@ from typing import Dict, Optional, List
 from pathlib import Path
 from datetime import datetime
 from config import settings
+from core import EngineManager
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, UploadFile, File, Form
@@ -33,6 +34,7 @@ from butler import (
     SileroVAD
 )
 
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -46,60 +48,23 @@ app = FastAPI(
     description="SpeechLMM-powered transcription, captioning, and summarization API"
 )
 
-# Global SpeechLMM engine and VAD model
-speechlmm_engine: Optional[SpeechLMMEngine] = None
-vad_model: Optional[SileroVAD] = None
-
 # Active WebSocket connections and caption handlers
 active_connections: Dict[str, WebSocket] = {}
 caption_handlers: Dict[str, CaptionHandler] = {}
 
-# Recording storage configuration
-RECORDINGS_BASE_PATH = settings.recordings_base_path
-RECORDINGS_BASE_PATH.mkdir(parents=True, exist_ok=True)
 
 # Active meeting recordings
 active_meetings: Dict[str, dict] = {}  # meeting_id -> metadata
 
 
 @app.on_event("startup")
-async def startup_event():
+def startup_event():
     """Initialize server and load SpeechLMM model"""
-    global speechlmm_engine, vad_model
     
     logger.info("Server starting up...")
     
-    # Load SpeechLMM model
-    # model_path = os.getenv("SPEECHLMM_MODEL_PATH")
-    model_path = settings.speechlmm_model_path
-    if not model_path:
-        logger.error("SPEECHLMM_MODEL_PATH environment variable not set")
-        raise RuntimeError("SPEECHLMM_MODEL_PATH is required")
-    
-    if not os.path.exists(model_path):
-        logger.error(f"Model path does not exist: {model_path}")
-        raise RuntimeError(f"Model path not found: {model_path}")
-    
-    try:
-        logger.info(f"Loading SpeechLMM model from {model_path}")
-        speechlmm_engine = SpeechLMMEngine(
-            model_path=model_path,
-            device=None,  # Auto-detect device (CUDA if available)
-            verbose=True
-        )
-        logger.info("SpeechLMM model loaded successfully")
-        
-        # Initialize VAD model
-        try:
-            vad_model = SileroVAD(sample_rate=settings.vad_sample_rate, threshold=settings.vad_threshold)
-            logger.info("VAD model loaded successfully")
-        except Exception as e:
-            logger.warning(f"Failed to load VAD model: {e}")
-            vad_model = None
-            
-    except Exception as e:
-        logger.error(f"Failed to load SpeechLMM model: {e}", exc_info=True)
-        raise RuntimeError(f"Failed to initialize SpeechLMM: {e}")
+    EngineManager.initialize()
+    settings.recordings_base_path.mkdir(parents=True, exist_ok=True) 
     
     logger.info("Server started")
 
@@ -131,8 +96,8 @@ async def root():
         "service": "Meetween FastAPI Server",
         "version": "1.0.0",
         "status": "running",
-        "speechlmm_loaded": speechlmm_engine is not None,
-        "vad_loaded": vad_model is not None
+        "speechlmm_loaded": EngineManager.get_lmm() is not None,
+        "vad_loaded": EngineManager.get_vad() is not None
     }
 
 
@@ -141,8 +106,8 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "speechlmm": "loaded" if speechlmm_engine else "not loaded",
-        "vad": "loaded" if vad_model else "not loaded"
+        "speechlmm": "loaded" if EngineManager.get_lmm() else "not loaded",
+        "vad": "loaded" if EngineManager.get_vad() else "not loaded"
     }
 
 
@@ -159,7 +124,7 @@ async def api_transcribe(
     - **language**: BCP-47 language code (default: 'en-US')
     - **participant_id**: Optional participant identifier
     """
-    if not speechlmm_engine:
+    if not EngineManager.get_lmm():
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded. Check server configuration."
@@ -176,9 +141,9 @@ async def api_transcribe(
         # Perform transcription
         result = transcribe_audio(
             audio_data=audio_data,
-            engine=speechlmm_engine,
+            engine=EngineManager.get_lmm(),
             language=language,
-            vad_model=vad_model
+            vad_model=EngineManager.get_vad()
         )
         
         # Build response
@@ -215,7 +180,7 @@ async def api_caption(
     Returns interim captions that can be updated with subsequent audio chunks.
     Use /api/caption/reset to reset the caption session.
     """
-    if not speechlmm_engine:
+    if not EngineManager.get_lmm():
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded"
@@ -232,8 +197,8 @@ async def api_caption(
         # Get or create caption handler
         if caption_key not in caption_handlers:
             caption_handlers[caption_key] = CaptionHandler(
-                engine=speechlmm_engine,
-                vad_model=vad_model
+                engine=EngineManager.get_lmm(),
+                vad_model=EngineManager.get_vad()
             )
         
         handler = caption_handlers[caption_key]
@@ -295,7 +260,7 @@ async def api_summarize(
     - **language**: BCP-47 language code (default: 'en-US')
     - **participant_id**: Optional participant identifier
     """
-    if not speechlmm_engine:
+    if not EngineManager.get_lmm():
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded"
@@ -335,7 +300,7 @@ async def api_summarize(
             summary = summarize_audio(
                 audio_bytes=audio_pcm,
                 sample_rate=16000,
-                engine=speechlmm_engine,
+                engine=EngineManager.get_lmm(),
                 language=language
             )
         finally:
@@ -376,10 +341,10 @@ async def websocket_transcription(websocket: WebSocket):
     
     try:
         # Initialize caption handler for this session
-        if speechlmm_engine:
+        if EngineManager.get_lmm():
             caption_handler = CaptionHandler(
-                engine=speechlmm_engine,
-                vad_model=vad_model
+                engine=EngineManager.get_lmm(),
+                vad_model=EngineManager.get_vad()
             )
         
         while True:
@@ -390,7 +355,7 @@ async def websocket_transcription(websocket: WebSocket):
                 # Binary audio data
                 audio_data = message["bytes"]
                 
-                if not speechlmm_engine or not caption_handler:
+                if not EngineManager.get_lmm() or not caption_handler:
                     error_response = MeetweenErrorResponse(
                         message="SpeechLMM not available",
                         code="SERVICE_UNAVAILABLE"
@@ -436,8 +401,8 @@ async def websocket_transcription(websocket: WebSocket):
                         # Reset caption session
                         if caption_handler:
                             caption_handler = CaptionHandler(
-                                engine=speechlmm_engine,
-                                vad_model=vad_model
+                                engine=EngineManager.get_lmm(),
+                                vad_model=EngineManager.get_vad()
                             )
                         await websocket.send_json({
                             "type": "control",
@@ -473,7 +438,7 @@ async def start_recording(
     Initialize recording for a meeting.
     Creates storage directory and metadata file.
     """
-    meeting_path = RECORDINGS_BASE_PATH / meeting_id
+    meeting_path = settings.recordings_base_path / meeting_id
     meeting_path.mkdir(parents=True, exist_ok=True)
     
     metadata = {
@@ -510,7 +475,7 @@ async def save_audio_chunk(
     Save an audio chunk for a meeting.
     Called continuously as meeting progresses.
     """
-    meeting_path = RECORDINGS_BASE_PATH / meeting_id
+    meeting_path = settings.recordings_base_path / meeting_id
     
     if not meeting_path.exists():
         # Auto-initialize if not started
@@ -560,10 +525,10 @@ async def catchup_on_meeting(
     Generate a summary of all recorded audio for a meeting.
     This is the "Catch Me Up" feature - summarizes everything that happened so far.
     """
-    if not speechlmm_engine:
+    if not EngineManager.get_lmm():
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
     
-    meeting_path = RECORDINGS_BASE_PATH / meeting_id
+    meeting_path = settings.recordings_base_path / meeting_id
     
     if not meeting_path.exists():
         raise HTTPException(
@@ -648,7 +613,7 @@ async def catchup_on_meeting(
         summary = summarize_audio(
             audio_bytes=audio_pcm,
             sample_rate=16000,
-            engine=speechlmm_engine,
+            engine=EngineManager.get_lmm(),
             language=language
         )
         
@@ -675,7 +640,7 @@ async def stop_recording(
     Stop recording for a meeting.
     Optionally delete the recording files.
     """
-    meeting_path = RECORDINGS_BASE_PATH / meeting_id
+    meeting_path = settings.recordings_base_path / meeting_id
     
     if not meeting_path.exists():
         raise HTTPException(
