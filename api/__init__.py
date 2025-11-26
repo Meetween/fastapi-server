@@ -1,3 +1,3 @@
-from .routes import health
+from .routes import health, caption, transcription
 
-__all__ = ['health']
+__all__ = ['health', 'caption', 'transcription']
