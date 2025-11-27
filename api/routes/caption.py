@@ -5,8 +5,10 @@ from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket,
 from typing import Optional
 from core import EngineManager, SessionManager
 from butler import CaptionHandler, caption_audio
+from utils import AudioRecorder
+from pydantic import ValidationError
 
-from models import MeetweenTranscriptionResponse, MeetweenErrorResponse
+from models import MeetweenTranscriptionRequest, MeetweenTranscriptionResponse, MeetweenErrorResponse
 
 
 router = APIRouter(prefix="/api", tags=["caption"])
@@ -51,9 +53,11 @@ async def api_caption(
                 
         # Process audio chunk
         result = caption_audio(
-            audio_data=audio_data,
-            handler=handler,
-            language=language
+            engine=EngineManager.get_lmm(),
+            audio_bytes=audio_data,
+            caption_handler=handler,
+            language=language,
+            vad=EngineManager.get_vad()
         )
         
         return MeetweenTranscriptionResponse(
@@ -100,14 +104,14 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
     Clients send audio chunks and receive transcription updates in real-time.
     Supports both interim and final results.
     """
-    session_id = str(uuid.uuid4())
     await websocket.accept()
     
     SessionManager.add_connection(room_name, websocket)
     caption_handler = None
     
-    logger.info(f"WebSocket connected: : {room_name}")
+    logger.info(f"WebSocket connected: {room_name}")
     
+    AudioRecorder.init_recording(meeting_id=room_name)
     try:
         # Initialize caption handler for this session
         if EngineManager.get_lmm():
@@ -116,80 +120,86 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                 engine=EngineManager.get_lmm(),
                 vad_model=EngineManager.get_vad()
             )
-        
         while True:
             # Receive message from client
-            message = await websocket.receive()
-            
-            if "bytes" in message:
-                # Binary audio data
-                audio_data = message["bytes"]
-                
-                if not EngineManager.get_lmm() or not caption_handler:
-                    error_response = MeetweenErrorResponse(
-                        message="SpeechLMM not available",
-                        code="SERVICE_UNAVAILABLE"
-                    )
-                    await websocket.send_json(error_response.model_dump())
-                    continue
-                
-                try:
-                    # Process audio through caption handler
-                    result = caption_audio(
-                        audio_data=audio_data,
-                        handler=caption_handler,
-                        language="en-US"
-                    )
+            message = await websocket.receive_text()
+
+            try:
+                data = json.loads(message)
+                msg_type = data.get("type")
+                print(msg_type)
+                if msg_type == "audio":
+                    # Binary audio data
+                    try:
+                        request = MeetweenTranscriptionRequest(**data)
+                        audio_data = request.get_audio_bytes()
+                        await AudioRecorder.save_chunk(meeting_id=room_name, audio_data=audio_data, chunk_duration=2.0)
                     
-                    # Send transcription result
-                    response = MeetweenTranscriptionResponse(
-                        transcript=result.text,
-                        is_final=False,
-                        confidence=result.confidence,
-                        transcript_id=str(uuid.uuid4()),
-                        language="en-US",
-                        is_interim=True,
-                        stability=0.6
-                    )
-                    
-                    await websocket.send_json(response.model_dump())
-                    
-                except Exception as e:
-                    logger.error(f"Error processing audio: {e}", exc_info=True)
-                    error_response = MeetweenErrorResponse(
-                        message=f"Processing error: {str(e)}",
-                        code="PROCESSING_ERROR"
-                    )
-                    await websocket.send_json(error_response.model_dump())
-            
-            elif "text" in message:
-                # Text message (could be control messages)
-                try:
-                    data = json.loads(message["text"])
-                    
-                    if data.get("type") == "reset":
-                        # Reset caption session
-                        if caption_handler:
-                            caption_handler = SessionManager.get_or_create_caption_handler(
-                                room_name=room_name,
-                                engine=EngineManager.get_lmm(),
-                                vad_model=EngineManager.get_vad()
+                        if not EngineManager.get_lmm() or not caption_handler:
+                            error_response = MeetweenErrorResponse(
+                                message="SpeechLMM not available",
+                                code="SERVICE_UNAVAILABLE"
                             )
-                        await websocket.send_json({
-                            "type": "control",
-                            "message": "Session reset"
-                        })
+                            logger.error("SpeechLMM not available")
+                            await websocket.send_json(error_response.model_dump())
+                            continue
+                        
+                        try:
+                            # Process audio through caption handler
+                            result = caption_audio(
+                                engine=EngineManager.get_lmm(),
+                                audio_bytes=audio_data,
+                                caption_handler=caption_handler,
+                                language=request.language,
+                                vad=EngineManager.get_vad()
+                            )
+                            
+                            # Send transcription result
+                            response = MeetweenTranscriptionResponse(
+                                transcript=result.text,
+                                is_final=False,
+                                confidence=result.confidence,
+                                transcript_id=str(uuid.uuid4()),
+                                participant_id=request.participant_id,
+                                language=request.language,
+                                is_interim=True,
+                                stability=0.6
+                            )
+                            
+                            await websocket.send_json(response.model_dump())
+                            
+                        except Exception as e:
+                            logger.error(f"Error processing audio: {e}", exc_info=True)
+                            error_response = MeetweenErrorResponse(
+                                message=f"Processing error: {str(e)}",
+                                code="PROCESSING_ERROR"
+                            )
+                            await websocket.send_json(error_response.model_dump())
                     
-                except json.JSONDecodeError:
-                    logger.warning(f"Invalid JSON message: {message['text']}")
-                except Exception as e:
-                    logger.error(f"Error handling text message: {e}")
-    
+                    except ValidationError as e:
+                        error = MeetweenErrorResponse(
+                            message=f"Invalid audio request: {e}",
+                            code="INVALID_REQUEST"
+                        )
+                        logger.warning(e)
+                        await websocket.send_text(error.model_dump_json())
+                
+            except json.JSONDecodeError as e:
+                logger.warning(f"Invalid JSON: {e}")
+                error = MeetweenErrorResponse(
+                    message=f"Invalid JSON: {e}",
+                    code="INVALID_JSON"
+                )
+                await websocket.send_text(error.model_dump_json())
     except WebSocketDisconnect:
         logger.info(f"WebSocket disconnected: {room_name}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         # Cleanup
-        SessionManager.remove_connection(room_name)
+        try:
+            AudioRecorder.stop_recording(meeting_id=room_name)
+            SessionManager.remove_connection(room_name)
+        except Exception as e:
+            logger.warning(f"Error during cleanup, {e}")
         logger.info(f"WebSocket session closed: {room_name}")

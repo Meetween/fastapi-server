@@ -2,9 +2,31 @@
 Pydantic models for Meetween API
 """
 from typing import Optional, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 import uuid
+import base64
 
+
+class MeetweenTranscriptionRequest(BaseModel):
+    type: Literal["audio"] = "audio"
+    participant_id: Optional[str]
+    language: Optional[str] = "en-US"
+    audio: str = Field(..., description="Base64 encoded audio data")
+
+    @field_validator('audio')
+    @classmethod
+    def validate_audio(cls, v: str) -> str:
+        """Validate base64 audio data"""
+        try:
+            decoded = base64.b64decode(v)
+            if len(decoded) == 0:
+                raise ValueError("Audio data cannot be empty")
+            return v
+        except Exception as e:
+            raise ValueError(f"Invalid base64 audio data: {e}")
+
+    def get_audio_bytes(self) -> bytes:
+        return base64.b64decode(self.audio)
 
 class MeetweenTranscriptionResponse(BaseModel):
     """Response model for transcription endpoints"""
