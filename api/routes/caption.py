@@ -1,6 +1,7 @@
 import uuid
+import json
 import logging
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Optional
 from core import EngineManager, SessionManager
 from butler import CaptionHandler, caption_audio
@@ -10,6 +11,8 @@ from models import MeetweenTranscriptionResponse, MeetweenErrorResponse
 
 router = APIRouter(prefix="/api", tags=["caption"])
 ws_router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/caption", response_model=MeetweenTranscriptionResponse)
@@ -89,7 +92,7 @@ async def api_caption_reset(
     return {"status": "success", "message": "No active caption session found"}
 
 
-@ws_router.websocket("/ws/{roomname}")
+@ws_router.websocket("/ws/{room_name}")
 async def websocket_caption(websocket: WebSocket, room_name: str):
     """
     WebSocket endpoint for real-time streaming transcription

@@ -1,9 +1,11 @@
+import logging
 from fastapi import APIRouter, UploadFile, Form, HTTPException, File
 from typing import Optional
 from models import MeetweenTranscriptionResponse
 from core import EngineManager
 
 router = APIRouter(prefix="/api", tags=["transcription"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/transcribe", response_model=MeetweenTranscriptionResponse)
