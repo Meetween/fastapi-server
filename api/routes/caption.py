@@ -55,6 +55,7 @@ async def api_caption(
         result = caption_audio(
             engine=EngineManager.get_lmm(),
             audio_bytes=audio_data,
+            sample_rate=16000,
             caption_handler=handler,
             language=language,
             vad=EngineManager.get_vad()
@@ -127,7 +128,6 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
             try:
                 data = json.loads(message)
                 msg_type = data.get("type")
-                print(msg_type)
                 if msg_type == "audio":
                     # Binary audio data
                     try:
@@ -149,6 +149,7 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                             result = caption_audio(
                                 engine=EngineManager.get_lmm(),
                                 audio_bytes=audio_data,
+                                sample_rate=16000,
                                 caption_handler=caption_handler,
                                 language=request.language,
                                 vad=EngineManager.get_vad()
