@@ -49,13 +49,26 @@ class MeetweenTranscriptionResponse(BaseModel):
 
 class MeetweenTaskRequest(BaseModel):
     type: taskTypes
+    room_name: str
     participant_id: Optional[str]
-    language: str
-    room_name: Optional[str]
+    language: Optional[str]
 
 class MeetweenAudioRequest(MeetweenTaskRequest):
     audio: str
 
+    @field_validator('audio')
+    @classmethod
+    def validate_audio(cls, v: str) -> str:
+        try:
+            decoded = base64.b64decode(v)
+            if len(decoded) == 0:
+                raise ValueError("Audio data cannot be empty")
+            return v
+        except Exception as e:
+            raise ValueError(f"Invalid base64 audio data: {e}")
+
+    def get_audio_bytes(self) -> bytes:
+        return base64.b64decode(self.audio)
 
 class MeetweenTextRequest(MeetweenTaskRequest):
     text: str
@@ -63,10 +76,10 @@ class MeetweenTextRequest(MeetweenTaskRequest):
 class MeetweenTaskResponse(BaseModel):
     type: taskTypes
     resultType: Literal["audio", "text"] = "text"
-    participant_id: Optional[str]
-    language: str
     room_name: str
     result: str
+    language: Optional[str]
+    participant_id: Optional[str]
     error: Optional[str] = None
 
 
