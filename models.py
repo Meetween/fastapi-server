@@ -1,9 +1,15 @@
 """
 Pydantic models for Meetween API
 """
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from pydantic import BaseModel, Field, field_validator
 import base64
+
+taskTypes = Literal[
+		"full_transcript",
+		"summary",
+		"catch_me_up"
+]
 
 
 class MeetweenTranscriptionRequest(BaseModel):
@@ -41,6 +47,28 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
+class MeetweenTaskRequest(BaseModel):
+    type: taskTypes
+    participant_id: Optional[str]
+    language: str
+    room_name: Optional[str]
+
+class MeetweenAudioRequest(MeetweenTaskRequest):
+    audio: str
+
+
+class MeetweenTextRequest(MeetweenTaskRequest):
+    text: str
+
+class MeetweenTaskResponse(BaseModel):
+    type: taskTypes
+    resultType: Literal["audio", "text"] = "text"
+    participant_id: Optional[str]
+    language: str
+    room_name: str
+    result: str
+    error: Optional[str] = None
+
 
 class MeetweenSummarizationResponse(BaseModel):
     """Response model for summarization endpoint"""
@@ -56,14 +84,8 @@ class MeetweenErrorResponse(BaseModel):
     message: str
     code: Optional[str] = None
 
-
-class TranscriptionResult(BaseModel):
-    """Internal transcription result model"""
-    text: str
-    confidence: float = Field(ge=0.0, le=1.0, default=0.95)
-    language: str = "en-US"
-    error: Optional[str] = None
-
-    @property
-    def has_error(self) -> bool:
-        return self.error is not None
+LMMRequest = Union[
+    MeetweenTaskRequest,
+    MeetweenAudioRequest,
+    MeetweenTextRequest
+]
