@@ -46,7 +46,7 @@ async def api_caption(
         
         # Get or create caption handler
         handler = SessionManager.get_or_create_caption_handler(
-                room_name = caption_key,
+                meeting_id = caption_key,
                 engine=EngineManager.get_lmm(),
                 vad_model=EngineManager.get_vad()
             )
@@ -97,8 +97,8 @@ async def api_caption_reset(
     return {"status": "success", "message": "No active caption session found"}
 
 
-@ws_router.websocket("/ws/{room_name}")
-async def websocket_caption(websocket: WebSocket, room_name: str):
+@ws_router.websocket("/ws/{meeting_id}")
+async def websocket_caption(websocket: WebSocket, meeting_id: str):
     """
     WebSocket endpoint for real-time streaming transcription
     
@@ -107,17 +107,17 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
     """
     await websocket.accept()
     
-    SessionManager.add_connection(room_name, websocket)
+    SessionManager.add_connection(meeting_id, websocket)
     caption_handler = None
     
-    logger.info(f"WebSocket connected: {room_name}")
+    logger.info(f"WebSocket connected: {meeting_id}")
     
-    AudioRecorder.init_recording(meeting_id=room_name)
+    AudioRecorder.init_recording(meeting_id=meeting_id)
     try:
         # Initialize caption handler for this session
         if EngineManager.get_lmm():
             caption_handler = SessionManager.get_or_create_caption_handler(
-                room_name=room_name,
+                meeting_id=meeting_id,
                 engine=EngineManager.get_lmm(),
                 vad_model=EngineManager.get_vad()
             )
@@ -133,7 +133,7 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                     try:
                         request = MeetweenTranscriptionRequest(**data)
                         audio_data = request.get_audio_bytes()
-                        await AudioRecorder.save_chunk(meeting_id=room_name, audio_data=audio_data, chunk_duration=2.0)
+                        await AudioRecorder.save_chunk(meeting_id=meeting_id, audio_data=audio_data, chunk_duration=2.0)
                     
                         if not EngineManager.get_lmm() or not caption_handler:
                             error_response = MeetweenErrorResponse(
@@ -157,7 +157,7 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                             
                             # Send transcription result
                             response = MeetweenTranscriptionResponse(
-                                meeting_id=room_name,
+                                meeting_id=meeting_id,
                                 transcript=result.text,
                                 is_final=False,
                                 confidence=result.confidence,
@@ -194,14 +194,14 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                 )
                 await websocket.send_text(error.model_dump_json())
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected: {room_name}")
+        logger.info(f"WebSocket disconnected: {meeting_id}")
     except Exception as e:
         logger.error(f"WebSocket error: {e}", exc_info=True)
     finally:
         # Cleanup
         try:
-            AudioRecorder.stop_recording(meeting_id=room_name)
-            SessionManager.remove_connection(room_name)
+            AudioRecorder.stop_recording(meeting_id=meeting_id)
+            SessionManager.remove_connection(meeting_id)
         except Exception as e:
             logger.warning(f"Error during cleanup, {e}")
-        logger.info(f"WebSocket session closed: {room_name}")
+        logger.info(f"WebSocket session closed: {meeting_id}")
