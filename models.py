@@ -17,6 +17,7 @@ class MeetweenTranscriptionRequest(BaseModel):
     participant_id: Optional[str]
     language: Optional[str] = "en-US"
     audio: str = Field(..., description="Base64 encoded audio data")
+    meeting_id: str
 
     @field_validator('audio')
     @classmethod
@@ -36,6 +37,7 @@ class MeetweenTranscriptionRequest(BaseModel):
 class MeetweenTranscriptionResponse(BaseModel):
     """Response model for transcription endpoints"""
     type: Literal["transcription"] = "transcription"
+    meeting_id: str
     participant_id: Optional[str] = None
     transcript: str
     is_final: bool
@@ -47,9 +49,11 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
+
 class MeetweenTaskRequest(BaseModel):
     type: taskTypes
     room_name: str
+    meeting_id: str
     participant_id: Optional[str]
     language: Optional[str]
 
@@ -77,6 +81,7 @@ class MeetweenTaskResponse(BaseModel):
     type: taskTypes
     resultType: Literal["audio", "text"] = "text"
     room_name: str
+    meeting_id: str
     result: str
     language: Optional[str]
     participant_id: Optional[str]

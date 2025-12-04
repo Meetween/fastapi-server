@@ -157,6 +157,7 @@ async def websocket_caption(websocket: WebSocket, room_name: str):
                             
                             # Send transcription result
                             response = MeetweenTranscriptionResponse(
+                                meeting_id=room_name,
                                 transcript=result.text,
                                 is_final=False,
                                 confidence=result.confidence,
