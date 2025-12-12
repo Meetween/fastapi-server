@@ -20,31 +20,31 @@ class SessionManager:
         return cls._instance
 
     @classmethod
-    def add_connection(cls, room_name: str, websocket: WebSocket):
+    def add_connection(cls, meeting_id: str, websocket: WebSocket):
         """Add a WebSocket connection"""
-        cls._connections[room_name] = websocket
-        logger.info(f"Added WebSocket connection: {room_name}")
+        cls._connections[meeting_id] = websocket
+        logger.info(f"Added WebSocket connection: {meeting_id}")
 
     @classmethod
-    def remove_connection(cls, room_name: str):
+    def remove_connection(cls, meeting_id: str):
         """Remove a WebSocket connection"""
-        if room_name in cls._connections:
-            del cls._connections[room_name]
-            logger.info(f"Removed WebSocket connection: {room_name}")
+        if meeting_id in cls._connections:
+            del cls._connections[meeting_id]
+            logger.info(f"Removed WebSocket connection: {meeting_id}")
 
     @classmethod
-    def get_connection(cls, room_name: str) -> Optional[WebSocket]:
+    def get_connection(cls, meeting_id: str) -> Optional[WebSocket]:
         """Get a WebSocket connection"""
-        return cls._connections.get(room_name)
+        return cls._connections.get(meeting_id)
 
     @classmethod
     async def cleanup(cls):
         """Close all active WebSocket connections"""
-        for room_name, ws in list(cls._connections.items()):
+        for meeting_id, ws in list(cls._connections.items()):
             try:
                 await ws.close()
             except Exception as e:
-                logger.error(f"Error closing WebSocket {room_name}: {e}")
+                logger.error(f"Error closing WebSocket {meeting_id}: {e}")
 
         cls._connections.clear()
         cls._caption_handlers.clear()
@@ -53,25 +53,25 @@ class SessionManager:
     @classmethod
     def get_or_create_caption_handler(
         cls,
-        room_name: str,
+        meeting_id: str,
         engine: SpeechLMMEngine,
         vad_model: Optional[SileroVAD] = None
     ) -> CaptionHandler:
         """Get existing or create new caption handler"""
-        if room_name not in cls._caption_handlers:
-            cls._caption_handlers[room_name] = CaptionHandler()
+        if meeting_id not in cls._caption_handlers:
+            cls._caption_handlers[meeting_id] = CaptionHandler()
                 # engine=engine,
                 # vad_model=vad_model
             # )
-            logger.info(f"Created caption handler for session: {room_name}")
+            logger.info(f"Created caption handler for session: {meeting_id}")
 
-        return cls._caption_handlers[room_name]
+        return cls._caption_handlers[meeting_id]
 
     @classmethod
-    def reset_caption_handler(cls, room_name: str) -> bool:
+    def reset_caption_handler(cls, meeting_id: str) -> bool:
         """Reset a caption handler session"""
-        if room_name in cls._caption_handlers:
-            del cls._caption_handlers[room_name]
-            logger.info(f"Reset caption handler: {room_name}")
+        if meeting_id in cls._caption_handlers:
+            del cls._caption_handlers[meeting_id]
+            logger.info(f"Reset caption handler: {meeting_id}")
             return True
         return False
