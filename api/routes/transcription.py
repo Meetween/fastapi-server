@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, UploadFile, Form, HTTPException, File
 from typing import Optional
 from models import MeetweenTranscriptionResponse
+from butler import transcribe_audio
 from core import EngineManager
 
 router = APIRouter(prefix="/api", tags=["transcription"])
@@ -16,7 +17,7 @@ async def api_transcribe(
 ):
     """
     Transcribe audio file and return the full transcription
-    
+
     - **audio**: Audio file (WAV, MP3, etc.)
     - **language**: BCP-47 language code (default: 'en-US')
     - **participant_id**: Optional participant identifier
@@ -26,15 +27,15 @@ async def api_transcribe(
             status_code=503,
             detail="SpeechLMM model not loaded. Check server configuration."
         )
-    
+
     try:
         # Read audio file
         audio_data = await audio.read()
         if len(audio_data) == 0:
             raise HTTPException(status_code=400, detail="Empty audio file")
-        
+
         logger.info(f"Transcribing {len(audio_data)} bytes, language: {language}")
-        
+
         # Perform transcription
         result = transcribe_audio(
             audio_data=audio_data,
@@ -42,7 +43,7 @@ async def api_transcribe(
             language=language,
             vad_model=EngineManager.get_vad()
         )
-        
+
         # Build response
         return MeetweenTranscriptionResponse(
             transcript=result.text,
@@ -56,7 +57,7 @@ async def api_transcribe(
             is_interim=False,
             stability=1.0
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
