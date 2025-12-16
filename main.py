@@ -17,7 +17,8 @@ from core import EngineManager, SessionManager
 from api.routes import (
     health,
     caption,
-    transcription
+    transcription,
+    summary
 )
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -72,81 +73,6 @@ async def shutdown_event():
     await EngineManager.cleanup()
 
     logger.info("Server shutdown complete")
-
-
-@app.post("/api/summarize", response_model=MeetweenSummarizationResponse)
-async def api_summarize(
-    audio: UploadFile = File(..., description="Audio file to summarize"),
-    language: str = Form("en-US", description="BCP-47 language code (e.g., 'en-US', 'de-DE')"),
-    participant_id: Optional[str] = Form(None, description="Participant identifier")
-):
-    """
-    Generate a summary of the audio content
-
-    - **audio**: Audio file containing meeting or conversation (supports WebM, WAV, MP3)
-    - **language**: BCP-47 language code (default: 'en-US')
-    - **participant_id**: Optional participant identifier
-    """
-    if not EngineManager.get_lmm():
-        raise HTTPException(
-            status_code=503,
-            detail="SpeechLMM model not loaded"
-        )
-
-    try:
-        import tempfile
-        import os
-        import numpy as np
-        from pydub import AudioSegment
-
-        audio_data = await audio.read()
-        if len(audio_data) == 0:
-            raise HTTPException(status_code=400, detail="Empty audio file")
-
-        logger.info(f"Summarizing {len(audio_data)} bytes from {audio.content_type or 'unknown'}, language: {language}")
-
-        # Save audio to temp file
-        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
-            temp_file.write(audio_data)
-            temp_path = temp_file.name
-
-        try:
-            # Load audio with pydub (better ffmpeg support)
-            audio_segment = AudioSegment.from_file(temp_path)
-
-            # Convert to mono, 16kHz (model's native sample rate - avoids resampling)
-            audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
-
-            # Get raw PCM data
-            audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
-            audio_pcm = audio_array.tobytes()
-
-            logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
-
-            # Generate summary
-            summary = summarize_audio(
-                audio_bytes=audio_pcm,
-                sample_rate=16000,
-                engine=EngineManager.get_lmm(),
-                language=language
-            )
-        finally:
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-
-        return MeetweenSummarizationResponse(
-            summary=summary,
-            participant_id=participant_id,
-            language=language
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Summarization error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
-
 
 # ============================================================================
 # Meeting Recording Endpoints (for "Catch Me Up" feature)
@@ -409,6 +335,7 @@ app.include_router(health.router)
 app.include_router(caption.router)
 app.include_router(caption.ws_router)
 app.include_router(transcription.router)
+app.include_router(summary.router)
 
 
 if __name__ == "__main__":

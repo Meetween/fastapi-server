@@ -103,7 +103,7 @@ class MeetweenErrorResponse(BaseModel):
     code: Optional[str] = None
 
 LMMRequest = Union[
-    MeetweenTaskRequest,
     MeetweenAudioRequest,
-    MeetweenTextRequest
+    MeetweenTextRequest,
+    MeetweenTaskRequest
 ]
