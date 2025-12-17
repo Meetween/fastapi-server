@@ -3,6 +3,8 @@ Meeting recording business logic
 """
 import logging
 import shutil
+import soundfile as sf
+import numpy as np
 from typing import Optional, Dict
 from pathlib import Path
 from datetime import datetime
@@ -52,7 +54,9 @@ class AudioRecorder:
         room_name: str,
         meeting_id: str,
         audio_data: bytes,
-        chunk_duration: float
+        chunk_duration: float,
+        samplerate: int = 16000,
+        audio_format :str = "wav"
     ) -> dict:
         """Save an audio chunk for a meeting"""
         meeting_path = settings.recordings_base_path / room_name / meeting_id
@@ -66,8 +70,16 @@ class AudioRecorder:
         chunk_filename = StorageManager.get_chunk_filename(chunk_num)
         chunk_path = meeting_path / chunk_filename
 
-        with open(chunk_path, "wb") as f:
-            f.write(audio_data)
+        audio = np.frombuffer(audio_data, dtype=np.int16)
+        fmt = settings.recording_format if settings.recording_format is not None else audio_format
+
+        sf.write(
+            file=chunk_path,
+            data=audio.astype(np.float32) / 32768.0,
+            samplerate=samplerate,
+            subtype="PCM_16",
+            format=fmt
+        )
 
         # Save metadata
         metadata["chunk_count"] = chunk_num

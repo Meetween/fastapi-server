@@ -8,6 +8,7 @@ from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager
+from utils import StorageManager
 from config import settings
 from models import (
     MeetweenTaskResponse,
@@ -141,7 +142,7 @@ async def api_summarize(request: LMMRequest = Body(...)):
             successful_chunks = 0
 
             for chunk_num in range(1, chunk_count + 1):
-                chunk_path = meeting_path / f"chunk_{chunk_num:04d}.webm"
+                chunk_path = meeting_path / StorageManager.get_chunk_filename(chunk_num, suffix=settings.recording_format)
                 if chunk_path.exists():
                     try:
                         # Verify chunk has content and is not empty
