@@ -239,7 +239,8 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
 
     try:
         meeting_id = request.meeting_id
-        meeting_path = settings.recordings_base_path / meeting_id
+        room_name = request.room_name
+        meeting_path = settings.recordings_base_path / room_name / meeting_id
 
         if not meeting_path.exists():
             raise HTTPException(
@@ -274,7 +275,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         successful_chunks = 0
 
         for chunk_num in range(1, chunk_count + 1):
-            chunk_path = meeting_path / f"chunk_{chunk_num:04d}.webm"
+            chunk_path = meeting_path / StorageManager.get_chunk_filename(chunk_num, suffix=settings.recording_format)
             if chunk_path.exists():
                 try:
                     # Verify chunk has content and is not empty
