@@ -21,19 +21,21 @@ class AudioRecorder:
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = super(SessionManager, cls).__new__(cls)
+            cls._instance = super(AudioRecorder, cls).__new__(cls)
         return cls._instance
 
     @classmethod
-    def init_recording(cls, meeting_id: str, participant_id: Optional[str] = None):
+    def init_recording(cls, room_name: str, meeting_id: str, participant_id: Optional[str] = None):
         """Initialize recording for a meeting"""
         meeting_path = StorageManager.create_meeting_directory(
             settings.recordings_base_path,
+            room_name,
             meeting_id
         )
 
         metadata = {
             "meeting_id": meeting_id,
+            "room_name": room_name,
             "start_time": datetime.utcnow().isoformat(),
             "started_by": participant_id,
             "chunk_count": 0,
@@ -42,22 +44,24 @@ class AudioRecorder:
 
         StorageManager.save_metadata(meeting_path, metadata)
         cls._active_meetings[meeting_id] = metadata
+        logger.info(f"Recording intitialized, session {meeting_id}")
 
     @classmethod
     async def save_chunk(
         cls,
+        room_name: str,
         meeting_id: str,
         audio_data: bytes,
         chunk_duration: float
     ) -> dict:
         """Save an audio chunk for a meeting"""
-        meeting_path = settings.recordings_base_path / meeting_id
+        meeting_path = settings.recordings_base_path / room_name / meeting_id
 
         if not meeting_path.exists():
-            cls.init_recording(meeting_id)
+            cls.init_recording(room_name, meeting_id)
 
         metadata = StorageManager.load_metadata(meeting_path)
- 
+
         chunk_num = metadata["chunk_count"] + 1
         chunk_filename = StorageManager.get_chunk_filename(chunk_num)
         chunk_path = meeting_path / chunk_filename
@@ -78,17 +82,17 @@ class AudioRecorder:
         }
 
     @classmethod
-    def stop_recording(cls, meeting_id: str, delete_recording: bool = False) -> dict:
+    def stop_recording(cls, room_name: str, meeting_id: str, delete_recording: bool = False) -> dict:
         """Stop recording for a meeting"""
-        meeting_path = settings.recordings_base_path / meeting_id
+        meeting_path = settings.recordings_base_path / room_name / meeting_id
 
         if not meeting_path.exists():
             logging.error(f"Could not stop recording. {meeting_path} does not exist")
             return {
                 "status": "error",
                 "message": "Could not stop recording",
-            } 
-            
+            }
+
         # Update metadata
         metadata = StorageManager.load_metadata(meeting_path)
         metadata["end_time"] = datetime.utcnow().isoformat()

@@ -10,8 +10,8 @@ class StorageManager:
     """Manages file storage for recordings"""
 
     @staticmethod
-    def create_meeting_directory(base_path: Path, meeting_id: str) -> Path:
-        meeting_path = base_path / meeting_id
+    def create_meeting_directory(base_path: Path, room_name: str, meeting_id: str) -> Path:
+        meeting_path = base_path / room_name / meeting_id
         meeting_path.mkdir(parents=True, exist_ok=True)
         return meeting_path
 

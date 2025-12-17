@@ -18,6 +18,7 @@ class MeetweenTranscriptionRequest(BaseModel):
     language: Optional[str] = "en-US"
     audio: str = Field(..., description="Base64 encoded audio data")
     meeting_id: str
+    room_name: str
 
     @field_validator('audio')
     @classmethod

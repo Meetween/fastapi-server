@@ -109,10 +109,11 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
     SessionManager.add_connection(meeting_id, websocket)
     caption_handler = None
+    audio_recorder_initialized = False
+    room_name = None
 
     logger.info(f"WebSocket connected: {meeting_id}")
 
-    AudioRecorder.init_recording(meeting_id=meeting_id)
     try:
         # Initialize caption handler for this session
         if EngineManager.get_lmm():
@@ -132,8 +133,15 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                     # Binary audio data
                     try:
                         request = MeetweenTranscriptionRequest(**data)
+
+                        if not audio_recorder_initialized:
+                            room_name = request.room_name
+                            AudioRecorder.init_recording(room_name=room_name, meeting_id=meeting_id)
+                            audio_recorder_initialized = True
+
+
                         audio_data = request.get_audio_bytes()
-                        await AudioRecorder.save_chunk(meeting_id=meeting_id, audio_data=audio_data, chunk_duration=2.0)
+                        await AudioRecorder.save_chunk(room_name=room_name, meeting_id=meeting_id, audio_data=audio_data, chunk_duration=2.0)
 
                         if not EngineManager.get_lmm() or not caption_handler:
                             error_response = MeetweenErrorResponse(
@@ -200,7 +208,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     finally:
         # Cleanup
         try:
-            AudioRecorder.stop_recording(meeting_id=meeting_id)
+            if room_name:
+                AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
             SessionManager.remove_connection(meeting_id)
         except Exception as e:
             logger.warning(f"Error during cleanup, {e}")
