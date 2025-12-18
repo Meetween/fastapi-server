@@ -3,95 +3,97 @@
 A FastAPI-based server that's compatible with both Jigasi Whisper and Meetween transcription protocols.
 
 ## Installation
-1. **Install uv**
-https://docs.astral.sh/uv/getting-started/installation/
+<!-- 1. **Install uv**
+https://docs.astral.sh/uv/getting-started/installation/ -->
+1. **Clone the project**
+2. **Checkout the subproject**
+   ```
+   git submodule update --init --recursive
+   ```
+3. **Install requirements**
+    ```
+    pip install -r requirements.txt
 
+    cd speechlmm
 
-2. **Run the Server**:
+    pip install -e .
+    ```
+3. **Run the Server**:
    ```bash
-   uv run main.py
+   python main.py
+   ```
+   alternatively to set the port
+   ```bash
+   uvicorn main:app --port $PORT (--reload)
    ```
 
 ## API Endpoints
+For details on the loadout for requests and response, please refer to `models.py`
 
-### WebSocket Endpoints
+### Captions
 
-#### 1. Whisper Protocol: `/ws/{connection_id}`
-
-Compatible with Jigasi's `WhisperTranscriptionService`.
-
-**Protocol**: Binary data with 60-byte header
-- **Header Format**: `"participant_id|language"` (padded to 60 bytes)
-- **Data**: Raw audio bytes following the header
-
-
-#### 2. Meetween Protocol: `/transcribe_mock/{connection_id}`
+###  Jigasi Live Captions (WebSockets)
 
 Compatible with the custom `MeetweenTranscriptionService`.
 
-**Protocol**: JSON metadata followed by binary audio
+**Endpoint**: `/ws/{meeting_id}`
 
-**Streaming Audio**:
-```json
-{"type": "audio", "participant_id": "user123", "language": "en", "audio": "<base64-encoded-audio>" }
+**Request**: `MeetweenTranscriptionRequest`
 
-```
+**Response** `MeetweenTranscriptionResponse`
 
-**Single Transcription**:
 
-Not implemented
+### Rest API
 
-## Response Formats
+**Endpoint**: `/api/caption`
 
-### Whisper Protocol Responses
+**Request**: Will change to pydantic model in the future
+  ```json
+  {
+    "audio": File
+    "language": str 
+    "participant_id": Optional[str]
+    "session_id": Optional[str]
+  }
+  ```
 
-**Interim Result**:
-```json
-{
-  "type": "interim",
-  "participant_id": "user123",
-  "text": "Hello world",
-  "variance": 0.1
-}
-```
+**Response** `MeetweenTranscriptionResponse`, 
 
-**Final Result**:
-```json
-{
-  "type": "final",
-  "participant_id": "user123",
-  "text": "Hello world",
-  "variance": 0.0
-}
-```
+### Transcription
 
-### Meetween Protocol Responses
+**Endpoint**: `/api/transcribe`
 
-**Streaming Result**:
-```json
-{
-  "type": "transcription",
-  "participant_id": "user123",
-  "transcript": "Hello world",
-  "is_final": true,
-  "confidence": 0.95
-}
-```
+**Request**: Will change to pydantic model in the future
+  ```json
+  {
+    "audio": File
+    "language": str 
+    "participant_id": Optional[str]
+  }
+  ```
+
+### Summary
+
+**Endpoint**: `/api/summarize`
+
+**Request**: `MeetweenTaskRequest`, `MeetweenAudioRequest`, `MeetweenTextRequest`
+
+**Response** `MeetweenTaskResponse`
+
+### Catchup
+
+**Endpoint**: `/api/catchup`
+
+**Request**: `MeetweenCatchupRequest`
+
+**Response** `MeetweenTaskResponse`
 
 ## Configuration
 
 ### Jigasi Configuration
 
-**For Whisper Protocol**:
-```properties
-# In jigasi configuration
-JIGASI_CUSTOM_SERVICE=org.jitsi.jigasi.transcription.WhisperTranscriptionService
-org.jitsi.jigasi.transcription.whisper.websocket_url=ws://localhost:8000/ws
-```
-
-**For Meetween Protocol**:
 ```properties
 # In jigasi configuration
 JIGASI_CUSTOM_SERVICE=org.jitsi.jigasi.transcription.MeetweenTranscriptionService
-org.jitsi.jigasi.transcription.meetween.websocket_url=ws://localhost:8000/transcribe
+org.jitsi.jigasi.transcription.meetween.websocket_url=ws://localhost:8000/ws
 ```
