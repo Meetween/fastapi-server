@@ -78,6 +78,9 @@ class MeetweenAudioRequest(MeetweenTaskRequest):
 class MeetweenTextRequest(MeetweenTaskRequest):
     text: str
 
+class MeetweenCatchupRequest(MeetweenTaskRequest):
+    max_duration: Optional[float] = None
+
 class MeetweenTaskResponse(BaseModel):
     type: taskTypes
     resultType: Literal["audio", "text"] = "text"
@@ -104,7 +107,7 @@ class MeetweenErrorResponse(BaseModel):
     code: Optional[str] = None
 
 LMMRequest = Union[
-    MeetweenTaskRequest,
     MeetweenAudioRequest,
-    MeetweenTextRequest
+    MeetweenTextRequest,
+    MeetweenTaskRequest
 ]

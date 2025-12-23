@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 from models import MeetweenTranscriptionResponse
+from config import settings
 import logging
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,8 @@ class StorageManager:
             return json.load(f)
 
     @staticmethod
-    def get_chunk_filename(chunk_number: int) -> str:
-        return f"chunk_{chunk_number:04d}.webm"
+    def get_chunk_filename(chunk_number: int, suffix="wav") -> str:
+        suffix = suffix if settings.recording_format is None else settings.recording_format
+        return f"chunk_{chunk_number:04d}.{suffix}"
 
     

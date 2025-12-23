@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 from pydantic_settings import BaseSettings
+from typing import Optional
 
 class Settings(BaseSettings):
 
@@ -16,6 +17,7 @@ class Settings(BaseSettings):
     vad_threshold: float = 0.5
 
     recordings_base_path: Path = Path("/mnt/recordings")
+    recording_format: Optional[str] = "wav"
 
     log_level: str = "INFO"
 
