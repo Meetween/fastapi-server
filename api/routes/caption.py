@@ -62,16 +62,18 @@ async def api_caption(
         )
 
         return MeetweenTranscriptionResponse(
+            type="transcription",
+            meeting_id=caption_key,
             transcript=result.text,
             is_final=False,
-            confidence=result.confidence * 0.6,  # Lower confidence for interim results
+            confidence=result.confidence * 0.6,
             transcript_id=str(uuid.uuid4()),
             participant_id=participant_id,
             language=language,
-            message_id=0,
-            timestamp=0.0,
-            is_interim=True,
-            stability=0.6
+            message_id=result.message_id,
+            timestamp=result.timestamp,
+            is_interim=result.is_interim,
+            stability=result.stability
         )
 
     except HTTPException:
@@ -167,7 +169,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             response = MeetweenTranscriptionResponse(
                                 meeting_id=meeting_id,
                                 transcript=result.text,
-                                is_final=False,
+                                is_final=True,
                                 confidence=result.confidence,
                                 transcript_id=str(uuid.uuid4()),
                                 participant_id=request.participant_id,

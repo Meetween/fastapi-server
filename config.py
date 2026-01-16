@@ -11,7 +11,9 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    speechlmm_model_path: str = os.getenv("SPEECHLMM_MODEL_PATH", "")
+    triton_url: str = os.getenv("TRITON_URL", "http://localhost:9000")
+    triton_model_name: str = os.getenv("TRITON_MODEL_NAME", "speechlmm")
+    triton_timeout: int = int(os.getenv("TRITON_TIMEOUT", "1800"))
 
     vad_sample_rate: int = 16000
     vad_threshold: float = 0.5
