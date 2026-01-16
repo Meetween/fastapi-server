@@ -109,7 +109,10 @@ async def get_summary_text(request: LMMRequest) -> str:
         chunk_count = metadata["chunk_count"]
 
         if chunk_count == 0:
-            return "No audio recorded yet. The meeting just started."
+            raise HTTPException(
+                status_code=400,
+                detail="No audio recorded yet. The meeting just started."
+            )
 
         logger.info(f"Summarizing meeting {meeting_id}: {chunk_count} chunks, {metadata['total_duration']:.1f}s")
 
@@ -142,7 +145,10 @@ async def get_summary_text(request: LMMRequest) -> str:
                     continue
 
         if len(combined_audio) == 0:
-            return f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded."
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded."
+            )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
 
