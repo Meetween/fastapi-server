@@ -1,11 +1,12 @@
 import uuid
 import json
 import logging
+import time
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Optional
 from core import EngineManager, SessionManager
 from butler import CaptionHandler, caption_audio
-from utils import AudioRecorder
+from utils import AudioRecorder, UUIDHelper
 from pydantic import ValidationError
 
 from models import MeetweenTranscriptionRequest, MeetweenTranscriptionResponse, MeetweenErrorResponse
@@ -79,6 +80,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 audio_bytes=audio_data,
                                 sample_rate=16000,
                                 caption_handler=caption_handler,
+                                timestamp=time.time_ns() // 1_000_000,
                                 language=request.language,
                                 vad=EngineManager.get_vad()
                             )
@@ -86,16 +88,14 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             # Send transcription result
                             response = MeetweenTranscriptionResponse(
                                 meeting_id=meeting_id,
-                                transcript=result.text,
-                                is_final=False,
-                                confidence=result.confidence,
-                                transcript_id=str(uuid.uuid4()),
                                 participant_id=request.participant_id,
+                                transcript=result.text,
+                                message_id=str(UUIDHelper.uuid_from_int(result.message_id)),
+                                timestamp=result.timestamp,
+                                is_interim=result.is_interim,
                                 language=request.language,
-                                is_interim=True,
-                                stability=0.6
+                                stability=result.stability
                             )
-
                             await websocket.send_json(response.model_dump())
 
                         except Exception as e:
