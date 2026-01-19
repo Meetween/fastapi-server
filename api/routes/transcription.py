@@ -2,13 +2,14 @@ import json
 import logging
 import tempfile
 import os
+import time
 
 import numpy as np
 from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager
-from utils import StorageManager
+from utils import StorageManager, UUIDHelper
 from config import settings
 from models import (
     MeetweenTranscriptionResponse,
@@ -85,10 +86,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                 meeting_id=request.meeting_id,
                 participant_id=request.participant_id,
                 transcript=result.text,
-                is_final=True,
-                confidence=result.confidence,
-                transcript_id=None,
-                message_id=result.message_id,
+                message_id=str(UUIDHelper.uuid_from_int(result.message_id)),
                 timestamp=result.timestamp,
                 is_interim=result.is_interim,
                 language=result.language,
@@ -123,19 +121,9 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             chunk_count = metadata["chunk_count"]
 
             if chunk_count == 0:
-                return MeetweenTranscriptionResponse(
-                    type="transcription",
-                    meeting_id=meeting_id,
-                    participant_id=request.participant_id,
-                    transcript="No audio recorded yet. The meeting just started.",
-                    is_final=False,
-                    confidence=1.0,
-                    transcript_id=None,
-                    message_id=0,
-                    timestamp=0.0,
-                    is_interim=False,
-                    language=request.language or "en-US",
-                    stability=1.0
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No audio recorded yet. The meeting just started. No transcription generated"
                 )
 
             logger.info(f"Transcribing meeting {meeting_id}: {chunk_count} chunks, {metadata['total_duration']:.1f}s")
@@ -169,19 +157,9 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                         continue
 
             if len(combined_audio) == 0:
-                return MeetweenTranscriptionResponse(
-                    type="transcription",
-                    meeting_id=meeting_id,
-                    participant_id=request.participant_id,
-                    transcript=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.",
-                    is_final=False,
-                    confidence=1.0,
-                    transcript_id=None,
-                    message_id=0,
-                    timestamp=0.0,
-                    is_interim=False,
-                    language=request.language or "en-US",
-                    stability=1.0
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded."
                 )
 
             logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
@@ -210,10 +188,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                 meeting_id=meeting_id,
                 participant_id=request.participant_id,
                 transcript=result.text,
-                is_final=True,
-                confidence=result.confidence,
-                transcript_id=None,
-                message_id=result.message_id,
+                message_id=str(UUIDHelper.uuid_from_int(result.message_id)),
                 timestamp=result.timestamp,
                 is_interim=result.is_interim,
                 language=result.language,

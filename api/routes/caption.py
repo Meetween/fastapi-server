@@ -1,11 +1,12 @@
 import uuid
 import json
 import logging
+import time
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from typing import Optional
 from core import EngineManager, SessionManager
 from butler import CaptionHandler, caption_audio
-from utils import AudioRecorder
+from utils import AudioRecorder, UUIDHelper
 from pydantic import ValidationError
 
 from models import MeetweenTranscriptionRequest, MeetweenTranscriptionResponse, MeetweenErrorResponse
@@ -15,86 +16,6 @@ router = APIRouter(prefix="/api", tags=["caption"])
 ws_router = APIRouter()
 
 logger = logging.getLogger(__name__)
-
-
-@router.post("/caption", response_model=MeetweenTranscriptionResponse)
-async def api_caption(
-    audio: UploadFile = File(..., description="Audio chunk for real-time captioning"),
-    language: str = Form("en-US", description="BCP-47 language code (e.g., 'en-US', 'de-DE')"),
-    participant_id: Optional[str] = Form(None, description="Participant identifier"),
-    session_id: Optional[str] = Form(None, description="Caption session ID")
-):
-    """
-    Process audio chunk for real-time captioning
-    
-    Returns interim captions that can be updated with subsequent audio chunks.
-    Use /api/caption/reset to reset the caption session.
-    """
-    if not EngineManager.get_lmm():
-        raise HTTPException(
-            status_code=503,
-            detail="SpeechLMM model not loaded"
-        )
-
-    try:
-        audio_data = await audio.read()
-        if len(audio_data) == 0:
-            raise HTTPException(status_code=400, detail="Empty audio file")
-
-        # Use session_id or participant_id as caption session key
-        caption_key = session_id or participant_id or str(uuid.uuid4())
-
-        # Get or create caption handler
-        handler = SessionManager.get_or_create_caption_handler(
-                meeting_id = caption_key,
-                engine=EngineManager.get_lmm(),
-                vad_model=EngineManager.get_vad()
-            )
-
-        # Process audio chunk
-        result = caption_audio(
-            engine=EngineManager.get_lmm(),
-            audio_bytes=audio_data,
-            sample_rate=16000,
-            caption_handler=handler,
-            language=language,
-            vad=EngineManager.get_vad()
-        )
-
-        return MeetweenTranscriptionResponse(
-            transcript=result.text,
-            is_final=False,
-            confidence=result.confidence * 0.6,  # Lower confidence for interim results
-            transcript_id=str(uuid.uuid4()),
-            participant_id=participant_id,
-            language=language,
-            message_id=0,
-            timestamp=0.0,
-            is_interim=True,
-            stability=0.6
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Captioning error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Captioning failed: {str(e)}")
-
-
-@router.post("/caption/reset")
-async def api_caption_reset(
-    session_id: Optional[str] = Form(None),
-    participant_id: Optional[str] = Form(None)
-):
-    """
-    Reset caption session, clearing accumulated context
-    """
-    caption_key = session_id or participant_id
-
-    if SessionManager.reset_caption_handler(caption_key):
-        return {"status": "success", "message": f"Caption session {caption_key} reset"}
-
-    return {"status": "success", "message": "No active caption session found"}
 
 
 @ws_router.websocket("/ws/{meeting_id}")
@@ -159,6 +80,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 audio_bytes=audio_data,
                                 sample_rate=16000,
                                 caption_handler=caption_handler,
+                                timestamp=time.time_ns() // 1_000_000,
                                 language=request.language,
                                 vad=EngineManager.get_vad()
                             )
@@ -166,16 +88,14 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             # Send transcription result
                             response = MeetweenTranscriptionResponse(
                                 meeting_id=meeting_id,
-                                transcript=result.text,
-                                is_final=False,
-                                confidence=result.confidence,
-                                transcript_id=str(uuid.uuid4()),
                                 participant_id=request.participant_id,
+                                transcript=result.text,
+                                message_id=str(UUIDHelper.uuid_from_int(result.message_id)),
+                                timestamp=result.timestamp,
+                                is_interim=result.is_interim,
                                 language=request.language,
-                                is_interim=True,
-                                stability=0.6
+                                stability=result.stability
                             )
-
                             await websocket.send_json(response.model_dump())
 
                         except Exception as e:

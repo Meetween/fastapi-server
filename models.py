@@ -6,12 +6,14 @@ from pydantic import BaseModel, Field, field_validator
 import base64
 
 taskTypes = Literal[
-		"full_transcript",
+		"transcription",
 		"summary",
 		"catch_me_up"
 ]
 
-
+"""
+Used with jigasi websocket connection
+"""
 class MeetweenTranscriptionRequest(BaseModel):
     type: Literal["audio"] = "audio"
     participant_id: Optional[str]
@@ -41,10 +43,7 @@ class MeetweenTranscriptionResponse(BaseModel):
     meeting_id: str
     participant_id: Optional[str] = None
     transcript: str
-    is_final: bool
-    confidence: float = Field(ge=0.0, le=1.0)
-    transcript_id: Optional[str] = None
-    message_id: Optional[int] = None
+    message_id: Optional[str] = None
     timestamp: Optional[float] = None
     is_interim: Optional[bool] = None
     language: Optional[str] = None
