@@ -68,7 +68,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                 logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
                 # Perform transcription
-                result = transcribe_audio(
+                result = await transcribe_audio(
                     engine=EngineManager.get_lmm(),
                     audio_bytes=audio_pcm,
                     sample_rate=16000,
@@ -197,7 +197,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
             # Perform transcription
-            result = transcribe_audio(
+            result = await transcribe_audio(
                 engine=EngineManager.get_lmm(),
                 audio_bytes=audio_pcm,
                 sample_rate=16000,

@@ -251,7 +251,7 @@ class CaptionHandler:
         self.last_was_final = False
 
 
-def transcribe_audio(
+async def transcribe_audio(
     engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
@@ -278,7 +278,7 @@ def transcribe_audio(
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
     
-    transcription = engine._generate(
+    transcription = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -298,7 +298,7 @@ def transcribe_audio(
     )
 
 
-def caption_audio(
+async def caption_audio(
     engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
@@ -354,7 +354,7 @@ def caption_audio(
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
     
-    transcription = engine._generate(
+    transcription = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -378,7 +378,7 @@ def caption_audio(
     )
 
 
-def summarize_audio(
+async def summarize_audio(
     engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
@@ -405,7 +405,7 @@ def summarize_audio(
     # Get language-specific SSUM prompt
     prompt = PromptLoader.get_prompt("SSUM", language)
     
-    summary = engine._generate(
+    summary = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,

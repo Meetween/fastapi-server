@@ -10,7 +10,7 @@ import torch
 import soundfile as sf
 from typing import Optional
 
-import requests
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +42,18 @@ class TritonClient:
         
         self.inference_url = f"{self.triton_url}/v2/models/{self.model_name}/infer"
         
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout),
+            limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
+        )
+        
         if self.verbose:
             logger.info(f"[TritonClient] Initialized with URL: {self.triton_url}")
             logger.info(f"[TritonClient] Model: {self.model_name}")
+    
+    async def close(self):
+        """Close the HTTP client connection pool"""
+        await self._client.aclose()
     
     def _tensor_to_wav_bytes(self, audio_tensor: torch.Tensor, sample_rate: int) -> bytes:
         """Convert audio tensor to WAV bytes."""
@@ -58,7 +67,7 @@ class TritonClient:
         buffer.seek(0)
         return buffer.read()
     
-    def _generate(
+    async def _generate_text_from_audio(
         self,
         prompt: str,
         audio: torch.Tensor,
@@ -108,10 +117,9 @@ class TritonClient:
             logger.info(f"[TritonClient] Sending request: {len(wav_bytes)} bytes, prompt: {prompt[:50]}...")
         
         try:
-            response = requests.post(
+            response = await self._client.post(
                 self.inference_url,
-                json=payload,
-                timeout=self.timeout
+                json=payload
             )
             response.raise_for_status()
             
@@ -131,8 +139,11 @@ class TritonClient:
             
             return text
             
-        except requests.exceptions.RequestException as e:
+        except httpx.RequestError as e:
             logger.error(f"[TritonClient] Request failed: {e}")
+            raise RuntimeError(f"Triton inference failed: {str(e)}")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[TritonClient] HTTP error: {e}")
             raise RuntimeError(f"Triton inference failed: {str(e)}")
         except Exception as e:
             logger.error(f"[TritonClient] Error processing response: {e}")

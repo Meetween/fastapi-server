@@ -29,11 +29,11 @@ class EngineManager:
 
             # Initialize Triton client
             try:
-                logger.info(f"Connecting to Triton server: {settings.triton_url}")
+                logger.info(f"Connecting to Triton server: {settings.triton.url}")
                 cls._speechlmm_engine = TritonClient(
-                    triton_url=settings.triton_url,
-                    model_name=settings.triton_model_name,
-                    timeout=settings.triton_timeout,
+                    triton_url=settings.triton.url,
+                    model_name=settings.triton.model_name,
+                    timeout=settings.triton.timeout,
                     verbose=True
                 )
                 logger.info("Triton client initialized successfully")
@@ -60,6 +60,8 @@ class EngineManager:
         """Cleanup"""
         with cls._lock:
             logger.info("Cleaning up EngineManager...")
+            if cls._speechlmm_engine:
+                await cls._speechlmm_engine.close()
             cls._initialized = False
             cls._speechlmm_engine = None
             cls._vad_model = None
