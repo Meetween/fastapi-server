@@ -25,7 +25,7 @@ def test_transcription(audio_file):
     audio_b64 = base64.b64encode(audio_bytes).decode('utf-8')
     
     payload = {
-        'type': 'full_transcript',
+        'type': 'transcription',
         'audio': audio_b64,
         'language': 'en-US',
         'meeting_id': 'test_transcription',
@@ -62,58 +62,11 @@ def test_transcription(audio_file):
         return False, None
 
 
-def test_captioning(audio_file):
-    """Test captioning endpoint"""
-    print("\n" + "="*70)
-    print("TEST 2: CAPTIONING")
-    print("="*70)
-    
-    with open(audio_file, 'rb') as f:
-        audio_bytes = f.read()
-    
-    print(f"Audio size: {len(audio_bytes)/1024:.2f} KB")
-    print("Sending request...")
-    
-    try:
-        start = time.time()
-        files = {'audio': ('test.wav', audio_bytes, 'audio/wav')}
-        data = {
-            'language': 'en-US',
-            'participant_id': 'test_user',
-            'session_id': 'test_session'
-        }
-        
-        response = requests.post(
-            'http://localhost:8005/api/caption',
-            files=files,
-            data=data,
-            timeout=120
-        )
-        elapsed = time.time() - start
-        
-        if response.status_code == 200:
-            result = response.json()
-            caption = result.get('transcript', '')
-            print(f"✓ SUCCESS ({elapsed:.1f}s)")
-            print(f"Caption: {caption[:150]}...")
-            print(f"Length: {len(caption)} chars")
-            print(f"Is interim: {result.get('is_interim', 'N/A')}")
-            return True, caption
-        else:
-            print(f"✗ FAILED: {response.status_code}")
-            print(response.text[:500])
-            return False, None
-    except Exception as e:
-        print(f"✗ ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        return False, None
-
 
 def test_summarization(audio_file):
     """Test summarization endpoint"""
     print("\n" + "="*70)
-    print("TEST 3: SUMMARIZATION")
+    print("TEST 2: SUMMARIZATION")
     print("="*70)
     
     with open(audio_file, 'rb') as f:
@@ -176,7 +129,6 @@ def main():
     results = {}
     
     results['transcription'] = test_transcription(audio_file)
-    results['captioning'] = test_captioning(audio_file)
     results['summarization'] = test_summarization(audio_file)
     
     print("\n" + "="*70)

@@ -123,7 +123,7 @@ def test_fastapi_transcribe(audio_file, prompt="Transcribe the following audio:"
         print(f"File size: {file_size_mb:.2f} MB")
         
         payload = {
-            "type": "full_transcript",
+            "type": "transcription",
             "audio": audio_b64,
             "language": "en-US",
             "meeting_id": "test_meeting",
