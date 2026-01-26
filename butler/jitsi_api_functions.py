@@ -14,16 +14,34 @@ import json
 import numpy as np
 import torch
 import torchaudio
+from pathlib import Path
 from typing import Optional, Tuple
 from dataclasses import dataclass
-try:
-    from importlib.resources import files
-except ImportError:
-    from importlib_resources import files
 
-from .speechlmm_engine import SpeechLMMEngine
-from speechlmm.mm_utils import monify_and_resample_audio
+from .triton_client import TritonClient
 from .vad_utils import SileroVAD
+
+
+def monify_and_resample_audio(
+    audio: torch.Tensor,
+    orig_sr: int,
+    target_sr: Optional[int] = None,
+) -> Tuple[torch.Tensor, int]:
+    """
+    Convert audio to mono and resample to target sample rate.
+    
+    Args:
+        audio: Audio tensor (shape: [channels, samples] or [1, channels, samples])
+        orig_sr: Original sample rate
+        target_sr: Target sample rate (default: same as orig_sr)
+        
+    Returns:
+        Tuple of (mono_audio_tensor, target_sr)
+    """
+    target_sr = target_sr or orig_sr
+    resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
+    audio = resampler(audio)
+    return audio.mean(dim=0, keepdim=True), target_sr
 
 
 class PromptLoader:
@@ -51,9 +69,9 @@ class PromptLoader:
     def _load_prompts(cls):
         """Load prompts from JSON file."""
         if cls._prompts is None:
-            # Load JSON from speechlmm package resources
-            prompts_file = files('speechlmm.dataset').joinpath('INPUTS_TEXT_LIST.json')
-            cls._prompts = json.loads(prompts_file.read_text(encoding='utf-8'))
+            prompts_path = Path(__file__).parent / "prompts" / "INPUTS_TEXT_LIST.json"
+            with open(prompts_path, 'r', encoding='utf-8') as f:
+                cls._prompts = json.load(f)
         return cls._prompts
     
     @classmethod
@@ -233,8 +251,8 @@ class CaptionHandler:
         self.last_was_final = False
 
 
-def transcribe_audio(
-    engine: SpeechLMMEngine,
+async def transcribe_audio(
+    engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
     participant_id: Optional[str] = None,
@@ -245,7 +263,7 @@ def transcribe_audio(
     Full meeting transcription.
     
     Args:
-        engine: Initialized SpeechLMMEngine
+        engine: Initialized TritonClient
         audio_bytes: Raw PCM LINEAR16 audio bytes (full meeting)
         sample_rate: Input sample rate (Hz)
         participant_id: User ID
@@ -260,7 +278,7 @@ def transcribe_audio(
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
     
-    transcription = engine._generate(
+    transcription = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -280,8 +298,8 @@ def transcribe_audio(
     )
 
 
-def caption_audio(
-    engine: SpeechLMMEngine,
+async def caption_audio(
+    engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
     participant_id: Optional[str] = None,
@@ -298,7 +316,7 @@ def caption_audio(
     The UI should display chunks in a sliding window (like subtitles).
     
     Args:
-        engine: Initialized SpeechLMMEngine
+        engine: Initialized TritonClient
         audio_bytes: Raw PCM LINEAR16 audio bytes (2-second chunk)
         sample_rate: Input sample rate (default: 48000 Hz)
         participant_id: User ID for speaker identification
@@ -336,7 +354,7 @@ def caption_audio(
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
     
-    transcription = engine._generate(
+    transcription = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -360,8 +378,8 @@ def caption_audio(
     )
 
 
-def summarize_audio(
-    engine: SpeechLMMEngine,
+async def summarize_audio(
+    engine: TritonClient,
     audio_bytes: bytes,
     sample_rate: int = 48000,
     participant_id: Optional[str] = None,
@@ -372,7 +390,7 @@ def summarize_audio(
     Meeting summarization.
     
     Args:
-        engine: Initialized SpeechLMMEngine
+        engine: Initialized TritonClient
         audio_bytes: Raw PCM LINEAR16 audio bytes (full meeting/segment)
         sample_rate: Input sample rate (Hz)
         participant_id: User ID
@@ -387,7 +405,7 @@ def summarize_audio(
     # Get language-specific SSUM prompt
     prompt = PromptLoader.get_prompt("SSUM", language)
     
-    summary = engine._generate(
+    summary = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,

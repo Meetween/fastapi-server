@@ -75,7 +75,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
                         try:
                             # Process audio through caption handler
-                            result = caption_audio(
+                            result = await caption_audio(
                                 engine=EngineManager.get_lmm(),
                                 audio_bytes=audio_data,
                                 sample_rate=16000,

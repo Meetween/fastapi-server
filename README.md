@@ -3,21 +3,16 @@
 A FastAPI-based server that's compatible with both Jigasi Whisper and Meetween transcription protocols.
 
 ## Installation
-<!-- 1. **Install uv**
-https://docs.astral.sh/uv/getting-started/installation/ -->
-1. **Clone the project**
-2. **Checkout the subproject**
-   ```
-   git submodule update --init --recursive
-   ```
-3. **Install requirements**
-    ```
-    pip install -r requirements.txt
 
-    cd speechlmm
+1. **Install requirements**
+   ```
+   pip install -r requirements.txt
+   ```
 
-    pip install -e .
-    ```
+2. **Ensure Triton Inference Server is running**
+   The FastAPI server connects to a Triton server for model inference.
+   See the Triton repo for setup instructions.
+
 3. **Run the Server**:
    ```bash
    python main.py

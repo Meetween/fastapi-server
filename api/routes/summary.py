@@ -71,18 +71,17 @@ async def get_summary_text(request: LMMRequest) -> str:
 
             logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
-            # Generate summary
-            summary = summarize_audio(
-                audio_bytes=audio_pcm,
-                sample_rate=16000,
-                engine=EngineManager.get_lmm(),
-                language=request.language
-            )
-            return summary
-        finally:
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+                # Generate summary
+                summary = await summarize_audio(
+                    audio_bytes=audio_pcm,
+                    sample_rate=16000,
+                    engine=EngineManager.get_lmm(),
+                    language=request.language
+                )
+            finally:
+                # Clean up temp file
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
     # Handle text input
     elif isinstance(request, MeetweenTextRequest):
@@ -162,14 +161,23 @@ async def get_summary_text(request: LMMRequest) -> str:
         duration_seconds = len(combined_audio) / 1000.0
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
-        # Generate summary
-        summary = summarize_audio(
-            audio_bytes=audio_pcm,
-            sample_rate=16000,
-            engine=EngineManager.get_lmm(),
-            language=request.language or "en-US"
-        )
-        return summary
+            # Generate summary
+            summary = await summarize_audio(
+                audio_bytes=audio_pcm,
+                sample_rate=16000,
+                engine=EngineManager.get_lmm(),
+                language=request.language or "en-US"
+            )
+
+            return MeetweenTaskResponse(
+                type="summary",
+                resultType="text",
+                room_name=request.room_name,
+                meeting_id=meeting_id,
+                result=summary,
+                language=request.language,
+                participant_id=request.participant_id
+            )
 
     else:
         raise HTTPException(
@@ -346,7 +354,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
         # Generate summary
-        summary = summarize_audio(
+        summary = await summarize_audio(
             audio_bytes=audio_pcm,
             sample_rate=16000,
             engine=EngineManager.get_lmm(),

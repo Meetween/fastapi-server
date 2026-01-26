@@ -3,13 +3,14 @@ import threading
 import logging
 from typing import Optional
 from config import settings
-from butler import SpeechLMMEngine, SileroVAD
+from butler import SileroVAD
+from butler.triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
 
 class EngineManager:
     """Singleton manager for managing speechlmm and vad_model"""
-    _speechlmm_engine: Optional[SpeechLMMEngine] = None
+    _speechlmm_engine: Optional[TritonClient] = None
     _vad_model: Optional[SileroVAD] = None
     _initialized: bool = False
     _lock = threading.Lock()
@@ -26,26 +27,19 @@ class EngineManager:
 
             logger.info("Initializing EngineManager...")
 
-            # Validate model path
-            model_path = settings.speechlmm_model_path
-            if not model_path:
-                raise RuntimeError("SPEECHLMM_MODEL_PATH environment variable not set")
-
-            if not os.path.exists(model_path):
-                raise RuntimeError(f"Model path not found: {model_path}")
-
-            # Load SpeechLMM engine
+            # Initialize Triton client
             try:
-                logger.info(f"Loading SpeechLMM model from {model_path}")
-                cls._speechlmm_engine = SpeechLMMEngine(
-                    model_path=model_path,
-                    device=None,
+                logger.info(f"Connecting to Triton server: {settings.triton.url}")
+                cls._speechlmm_engine = TritonClient(
+                    triton_url=settings.triton.url,
+                    model_name=settings.triton.model_name,
+                    timeout=settings.triton.timeout,
                     verbose=True
                 )
-                logger.info("SpeechLMM model loaded successfully")
+                logger.info("Triton client initialized successfully")
             except Exception as e:
-                logger.error(f"Failed to load SpeechLMM model: {e}", exc_info=True)
-                raise RuntimeError(f"Failed to initialize SpeechLMM: {e}")
+                logger.error(f"Failed to initialize Triton client: {e}", exc_info=True)
+                raise RuntimeError(f"Failed to initialize Triton client: {e}")
 
             # Load VAD model
             try:
@@ -66,13 +60,15 @@ class EngineManager:
         """Cleanup"""
         with cls._lock:
             logger.info("Cleaning up EngineManager...")
+            if cls._speechlmm_engine:
+                await cls._speechlmm_engine.close()
             cls._initialized = False
             cls._speechlmm_engine = None
             cls._vad_model = None
             logger.info("EngineManager cleanup complete")
 
     @classmethod
-    def get_lmm(cls) -> Optional[SpeechLMMEngine]:
+    def get_lmm(cls) -> Optional[TritonClient]:
         """Get SpeechLMM instance"""
         return cls._speechlmm_engine
 
