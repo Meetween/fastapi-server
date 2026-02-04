@@ -3,7 +3,10 @@
 Voice Activity Detection utilities for SpeechLMM
 """
 
+import logging
 import torch
+
+logger = logging.getLogger(__name__)
 
 
 class SileroVAD:
@@ -61,11 +64,28 @@ class SileroVAD:
             return True
         
         try:
-            with torch.no_grad():
-                confidence = self.model(audio, self.sample_rate).item()
-            return confidence > self.threshold
-        except Exception:
-            return True
+            # Silero VAD expects chunks of 256 samples (8kHz) or 512 samples (16kHz)
+            chunk_size = 512 if self.sample_rate == 16000 else 256
+            
+            max_confidence = 0.0
+            num_samples = audio.shape[0]
+            
+            for start_idx in range(0, num_samples, chunk_size):
+                end_idx = min(start_idx + chunk_size, num_samples)
+                chunk = audio[start_idx:end_idx]
+                
+                if chunk.shape[0] < chunk_size:
+                    padding = chunk_size - chunk.shape[0]
+                    chunk = torch.nn.functional.pad(chunk, (0, padding))
+                
+                with torch.no_grad():
+                    chunk_confidence = self.model(chunk, self.sample_rate).item()
+                    max_confidence = max(max_confidence, chunk_confidence)
+            
+            return max_confidence > self.threshold
+        except Exception as e:
+            logger.error(f"Error detecting speech: {e}")
+            return False
     
     def get_confidence(self, audio: torch.Tensor) -> float:
         """
@@ -84,9 +104,29 @@ class SileroVAD:
             audio = audio.squeeze(0)
         
         try:
-            with torch.no_grad():
-                confidence = self.model(audio, self.sample_rate).item()
-            return confidence
-        except Exception:
-            return 1.0
+            # Silero VAD expects chunks of 256 samples (8kHz) or 512 samples (16kHz)
+            chunk_size = 512 if self.sample_rate == 16000 else 256
+            
+            # Process audio in chunks
+            max_confidence = 0.0
+            num_samples = audio.shape[0]
+            
+            # Process chunks
+            for start_idx in range(0, num_samples, chunk_size):
+                end_idx = min(start_idx + chunk_size, num_samples)
+                chunk = audio[start_idx:end_idx]
+                
+                # Pad chunk if it's shorter than required size
+                if chunk.shape[0] < chunk_size:
+                    padding = chunk_size - chunk.shape[0]
+                    chunk = torch.nn.functional.pad(chunk, (0, padding))
+                
+                with torch.no_grad():
+                    chunk_confidence = self.model(chunk, self.sample_rate).item()
+                    max_confidence = max(max_confidence, chunk_confidence)
+            
+            return max_confidence
+        except Exception as e:
+            logger.error(f"Error getting confidence: {e}")
+            return 0.0
 
