@@ -18,10 +18,10 @@ python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = [
-    "-v",
     "--strict-markers",
-    "--tb=short",
-    "--cov=.",
+    "--cov=api",
+    "--cov=butler",
+    "--cov=core",
     "--cov-report=term-missing",
     "--cov-report=html",
 ]

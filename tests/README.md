@@ -86,7 +86,6 @@ Test configuration is in `pyproject.toml` under `[tool.pytest.ini_options]`.
 
 ### Environment Variables
 
-- `TEST_BASE_URL` - Base URL for the API server (default: `http://localhost:8002`)
 - `TEST_ROOM_NAME` - Test room name (default: hardcoded test value)
 - `TEST_MEETING_ID` - Test meeting ID (default: hardcoded test value)
 
@@ -100,7 +99,7 @@ Test configuration is in `pyproject.toml` under `[tool.pytest.ini_options]`.
 ### 2. Follow the Structure
 ```python
 import pytest
-import httpx
+from fastapi.testclient import TestClient
 from tests.utils.assertions import assert_successful_response
 from tests.utils.helpers import create_audio_payload
 
@@ -111,10 +110,9 @@ class TestMyEndpoint:
 
     def test_my_endpoint_success(
         self,
-        base_url: str,
+        client: TestClient,
         test_room_name: str,
-        test_meeting_id: str,
-        httpx_client: httpx.Client
+        test_meeting_id: str
     ):
         """Test my endpoint with valid input"""
         # Arrange
@@ -125,10 +123,7 @@ class TestMyEndpoint:
         )
         
         # Act
-        response = httpx_client.post(
-            f"{base_url}/api/my-endpoint",
-            json=payload
-        )
+        response = client.post("/api/my-endpoint", json=payload)
         
         # Assert
         data = assert_successful_response(response)
@@ -173,7 +168,6 @@ Always include tests for:
 ## Fixtures
 
 ### Configuration Fixtures (Session-scoped)
-- `base_url` - API server base URL
 - `test_room_name` - Test room name
 - `test_meeting_id` - Test meeting ID
 
@@ -181,24 +175,21 @@ Always include tests for:
 - `dummy_audio_bytes` - Dummy audio bytes
 - `dummy_audio_base64` - Base64-encoded dummy audio
 - `sample_text` - Sample text for testing
-- `unique_meeting_id` - Unique meeting ID per test
-- `unique_room_name` - Unique room name per test
 
 ### Client Fixtures (Function-scoped)
-- `httpx_client` - HTTP client for making requests
+- `client` - FastAPI TestClient for making requests
 
 ## Continuous Integration
 
 Tests are designed to run in CI/CD pipelines. Make sure to:
-1. Set `TEST_BASE_URL` environment variable
-2. Ensure the server is running before integration tests
-3. Use appropriate markers to skip slow tests if needed
+1. Use appropriate markers to skip slow tests if needed
+2. Tests use FastAPI's TestClient, so no server needs to be running
 
 ## Troubleshooting
 
 ### Tests failing with connection errors
-- Ensure the server is running on the configured `TEST_BASE_URL`
-- Check firewall/network settings
+- Tests use FastAPI's TestClient and don't require a running server
+- Check that all required fixtures are properly configured
 
 ### Tests failing with validation errors
 - Verify test data matches expected API schema
