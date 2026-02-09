@@ -8,8 +8,15 @@ from butler import SpeechLMMEngine, SileroVAD
 logger = logging.getLogger(__name__)
 
 class EngineManager:
-    """Singleton manager for managing speechlmm and vad_model"""
-    _speechlmm_engine: Optional[SpeechLMMEngine] = None
+    """
+    Singleton manager for managing speechlmm engines and vad_model.
+    
+    Maintains separate engine instances:
+    - Real-time engine: For websocket captioning and transcription
+    - Batch engine: For catchup and summarization
+    """
+    _realtime_engine: Optional[SpeechLMMEngine] = None
+    _batch_engine: Optional[SpeechLMMEngine] = None
     _vad_model: Optional[SileroVAD] = None
     _initialized: bool = False
     _lock = threading.Lock()
@@ -34,18 +41,29 @@ class EngineManager:
             if not os.path.exists(model_path):
                 raise RuntimeError(f"Model path not found: {model_path}")
 
-            # Load SpeechLMM engine
             try:
-                logger.info(f"Loading SpeechLMM model from {model_path}")
-                cls._speechlmm_engine = SpeechLMMEngine(
+                logger.info(f"Loading real-time SpeechLMM model from {model_path}")
+                cls._realtime_engine = SpeechLMMEngine(
                     model_path=model_path,
                     device=None,
                     verbose=True
                 )
-                logger.info("SpeechLMM model loaded successfully")
+                logger.info("Real-time SpeechLMM model loaded successfully")
             except Exception as e:
-                logger.error(f"Failed to load SpeechLMM model: {e}", exc_info=True)
-                raise RuntimeError(f"Failed to initialize SpeechLMM: {e}")
+                logger.error(f"Failed to load real-time SpeechLMM model: {e}", exc_info=True)
+                raise RuntimeError(f"Failed to initialize real-time SpeechLMM: {e}")
+
+            try:
+                logger.info(f"Loading batch SpeechLMM model from {model_path}")
+                cls._batch_engine = SpeechLMMEngine(
+                    model_path=model_path,
+                    device=None,
+                    verbose=True
+                )
+                logger.info("Batch SpeechLMM model loaded successfully")
+            except Exception as e:
+                logger.error(f"Failed to load batch SpeechLMM model: {e}", exc_info=True)
+                raise RuntimeError(f"Failed to initialize batch SpeechLMM: {e}")
 
             # Load VAD model
             try:
@@ -67,14 +85,34 @@ class EngineManager:
         with cls._lock:
             logger.info("Cleaning up EngineManager...")
             cls._initialized = False
-            cls._speechlmm_engine = None
+            cls._realtime_engine = None
+            cls._batch_engine = None
             cls._vad_model = None
             logger.info("EngineManager cleanup complete")
 
     @classmethod
     def get_lmm(cls) -> Optional[SpeechLMMEngine]:
-        """Get SpeechLMM instance"""
-        return cls._speechlmm_engine
+        """
+        Get SpeechLMM instance.
+        Returns real-time engine by default.
+        """
+        return cls._realtime_engine
+
+    @classmethod
+    def get_realtime_lmm(cls) -> Optional[SpeechLMMEngine]:
+        """
+        Get real-time SpeechLMM engine instance.
+        Use for websocket captioning and transcription.
+        """
+        return cls._realtime_engine
+
+    @classmethod
+    def get_batch_lmm(cls) -> Optional[SpeechLMMEngine]:
+        """
+        Get batch SpeechLMM engine instance.
+        Use for catchup and summarization.
+        """
+        return cls._batch_engine
 
     @classmethod
     def get_vad(cls) -> Optional[SileroVAD]:
@@ -84,4 +122,4 @@ class EngineManager:
     @classmethod
     def is_ready(cls) -> bool:
         """Check if models are ready"""
-        return cls._initialized and cls._speechlmm_engine is not None
+        return cls._initialized and cls._realtime_engine is not None and cls._batch_engine is not None

@@ -38,7 +38,7 @@ async def get_summary_text(request: LMMRequest) -> str:
     
     Returns the summary text as a string.
     """
-    if not EngineManager.get_lmm():
+    if not EngineManager.get_batch_lmm():
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded"
@@ -72,10 +72,10 @@ async def get_summary_text(request: LMMRequest) -> str:
             logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
             # Generate summary
-            summary = summarize_audio(
+            summary = await summarize_audio(
                 audio_bytes=audio_pcm,
                 sample_rate=16000,
-                engine=EngineManager.get_lmm(),
+                engine=EngineManager.get_batch_lmm(),
                 language=request.language
             )
             return summary
@@ -171,10 +171,10 @@ async def get_summary_text(request: LMMRequest) -> str:
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
         # Generate summary
-        summary = summarize_audio(
+        summary = await summarize_audio(
             audio_bytes=audio_pcm,
             sample_rate=16000,
-            engine=EngineManager.get_lmm(),
+            engine=EngineManager.get_batch_lmm(),
             language=request.language or "en-US"
         )
         return summary
@@ -257,7 +257,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
 
     Returns a catch_me_up type response with summary
     """
-    if not EngineManager.get_lmm():
+    if not EngineManager.get_batch_lmm():
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded"
@@ -362,10 +362,10 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
         # Generate summary
-        summary = summarize_audio(
+        summary = await summarize_audio(
             audio_bytes=audio_pcm,
             sample_rate=16000,
-            engine=EngineManager.get_lmm(),
+            engine=EngineManager.get_batch_lmm(),
             language=request.language or "en-US"
         )
 

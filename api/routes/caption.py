@@ -37,10 +37,10 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
     try:
         # Initialize caption handler for this session
-        if EngineManager.get_lmm():
+        if EngineManager.get_realtime_lmm():
             caption_handler = SessionManager.get_or_create_caption_handler(
                 meeting_id=meeting_id,
-                engine=EngineManager.get_lmm(),
+                engine=EngineManager.get_realtime_lmm(),
                 vad_model=EngineManager.get_vad()
             )
         while True:
@@ -64,7 +64,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                         audio_data = request.get_audio_bytes()
                         await AudioRecorder.save_chunk(room_name=room_name, meeting_id=meeting_id, audio_data=audio_data, chunk_duration=2.0)
 
-                        if not EngineManager.get_lmm() or not caption_handler:
+                        if not EngineManager.get_realtime_lmm() or not caption_handler:
                             error_response = MeetweenErrorResponse(
                                 message="SpeechLMM not available",
                                 code="SERVICE_UNAVAILABLE"
@@ -75,8 +75,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
                         try:
                             # Process audio through caption handler
-                            result = caption_audio(
-                                engine=EngineManager.get_lmm(),
+                            result = await caption_audio(
+                                engine=EngineManager.get_realtime_lmm(),
                                 audio_bytes=audio_data,
                                 sample_rate=16000,
                                 caption_handler=caption_handler,

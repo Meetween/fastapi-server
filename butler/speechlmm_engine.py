@@ -3,6 +3,7 @@
 SpeechLMM Engine - Core model interface for audio transcription and summarization
 """
 
+import asyncio
 import torch
 from pathlib import Path
 from typing import Optional, Union
@@ -55,10 +56,12 @@ class SpeechLMMEngine:
         
         self.conv_version = self.model.text_decoder.conversation_version
         
+        self._generate_lock: Optional[asyncio.Lock] = None
+        
         if self.verbose:
             print(f"[SpeechLMM] Model loaded successfully")
     
-    def _generate(
+    async def _generate(
         self,
         prompt: str,
         audio: torch.Tensor,
@@ -82,6 +85,36 @@ class SpeechLMMEngine:
             
         Returns:
             Generated text
+        """
+        if self._generate_lock is None:
+            self._generate_lock = asyncio.Lock()
+        
+        async with self._generate_lock:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                self._generate_sync,
+                prompt,
+                audio,
+                sample_rate,
+                max_new_tokens,
+                do_sample,
+                temperature,
+                repetition_penalty
+            )
+    
+    def _generate_sync(
+        self,
+        prompt: str,
+        audio: torch.Tensor,
+        sample_rate: int,
+        max_new_tokens: int = 512,
+        do_sample: bool = False,
+        temperature: float = 0.0,
+        repetition_penalty: float = 1.0
+    ) -> str:
+        """
+        Synchronous implementation of model generation.
         """
         conv = conv_templates[self.conv_version].copy()
         
