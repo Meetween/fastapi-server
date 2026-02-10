@@ -85,10 +85,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             )
 
                             # Skip sending empty / no-result transcripts
-                            if (
-                                not getattr(result, "text", "").strip()
-                                or getattr(result, "result_type", None) == ResultType.NO_RESULT
-                            ):
+                            if getattr(result, "result_type", None) == ResultType.NO_RESULT:
                                 continue
 
                             # Send transcription result
