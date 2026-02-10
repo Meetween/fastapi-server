@@ -93,7 +93,7 @@ def mock_engine_manager():
         return "Mock summary text for testing"
     
     def mock_transcribe_audio(*args, **kwargs):
-        from butler import TranscriptionResult
+        from butler import TranscriptionResult, ResultType
         return TranscriptionResult(
             participant_id=kwargs.get('participant_id'),
             message_id=0,
@@ -102,7 +102,8 @@ def mock_engine_manager():
             language=kwargs.get('language', 'en-US'),
             stability=1.0,
             text="Mock transcription text for testing",
-            confidence=1.0
+            confidence=1.0,
+            result_type=ResultType.FINAL_RESULT,
         )
     
     # Create a mock VAD that always detects speech (so chunks aren't skipped)
