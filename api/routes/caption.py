@@ -2,10 +2,9 @@ import uuid
 import json
 import logging
 import time
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
-from typing import Optional
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from core import EngineManager, SessionManager
-from butler import CaptionHandler, caption_audio
+from butler import caption_audio, ResultType
 from utils import AudioRecorder, UUIDHelper
 from pydantic import ValidationError
 
@@ -84,6 +83,13 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 language=request.language,
                                 vad=EngineManager.get_vad()
                             )
+
+                            # Skip sending empty / no-result transcripts
+                            if (
+                                not getattr(result, "text", "").strip()
+                                or getattr(result, "result_type", None) == ResultType.NO_RESULT
+                            ):
+                                continue
 
                             # Send transcription result
                             response = MeetweenTranscriptionResponse(
