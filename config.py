@@ -1,8 +1,14 @@
 
 import os
 from pathlib import Path
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from typing import Optional
+
+class TritonSettings(BaseModel):
+    url: str = Field(default="http://localhost:9000", env="TRITON_URL")
+    model_name: str = Field(default="speechlmm", env="TRITON_MODEL_NAME")
+    timeout: int = Field(default=1800, env="TRITON_TIMEOUT")
 
 class Settings(BaseSettings):
 
@@ -11,7 +17,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    speechlmm_model_path: str = os.getenv("SPEECHLMM_MODEL_PATH", "")
+    triton: TritonSettings = TritonSettings()
 
     vad_sample_rate: int = 16000
     vad_threshold: float = 0.5

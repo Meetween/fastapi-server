@@ -13,7 +13,6 @@ from .jitsi_api_functions import (
     AudioConverter,
     ResultType,
 )
-from .speechlmm_engine import SpeechLMMEngine
 from .vad_utils import SileroVAD
 
 __all__ = [
@@ -24,7 +23,6 @@ __all__ = [
     'CaptionHandler',
     'AudioConverter',
     'ResultType',
-    'SpeechLMMEngine',
     'SileroVAD'
 ]
 

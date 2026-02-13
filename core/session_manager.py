@@ -1,7 +1,8 @@
 import logging
 from typing import Dict, Optional
 from fastapi import WebSocket
-from butler import CaptionHandler, SpeechLMMEngine, SileroVAD
+from butler import CaptionHandler, SileroVAD
+from butler.triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,7 @@ class SessionManager:
     def get_or_create_caption_handler(
         cls,
         meeting_id: str,
-        engine: SpeechLMMEngine,
+        engine: TritonClient,
         vad_model: Optional[SileroVAD] = None
     ) -> CaptionHandler:
         """Get existing or create new caption handler"""
