@@ -16,6 +16,7 @@ import torch
 import torchaudio
 from pathlib import Path
 from typing import Optional, Tuple
+from typing import Optional, Tuple, List, Dict
 from dataclasses import dataclass
 from enum import Enum
 
@@ -323,7 +324,10 @@ async def caption_audio(
     caption_handler: Optional[CaptionHandler] = None,
     timestamp: float = 0.0,
     max_tokens: int = 256,
-    vad: Optional[SileroVAD] = None
+    vad: Optional[SileroVAD] = None,
+    prompt: Optional[str] = None,
+    context: Optional[str] = None,
+    history: Optional[List[Dict[str, str]]] = None
 ) -> TranscriptionResult:
     """
     Real-time captioning for live transcription display.
@@ -341,6 +345,9 @@ async def caption_audio(
         timestamp: Audio start time in seconds
         max_tokens: Max generation tokens
         vad: Optional SileroVAD instance for silence detection
+        prompt: Optional free-form prompt to pass to the LLM. If provided, overrides the default ASR prompt.
+        context: Optional context string to provide additional information to the model
+        history: Optional conversation history.
         
     Returns:
         TranscriptionResult with current chunk transcription.
@@ -368,8 +375,9 @@ async def caption_audio(
             result_type=ResultType.NO_RESULT,
         )
     
-    # Get language-specific ASR prompt
-    prompt = PromptLoader.get_prompt("ASR", language)
+    # Get language-specific ASR prompt if custom prompt not provided
+    if prompt is None:
+        prompt = PromptLoader.get_prompt("ASR", language)
     
     transcription = await engine._generate_text_from_audio(
         prompt=prompt,
@@ -377,7 +385,9 @@ async def caption_audio(
         sample_rate=target_sr,
         max_new_tokens=max_tokens,
         do_sample=False,
-        repetition_penalty=1.2
+        repetition_penalty=1.2,
+        context=context,
+        history=history
     )
     
     text, is_final, message_id = caption_handler.process_chunk(transcription)
@@ -403,7 +413,10 @@ async def summarize_audio(
     sample_rate: int = 48000,
     participant_id: Optional[str] = None,
     language: str = "en-US",
-    max_tokens: int = 2048
+    max_tokens: int = 2048,
+    prompt: Optional[str] = None,
+    context: Optional[str] = None,
+    history: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
     Meeting summarization.
@@ -415,21 +428,27 @@ async def summarize_audio(
         participant_id: User ID
         language: BCP-47 language code
         max_tokens: Max generation tokens (model supports up to 131072)
+        prompt: Optional free-form prompt to pass to the LLM. If provided, overrides the default SSUM prompt.
+        context: Optional context string to provide additional information to the model
+        history: Optional conversation history.
         
     Returns:
         Summary text
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
     
-    # Get language-specific SSUM prompt
-    prompt = PromptLoader.get_prompt("SSUM", language)
+    # Get language-specific SSUM prompt if custom prompt not provided
+    if prompt is None:
+        prompt = PromptLoader.get_prompt("SSUM", language)
     
     summary = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
         max_new_tokens=max_tokens,
-        do_sample=False
+        do_sample=False,
+        context=context,
+        history=history
     )
     
     return summary.strip()
