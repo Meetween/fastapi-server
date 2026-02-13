@@ -19,7 +19,7 @@ from models import (
     MeetweenCatchupRequest,
     LMMRequest
 )
-from butler import summarize_audio
+from butler import AudioConverter, summarize_audio
 
 router = APIRouter(prefix="/api", tags=["summary"])
 
@@ -120,6 +120,7 @@ async def get_summary_text(request: LMMRequest) -> str:
         # Combine all chunks into one audio file
         combined_audio = AudioSegment.empty()
         successful_chunks = 0
+        vad = EngineManager.get_vad()
 
         for chunk_num in range(1, chunk_count + 1):
             chunk_path = meeting_path / StorageManager.get_chunk_filename(chunk_num, suffix=settings.recording_format)
@@ -131,6 +132,13 @@ async def get_summary_text(request: LMMRequest) -> str:
                         continue
 
                     chunk_audio = AudioSegment.from_file(str(chunk_path))
+                    converted_audio = chunk_audio.set_channels(1).set_frame_rate(16000)
+                    audio_array = np.array(converted_audio.get_array_of_samples(), dtype=np.int16)
+                    audio_pcm = audio_array.tobytes()
+                    audio_tensor, _ = AudioConverter.bytes_to_tensor(audio_pcm, sample_rate=16000)
+                    if vad is not None and not vad.has_speech(audio_tensor):
+                        logger.info(f"Skipping chunk: {chunk_path.name} - no speech detected")
+                        continue
 
                     # Skip very short chunks (< 0.5 seconds)
                     if len(chunk_audio) < 500:
@@ -301,6 +309,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         # Combine all chunks into one audio file
         combined_audio = AudioSegment.empty()
         successful_chunks = 0
+        vad = EngineManager.get_vad()
 
         for chunk_num in range(1, chunk_count + 1):
             chunk_path = meeting_path / StorageManager.get_chunk_filename(chunk_num, suffix=settings.recording_format)
@@ -312,6 +321,13 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
                         continue
 
                     chunk_audio = AudioSegment.from_file(str(chunk_path))
+                    converted_audio = chunk_audio.set_channels(1).set_frame_rate(16000)
+                    audio_array = np.array(converted_audio.get_array_of_samples(), dtype=np.int16)
+                    audio_pcm = audio_array.tobytes()
+                    audio_tensor, _ = AudioConverter.bytes_to_tensor(audio_pcm, sample_rate=16000)
+                    if vad is not None and not vad.has_speech(audio_tensor):
+                        logger.info(f"Skipping chunk: {chunk_path.name} - no speech detected")
+                        continue
 
                     # Skip very short chunks (< 0.5 seconds)
                     if len(chunk_audio) < 500:

@@ -11,3 +11,24 @@ dependencies = [
     "uvicorn[standard]>=0.24.0",
     "websockets>=12.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--cov=api",
+    "--cov=butler",
+    "--cov=core",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "unit: marks tests as unit tests",
+    "regression: marks tests as regression tests",
+    "slow: marks tests as slow running",
+]
+asyncio_mode = "auto"

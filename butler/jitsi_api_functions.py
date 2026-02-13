@@ -17,6 +17,7 @@ import torchaudio
 from pathlib import Path
 from typing import Optional, Tuple
 from dataclasses import dataclass
+from enum import Enum
 
 from .triton_client import TritonClient
 from .vad_utils import SileroVAD
@@ -152,6 +153,19 @@ class PromptLoader:
         return prompt
 
 
+class ResultType(str, Enum):
+    """
+    Type of transcription result.
+    
+    - NO_RESULT:     No speech detected
+    - PARTIAL_RESULT: Interim / non-final hypothesis for streaming captions
+    - FINAL_RESULT:   Final result for a caption segment or full transcription
+    """
+    NO_RESULT = "NO_RESULT"
+    PARTIAL_RESULT = "PARTIAL_RESULT"
+    FINAL_RESULT = "FINAL_RESULT"
+
+
 @dataclass
 class TranscriptionResult:
     """Transcription result matching Jigasi format."""
@@ -163,6 +177,7 @@ class TranscriptionResult:
     stability: float
     text: str
     confidence: float
+    result_type: ResultType = ResultType.PARTIAL_RESULT
 
 
 class AudioConverter:
@@ -294,7 +309,8 @@ async def transcribe_audio(
         language=language,
         stability=1.0,
         text=transcription.strip(),
-        confidence=1.0
+        confidence=1.0,
+        result_type=ResultType.FINAL_RESULT,
     )
 
 
@@ -348,7 +364,8 @@ async def caption_audio(
             language=language,
             stability=0.0,
             text="",
-            confidence=0.0
+            confidence=0.0,
+            result_type=ResultType.NO_RESULT,
         )
     
     # Get language-specific ASR prompt
@@ -365,6 +382,7 @@ async def caption_audio(
     
     text, is_final, message_id = caption_handler.process_chunk(transcription)
     stability = 0.8 if is_final else 0.6
+    result_type = ResultType.FINAL_RESULT if is_final else ResultType.PARTIAL_RESULT
     
     return TranscriptionResult(
         participant_id=participant_id,
@@ -374,7 +392,8 @@ async def caption_audio(
         language=language,
         stability=stability,
         text=text,
-        confidence=stability
+        confidence=stability,
+        result_type=result_type,
     )
 
 
