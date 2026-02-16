@@ -11,12 +11,12 @@ Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
 import json
+from models import HistoryEntry
 import numpy as np
 import torch
 import torchaudio
 from pathlib import Path
-from typing import Optional, Tuple
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
 
@@ -324,10 +324,7 @@ async def caption_audio(
     caption_handler: Optional[CaptionHandler] = None,
     timestamp: float = 0.0,
     max_tokens: int = 256,
-    vad: Optional[SileroVAD] = None,
-    prompt: Optional[str] = None,
-    context: Optional[str] = None,
-    history: Optional[List[Dict[str, str]]] = None
+    vad: Optional[SileroVAD] = None
 ) -> TranscriptionResult:
     """
     Real-time captioning for live transcription display.
@@ -345,9 +342,6 @@ async def caption_audio(
         timestamp: Audio start time in seconds
         max_tokens: Max generation tokens
         vad: Optional SileroVAD instance for silence detection
-        prompt: Optional free-form prompt to pass to the LLM. If provided, overrides the default ASR prompt.
-        context: Optional context string to provide additional information to the model
-        history: Optional conversation history.
         
     Returns:
         TranscriptionResult with current chunk transcription.
@@ -375,9 +369,8 @@ async def caption_audio(
             result_type=ResultType.NO_RESULT,
         )
     
-    # Get language-specific ASR prompt if custom prompt not provided
-    if prompt is None:
-        prompt = PromptLoader.get_prompt("ASR", language)
+    # Get language-specific ASR prompt
+    prompt = PromptLoader.get_prompt("ASR", language)
     
     transcription = await engine._generate_text_from_audio(
         prompt=prompt,
@@ -386,8 +379,6 @@ async def caption_audio(
         max_new_tokens=max_tokens,
         do_sample=False,
         repetition_penalty=1.2,
-        context=context,
-        history=history
     )
     
     text, is_final, message_id = caption_handler.process_chunk(transcription)
@@ -416,7 +407,7 @@ async def summarize_audio(
     max_tokens: int = 2048,
     prompt: Optional[str] = None,
     context: Optional[str] = None,
-    history: Optional[List[Dict[str, str]]] = None
+    history: Optional[List[HistoryEntry]] = None
 ) -> str:
     """
     Meeting summarization.

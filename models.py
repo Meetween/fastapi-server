@@ -21,9 +21,6 @@ class MeetweenTranscriptionRequest(BaseModel):
     audio: str = Field(..., description="Base64 encoded audio data")
     meeting_id: str
     room_name: str
-    prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM. If provided, overrides the default ASR prompt.")
-    context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
-    history: Optional[List[Dict[str, str]]] = Field(None, description="Optional conversation history. Each entry should have 'role' (user/assistant) and 'content' fields.")
 
     @field_validator('audio')
     @classmethod
@@ -52,6 +49,9 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
+class HistoryEntry(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
 
 class MeetweenTaskRequest(BaseModel):
     type: taskTypes
@@ -59,9 +59,9 @@ class MeetweenTaskRequest(BaseModel):
     meeting_id: str
     participant_id: Optional[str]
     language: Optional[str]
-    prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM")
+    prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM", max_length=2048)
     context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
-    history: Optional[List[Dict[str, str]]] = Field(None, description="Optional conversation history.")
+    history: Optional[List[HistoryEntry]] = Field(None, description="Optional conversation history.")
 
 class MeetweenAudioRequest(MeetweenTaskRequest):
     audio: str
