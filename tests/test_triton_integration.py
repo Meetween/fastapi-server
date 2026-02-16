@@ -54,15 +54,15 @@ def test_triton_direct(audio_file, prompt="Transcribe the following audio:"):
             "inputs": [
                 {
                     "name": "AUDIO_BYTES",
-                    "shape": [1, 1],
+                    "shape": [1],
                     "datatype": "BYTES",
-                    "data": [[audio_b64]]
+                    "data": [audio_b64]
                 },
                 {
                     "name": "TEXT_PROMPT",
-                    "shape": [1, 1],
+                    "shape": [1],
                     "datatype": "BYTES",
-                    "data": [[prompt]]
+                    "data": [prompt]
                 }
             ],
             "outputs": [{"name": "GENERATED_TEXT"}]
