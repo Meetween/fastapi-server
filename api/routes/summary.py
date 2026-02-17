@@ -293,7 +293,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
             logger.error(f"No audio found for catching up. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
-                detail=f"No audio found for catching up yet. The Meeting just started."
+                detail=f"The meeting just started. We have not received enough valid audio yet to generate a summary."
             )
 
         # Load metadata
@@ -307,7 +307,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
             logger.error(f"No audio received yet. The meeting just started. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
-                detail=f"No valid audio found received. The meeting just started."
+                detail=f"The meeting just started. We have not received enough valid audio yet to generate a summary."
             )
 
         logger.info(f"Processing catch-up for meeting {meeting_id}: {chunk_count} chunks, {metadata['total_duration']:.1f}s")
@@ -361,7 +361,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
 
             raise HTTPException(
                 status_code=400,
-                detail=f"No valid audio found. The meeting may have just started."
+                detail=f"The meeting may have just started. We have not received valid audio to generate a summary. "
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
