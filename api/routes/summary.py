@@ -383,7 +383,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
                 room_name=request.room_name,
                 meeting_id=meeting_id,
                 #result=f"Not enough recording yet ({duration_seconds:.0f}s). Please wait until at least {min_duration // 60} minutes have been recorded.",
-                result=f"The meeting just started. Please wait a few more minutes before asking for a catch-up summary.",
+                result=f"The meeting just started. Please wait a few more minutes for a catch-up summary.",
                 language=request.language,
                 participant_id=request.participant_id
             )
