@@ -375,6 +375,19 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         duration_seconds = len(combined_audio) / 1000.0
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
+        min_duration = settings.min_catchup_duration_seconds
+        if duration_seconds < min_duration:
+            return MeetweenTaskResponse(
+                type="catch_me_up",
+                resultType="text",
+                room_name=request.room_name,
+                meeting_id=meeting_id,
+                #result=f"Not enough recording yet ({duration_seconds:.0f}s). Please wait until at least {min_duration // 60} minutes have been recorded.",
+                result=f"The meeting just started. Please wait a few more minutes before asking for a catch-up summary.",
+                language=request.language,
+                participant_id=request.participant_id
+            )
+
         # Generate summary
         summary = await summarize_audio(
             audio_bytes=audio_pcm,
