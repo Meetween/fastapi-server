@@ -157,9 +157,10 @@ async def get_summary_text(request: LMMRequest) -> str:
                     continue
 
         if len(combined_audio) == 0:
+            logger.error(f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.")
             raise HTTPException(
                 status_code=400,
-                detail=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded."
+                detail=f"No valid audio found. Audio could ne be decoded"
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
@@ -355,14 +356,11 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
                     continue
 
         if len(combined_audio) == 0:
-            return MeetweenTaskResponse(
-                type="catch_me_up",
-                resultType="text",
-                room_name=request.room_name,
-                meeting_id=meeting_id,
-                result=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded. The meeting may have just started.",
-                language=request.language,
-                participant_id=request.participant_id
+            logger.error(f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.")
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"No valid audio found. The meeting may have just started."
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
