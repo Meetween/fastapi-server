@@ -1,7 +1,7 @@
 """
 Pydantic models for Meetween API
 """
-from typing import Optional, Literal, Union
+from typing import Optional, Literal, Union, List, Dict
 from pydantic import BaseModel, Field, field_validator
 import base64
 
@@ -49,6 +49,9 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
+class HistoryEntry(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
 
 class MeetweenTaskRequest(BaseModel):
     type: taskTypes
@@ -56,6 +59,9 @@ class MeetweenTaskRequest(BaseModel):
     meeting_id: str
     participant_id: Optional[str]
     language: Optional[str]
+    prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM", max_length=2048)
+    context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
+    history: Optional[List[HistoryEntry]] = Field(None, description="Optional conversation history.")
 
 class MeetweenAudioRequest(MeetweenTaskRequest):
     audio: str

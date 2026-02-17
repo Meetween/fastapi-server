@@ -76,7 +76,10 @@ async def get_summary_text(request: LMMRequest) -> str:
                 audio_bytes=audio_pcm,
                 sample_rate=16000,
                 engine=EngineManager.get_lmm(),
-                language=request.language
+                language=request.language,
+                prompt=request.prompt,
+                context=request.context,
+                history=request.history
             )
         finally:
             # Clean up temp file
@@ -176,7 +179,10 @@ async def get_summary_text(request: LMMRequest) -> str:
             audio_bytes=audio_pcm,
             sample_rate=16000,
             engine=EngineManager.get_lmm(),
-            language=request.language or "en-US"
+            language=request.language or "en-US",
+            prompt=request.prompt,
+            context=request.context,
+            history=request.history
         )
 
         return MeetweenTaskResponse(
@@ -376,7 +382,10 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
             audio_bytes=audio_pcm,
             sample_rate=16000,
             engine=EngineManager.get_lmm(),
-            language=request.language or "en-US"
+            language=request.language or "en-US",
+            prompt=request.prompt,
+            context=request.context,
+            history=request.history
         )
 
         return MeetweenTaskResponse(

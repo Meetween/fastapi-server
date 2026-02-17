@@ -6,9 +6,10 @@ Triton Client - Interface to Triton Inference Server for SpeechLMM
 import base64
 import io
 import logging
+from models import HistoryEntry
 import torch
 import soundfile as sf
-from typing import Optional
+from typing import List, Optional
 
 import httpx
 
@@ -75,7 +76,9 @@ class TritonClient:
         max_new_tokens: int = 512,
         do_sample: bool = False,
         temperature: float = 0.0,
-        repetition_penalty: float = 1.0
+        repetition_penalty: float = 1.0,
+        context: Optional[str] = None,
+        history: Optional[List[HistoryEntry]] = None
     ) -> str:
         """
         Generate text from audio using Triton server.
