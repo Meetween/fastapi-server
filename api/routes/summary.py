@@ -186,15 +186,7 @@ async def get_summary_text(request: LMMRequest) -> str:
             history=request.history
         )
 
-        return MeetweenTaskResponse(
-            type="summary",
-            resultType="text",
-            room_name=request.room_name,
-            meeting_id=meeting_id,
-            result=summary,
-            language=request.language,
-            participant_id=request.participant_id
-        )
+        return summary
 
     else:
         raise HTTPException(
