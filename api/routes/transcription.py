@@ -108,9 +108,10 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             meeting_path = settings.recordings_base_path / room_name / meeting_id
 
             if not meeting_path.exists():
+                logger.error(f"No recording found. Can't generate transcription. Meeting: {room_name}/{meeting_id}")
                 raise HTTPException(
                     status_code=404,
-                    detail=f"No recording found for meeting: {room_name}/{meeting_id}"
+                    detail=f"No audio found for meeting. Can't generate transcription."
                 )
 
             # Load metadata
@@ -121,6 +122,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             chunk_count = metadata["chunk_count"]
 
             if chunk_count == 0:
+                logger.error("No audio recorded yet. The meeting just started. No transcription generated")
                 raise HTTPException(
                     status_code=400,
                     detail=f"No audio recorded yet. The meeting just started. No transcription generated"
@@ -157,9 +159,10 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                         continue
 
             if len(combined_audio) == 0:
+                logger.error(f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.")
                 raise HTTPException(
                     status_code=400,
-                    detail=f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded."
+                    detail=f"No valid audio found. Audio could not be decoded to transcription."
                 )
 
             logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")

@@ -100,9 +100,10 @@ async def get_summary_text(request: LMMRequest) -> str:
         meeting_path = settings.recordings_base_path / room_name / meeting_id
 
         if not meeting_path.exists():
+            logger.error(f"No audio found. Can't summarize. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
-                detail=f"No recording found for meeting: {room_name}/{meeting_id}"
+                detail=f"No audio found to summarize."
             )
 
         # Load metadata
@@ -113,9 +114,11 @@ async def get_summary_text(request: LMMRequest) -> str:
         chunk_count = metadata["chunk_count"]
 
         if chunk_count == 0:
+            logger.error(f"No valid audio found. Can't summarize. Meeting: {room_name}/{meeting_id}")
+
             raise HTTPException(
                 status_code=400,
-                detail="No audio recorded yet. The meeting just started."
+                detail="No valid audio found to summarize."
             )
 
         logger.info(f"Summarizing meeting {meeting_id}: {chunk_count} chunks, {metadata['total_duration']:.1f}s")
@@ -160,7 +163,7 @@ async def get_summary_text(request: LMMRequest) -> str:
             logger.error(f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.")
             raise HTTPException(
                 status_code=400,
-                detail=f"No valid audio found. Audio could ne be decoded"
+                detail=f"No valid audio found. Audio could not be decoded"
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
@@ -197,6 +200,7 @@ async def get_summary_text(request: LMMRequest) -> str:
         )
 
     else:
+        logger.error("Invalid request type. Must provide audio, text, or meeting_id.")
         raise HTTPException(
             status_code=400,
             detail="Invalid request type. Must provide audio, text, or meeting_id."
@@ -286,9 +290,10 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         meeting_path = settings.recordings_base_path / room_name / meeting_id
 
         if not meeting_path.exists():
+            logger.error(f"No audio found for catching up. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
-                detail=f"No recording found for meeting: {meeting_id}"
+                detail=f"The meeting just started. We have not received enough valid audio yet to generate a summary."
             )
 
         # Load metadata
@@ -299,14 +304,10 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         chunk_count = metadata["chunk_count"]
 
         if chunk_count == 0:
-            return MeetweenTaskResponse(
-                type="catch_me_up",
-                resultType="text",
-                room_name=request.room_name,
-                meeting_id=meeting_id,
-                result="No audio recorded yet. The meeting just started.",
-                language=request.language,
-                participant_id=request.participant_id
+            logger.error(f"No audio received yet. The meeting just started. Meeting: {room_name}/{meeting_id}")
+            raise HTTPException(
+                status_code=404,
+                detail=f"The meeting just started. We have not received enough valid audio yet to generate a summary."
             )
 
         logger.info(f"Processing catch-up for meeting {meeting_id}: {chunk_count} chunks, {metadata['total_duration']:.1f}s")
@@ -360,7 +361,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
 
             raise HTTPException(
                 status_code=400,
-                detail=f"No valid audio found. The meeting may have just started."
+                detail=f"The meeting may have just started. We have not received valid audio to generate a summary. "
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
@@ -377,15 +378,10 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
 
         min_duration = settings.min_catchup_duration_seconds
         if duration_seconds < min_duration:
-            return MeetweenTaskResponse(
-                type="catch_me_up",
-                resultType="text",
-                room_name=request.room_name,
-                meeting_id=meeting_id,
-                #result=f"Not enough recording yet ({duration_seconds:.0f}s). Please wait until at least {min_duration // 60} minutes have been recorded.",
-                result=f"The meeting just started. Please wait a few more minutes for a catch-up summary.",
-                language=request.language,
-                participant_id=request.participant_id
+            logging.error(f"Not enough audio ({duration_seconds:.0f}s). Can't generate catch-up summary. Requires :{min_duration // 60}min")
+            raise HTTPException(
+                status_code=400,
+                detail="The meeting just started. Please wait a few more minutes for a catch-up summary.",
             )
 
         # Generate summary
