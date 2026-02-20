@@ -22,7 +22,8 @@ from api.routes import (
     health,
     caption,
     transcription,
-    summary
+    summary,
+    config
 )
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -243,6 +244,7 @@ app.include_router(caption.router)
 app.include_router(caption.ws_router)
 app.include_router(transcription.router)
 app.include_router(summary.router)
+app.include_router(config.router)
 
 
 if __name__ == "__main__":
