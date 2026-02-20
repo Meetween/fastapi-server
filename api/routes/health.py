@@ -12,7 +12,6 @@ async def root():
         "version": settings.app_version,
         "status": "running",
         "speechlmm_loaded": EngineManager.get_lmm() is not None,
-        "vad_loaded": EngineManager.get_vad() is not None
     }
 
 
@@ -22,5 +21,4 @@ async def health_check():
     return {
         "status": "healthy",
         "speechlmm": "loaded" if EngineManager.get_lmm() else "not loaded",
-        "vad": "loaded" if EngineManager.get_vad() else "not loaded"
     }

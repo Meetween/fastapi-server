@@ -13,7 +13,6 @@ from .jitsi_api_functions import (
     AudioConverter,
     ResultType,
 )
-from .vad_utils import SileroVAD
 
 __all__ = [
     'transcribe_audio',
@@ -23,6 +22,5 @@ __all__ = [
     'CaptionHandler',
     'AudioConverter',
     'ResultType',
-    'SileroVAD'
 ]
 

@@ -3,15 +3,13 @@ import threading
 import logging
 from typing import Optional
 from config import settings
-from butler import SileroVAD
 from butler.triton_client import TritonClient
 
 logger = logging.getLogger(__name__)
 
 class EngineManager:
-    """Singleton manager for managing speechlmm and vad_model"""
+    """Singleton manager for managing speechlmm (VAD handled by Triton)."""
     _speechlmm_engine: Optional[TritonClient] = None
-    _vad_model: Optional[SileroVAD] = None
     _initialized: bool = False
     _lock = threading.Lock()
 
@@ -41,17 +39,6 @@ class EngineManager:
                 logger.error(f"Failed to initialize Triton client: {e}", exc_info=True)
                 raise RuntimeError(f"Failed to initialize Triton client: {e}")
 
-            # Load VAD model
-            try:
-                cls._vad_model = SileroVAD(
-                    sample_rate=settings.vad_sample_rate,
-                    threshold=settings.vad_threshold
-                )
-                logger.info("VAD model loaded successfully")
-            except Exception as e:
-                cls._vad_model = None
-                raise RuntimeError(f"Failed to load VAD model: {e}")
-
             cls._initialized = True
             logger.info("EngineManager initialized")
 
@@ -64,18 +51,12 @@ class EngineManager:
                 await cls._speechlmm_engine.close()
             cls._initialized = False
             cls._speechlmm_engine = None
-            cls._vad_model = None
             logger.info("EngineManager cleanup complete")
 
     @classmethod
     def get_lmm(cls) -> Optional[TritonClient]:
         """Get SpeechLMM instance"""
         return cls._speechlmm_engine
-
-    @classmethod
-    def get_vad(cls) -> Optional[SileroVAD]:
-        """Get VAD model instance"""
-        return cls._vad_model
 
     @classmethod
     def is_ready(cls) -> bool:

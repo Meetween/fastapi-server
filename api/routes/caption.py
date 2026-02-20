@@ -40,7 +40,6 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             caption_handler = SessionManager.get_or_create_caption_handler(
                 meeting_id=meeting_id,
                 engine=EngineManager.get_lmm(),
-                vad_model=EngineManager.get_vad()
             )
         while True:
             # Receive message from client
@@ -81,7 +80,6 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 caption_handler=caption_handler,
                                 timestamp=time.time_ns() // 1_000_000,
                                 language=request.language,
-                                vad=EngineManager.get_vad()
                             )
 
                             # Skip sending empty / no-result transcripts
