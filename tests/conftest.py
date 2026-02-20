@@ -70,6 +70,60 @@ def sample_text() -> str:
     )
 
 # ============================================================================
+# Recording Storage Fixtures (Function-scoped)
+# ============================================================================
+
+@pytest.fixture
+def temp_recordings_dir(tmp_path):
+    """Create a temporary recordings directory for testing"""
+    from config import settings
+    
+    recordings_dir = tmp_path / "recordings"
+    recordings_dir.mkdir(parents=True)
+    
+    original_path = settings.recordings_base_path
+    settings.recordings_base_path = recordings_dir
+    
+    yield recordings_dir
+    
+    settings.recordings_base_path = original_path
+
+
+@pytest.fixture
+def create_test_recording(temp_recordings_dir):
+    """Helper fixture to create test recordings"""
+    import json
+    from datetime import datetime
+    
+    def _create(room_name: str, meeting_id: str, start_time: datetime, end_time: datetime = None, chunks: int = 1):
+        """Create a test recording with metadata and optional chunk files"""
+        meeting_path = temp_recordings_dir / room_name / meeting_id
+        meeting_path.mkdir(parents=True)
+        
+        metadata = {
+            "meeting_id": meeting_id,
+            "room_name": room_name,
+            "start_time": start_time.isoformat(),
+            "chunk_count": chunks,
+            "total_duration": chunks * 5.0
+        }
+        
+        if end_time:
+            metadata["end_time"] = end_time.isoformat()
+        
+        metadata_path = meeting_path / "metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        
+        for i in range(1, chunks + 1):
+            chunk_path = meeting_path / f"chunk_{i:04d}.wav"
+            chunk_path.write_bytes(b"dummy audio data" * 100)
+        
+        return meeting_path
+    
+    return _create
+
+# ============================================================================
 # Application & Client Fixtures
 # ============================================================================
 

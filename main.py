@@ -11,8 +11,12 @@ from typing import Dict, Optional
 from pathlib import Path
 from datetime import datetime
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
 from config import settings
 from core import EngineManager, SessionManager
+from utils.storage import StorageManager
 
 from api.routes import (
     health,
@@ -24,14 +28,6 @@ from api.routes import (
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 
-
-from models import (
-    MeetweenSummarizationResponse
-)
-
-from butler import (
-    summarize_audio,
-)
 
 
 # Configure logging
@@ -50,6 +46,20 @@ app = FastAPI(
 # Active meeting recordings
 active_meetings: Dict[str, dict] = {}  # meeting_id -> metadata
 
+# Scheduler for periodic tasks
+scheduler = AsyncIOScheduler()
+
+
+def cleanup_old_recordings_job():
+    """Scheduled job to delete old recordings"""
+    try:
+        result = StorageManager.cleanup_old_recordings()
+        logger.info(f"Recording cleanup job completed: {result['deleted_count']} recordings deleted")
+        if result['errors']:
+            logger.warning(f"Cleanup job encountered {len(result['errors'])} errors")
+    except Exception as e:
+        logger.error(f"Error in recording cleanup job: {str(e)}", exc_info=True)
+
 
 @app.on_event("startup")
 def startup_event():
@@ -60,6 +70,17 @@ def startup_event():
     EngineManager.initialize()
     settings.recordings_base_path.mkdir(parents=True, exist_ok=True)
 
+    # Schedule daily cleanup of old recordings
+    scheduler.add_job(
+        cleanup_old_recordings_job,
+        trigger=CronTrigger(hour=2, minute=0),  # Run daily at 2:00 AM UTC
+        id="cleanup_old_recordings",
+        name="Cleanup old recordings",
+        replace_existing=True
+    )
+    scheduler.start()
+    logger.info("Scheduled recording cleanup job (daily at 2:00 AM UTC)")
+
     logger.info("Server started")
 
 
@@ -68,6 +89,9 @@ async def shutdown_event():
     """Cleanup on server shutdown"""
     logger.info("Server shutting down...")
 
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("Scheduler shut down")
 
     await SessionManager.cleanup()
     await EngineManager.cleanup()
