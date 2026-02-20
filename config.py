@@ -19,9 +19,6 @@ class Settings(BaseSettings):
 
     triton: TritonSettings = TritonSettings()
 
-    vad_sample_rate: int = 16000
-    vad_threshold: float = 0.5
-
     recordings_base_path: Path = Path("/mnt/recordings")
     recording_format: Optional[str] = "wav"
 

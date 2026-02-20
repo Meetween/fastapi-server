@@ -22,7 +22,6 @@ class TestHealthEndpoints:
         assert "status" in data
         assert data["status"] == "running"
         assert "speechlmm_loaded" in data
-        assert "vad_loaded" in data
 
     def test_health_check_endpoint(self, client: TestClient):
         """Test health check endpoint"""
@@ -34,4 +33,3 @@ class TestHealthEndpoints:
         assert "status" in data
         assert data["status"] == "healthy"
         assert "speechlmm" in data
-        assert "vad" in data

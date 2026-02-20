@@ -106,13 +106,8 @@ def mock_engine_manager():
             result_type=ResultType.FINAL_RESULT,
         )
     
-    # Create a mock VAD that always detects speech (so chunks aren't skipped)
-    mock_vad = Mock()
-    mock_vad.has_speech = Mock(return_value=True)
-    
     # Mock EngineManager methods - these patches persist for the session
     get_lmm_patcher = patch.object(EngineManager, 'get_lmm', return_value=mock_engine)
-    get_vad_patcher = patch.object(EngineManager, 'get_vad', return_value=mock_vad)
     initialize_patcher = patch.object(EngineManager, 'initialize', return_value=None)
     cleanup_patcher = patch.object(EngineManager, 'cleanup', return_value=None)
     
@@ -123,7 +118,6 @@ def mock_engine_manager():
     
     # Start all patches
     get_lmm_patcher.start()
-    get_vad_patcher.start()
     initialize_patcher.start()
     cleanup_patcher.start()
     summarize_patcher.start()
@@ -133,7 +127,6 @@ def mock_engine_manager():
     
     # Stop all patches
     get_lmm_patcher.stop()
-    get_vad_patcher.stop()
     initialize_patcher.stop()
     cleanup_patcher.stop()
     summarize_patcher.stop()

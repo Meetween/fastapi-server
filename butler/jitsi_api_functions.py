@@ -4,7 +4,7 @@ Jitsi API Functions for SpeechLMM Integration
 
 Provides three main functions:
 - transcribe_audio(): Full meeting transcription
-- caption_audio(): Real-time captioning with optional VAD
+- caption_audio(): Real-time captioning
 - summarize_audio(): Meeting summarization
 
 Audio format: PCM LINEAR16, 48kHz, mono/stereo
@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .triton_client import TritonClient
-from .vad_utils import SileroVAD
 
 
 def monify_and_resample_audio(
@@ -324,14 +323,13 @@ async def caption_audio(
     caption_handler: Optional[CaptionHandler] = None,
     timestamp: float = 0.0,
     max_tokens: int = 256,
-    vad: Optional[SileroVAD] = None
 ) -> TranscriptionResult:
     """
     Real-time captioning for live transcription display.
     
     Each call transcribes a single chunk independently (no overlap handling).
     The UI should display chunks in a sliding window (like subtitles).
-    
+       
     Args:
         engine: Initialized TritonClient
         audio_bytes: Raw PCM LINEAR16 audio bytes (2-second chunk)
@@ -341,33 +339,17 @@ async def caption_audio(
         caption_handler: CaptionHandler instance (reuse for session)
         timestamp: Audio start time in seconds
         max_tokens: Max generation tokens
-        vad: Optional SileroVAD instance for silence detection
         
     Returns:
         TranscriptionResult with current chunk transcription.
         - is_interim: True if chunk doesn't end with punctuation
         - is_final: True if chunk ends with sentence punctuation
         - message_id: Increments each time is_final=True
-        - text: Empty string if VAD detects silence
     """
     if caption_handler is None:
         caption_handler = CaptionHandler()
     
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
-    
-    # VAD: Skip transcription if no speech detected
-    if vad is not None and not vad.has_speech(audio_tensor):
-        return TranscriptionResult(
-            participant_id=participant_id,
-            message_id=caption_handler.message_id,
-            timestamp=timestamp,
-            is_interim=True,
-            language=language,
-            stability=0.0,
-            text="",
-            confidence=0.0,
-            result_type=ResultType.NO_RESULT,
-        )
     
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
