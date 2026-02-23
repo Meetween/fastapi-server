@@ -8,7 +8,7 @@ from butler.triton_client import TritonClient
 logger = logging.getLogger(__name__)
 
 class EngineManager:
-    """Singleton manager for managing speechlmm (VAD handled by Triton)."""
+    """Singleton manager for managing speechlmm."""
     _speechlmm_engine: Optional[TritonClient] = None
     _initialized: bool = False
     _lock = threading.Lock()

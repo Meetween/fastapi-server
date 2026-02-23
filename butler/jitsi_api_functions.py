@@ -230,40 +230,29 @@ class CaptionHandler:
     
     def __init__(self):
         self.message_id = 0
-        self.last_was_final = False
-    
+        # self.last_was_final = False
+
     def process_chunk(self, transcription: str) -> Tuple[str, bool, int]:
-        """
-        Process transcription and determine if it's final.
-        
-        Args:
-            transcription: Current chunk transcription
-            
-        Returns:
-            Tuple of (text, is_final, message_id)
-        """
-        is_final = self._is_final(transcription)
-        
-        if self.last_was_final:
-            self.message_id += 1
-        
-        self.last_was_final = is_final
-        
-        return transcription.strip(), is_final, self.message_id
-    
-    def _is_final(self, text: str) -> bool:
-        """Check if transcription represents a complete sentence."""
-        text_stripped = text.strip()
-        if len(text_stripped) < 5:
-            return False
-        
-        sentence_endings = ['.', '!', '?', '。', '！', '？']
-        return text_stripped[-1] in sentence_endings if text_stripped else False
-    
+        # Old logic: determine final by sentence-ending punctuation
+        # is_final = self._is_final(transcription)
+        # if self.last_was_final:
+        #     self.message_id += 1
+        # self.last_was_final = is_final
+        # return transcription.strip(), is_final, self.message_id
+
+        self.message_id += 1
+        return transcription.strip(), True, self.message_id
+
+    # def _is_final(self, text: str) -> bool:
+    #     text_stripped = text.strip()
+    #     if len(text_stripped) < 5:
+    #         return False
+    #     sentence_endings = ['.', '!', '?', '。', '！', '？']
+    #     return text_stripped[-1] in sentence_endings if text_stripped else False
+
     def reset(self):
-        """Reset state for new session."""
         self.message_id = 0
-        self.last_was_final = False
+        # self.last_was_final = False
 
 
 async def transcribe_audio(
@@ -363,20 +352,22 @@ async def caption_audio(
         repetition_penalty=1.2,
     )
     
-    text, is_final, message_id = caption_handler.process_chunk(transcription)
-    stability = 0.8 if is_final else 0.6
-    result_type = ResultType.FINAL_RESULT if is_final else ResultType.PARTIAL_RESULT
-    
+    text, _, message_id = caption_handler.process_chunk(transcription)
+    # Old logic: interim vs final based on punctuation
+    # stability = 0.8 if is_final else 0.6
+    # result_type = ResultType.FINAL_RESULT if is_final else ResultType.PARTIAL_RESULT
+    # is_interim=not is_final
+
     return TranscriptionResult(
         participant_id=participant_id,
         message_id=message_id,
         timestamp=timestamp,
-        is_interim=not is_final,
+        is_interim=False,
         language=language,
-        stability=stability,
+        stability=1.0,
         text=text,
-        confidence=stability,
-        result_type=result_type,
+        confidence=1.0,
+        result_type=ResultType.FINAL_RESULT,
     )
 
 
