@@ -3,10 +3,13 @@ Pytest configuration and shared fixtures
 
 This module provides shared fixtures for all tests.
 """
+import json
 import pytest
 import base64
 import os
 import io
+import tempfile
+from pathlib import Path
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 from pydub import AudioSegment
@@ -28,6 +31,30 @@ def test_room_name() -> str:
 def test_meeting_id() -> str:
     """Test meeting ID for API requests (session-scoped for consistency)"""
     return os.getenv("TEST_MEETING_ID", "ws_test_1769430565")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def fake_recordings_dir(test_room_name: str, test_meeting_id: str):
+    """
+    Create a temporary recording directory with minimal metadata and one chunk
+    so that "from recordings" API tests (transcribe/summarize/catchup) can run
+    without real disk recordings. Patches config.settings.recordings_base_path.
+    """
+    tmp = Path(tempfile.mkdtemp(prefix="fastapi_test_recordings_"))
+    meeting_path = tmp / test_room_name / test_meeting_id
+    meeting_path.mkdir(parents=True, exist_ok=True)
+
+    metadata = {"chunk_count": 1, "total_duration": 60.0}
+    (meeting_path / "metadata.json").write_text(json.dumps(metadata, indent=2))
+
+    chunk_path = meeting_path / "chunk_0001.wav"
+    audio = AudioSegment.silent(duration=600, frame_rate=16000)
+    audio.export(str(chunk_path), format="wav")
+
+    from config import settings
+    with patch.object(settings, "recordings_base_path", tmp), \
+         patch.object(settings, "min_catchup_duration_seconds", 0):
+        yield tmp
 
 
 # ============================================================================
