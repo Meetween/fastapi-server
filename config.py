@@ -25,4 +25,6 @@ class Settings(BaseSettings):
     min_catchup_duration_seconds: int = 180  
     log_level: str = "INFO"
 
+    recording_retention_days: int = 7
+
 settings = Settings()
