@@ -88,31 +88,28 @@ class TritonClient:
             audio: Audio tensor
             sample_rate: Audio sample rate
             max_new_tokens: Maximum tokens to generate
-            do_sample: Use sampling (ignored, Triton uses greedy)
-            temperature: Sampling temperature (ignored)
-            repetition_penalty: Repetition penalty (ignored)
+            do_sample: Use sampling (True) or greedy decoding (False)
+            temperature: Sampling temperature (used when do_sample=True)
+            repetition_penalty: Penalty for repeated tokens
             
         Returns:
             Generated text
         """
         wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
         audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
-        
+
+        inputs = [
+            {"name": "AUDIO_BYTES", "shape": [1], "datatype": "BYTES", "data": [audio_b64]},
+            {"name": "TEXT_PROMPT", "shape": [1], "datatype": "BYTES", "data": [prompt]},
+            {"name": "MAX_NEW_TOKENS", "shape": [1], "datatype": "INT32", "data": [max_new_tokens]},
+            {"name": "DO_SAMPLE", "shape": [1], "datatype": "INT32", "data": [int(do_sample)]},
+            {"name": "REPETITION_PENALTY", "shape": [1], "datatype": "FP32", "data": [repetition_penalty]},
+        ]
+        if do_sample and temperature > 0.0:
+            inputs.append({"name": "TEMPERATURE", "shape": [1], "datatype": "FP32", "data": [temperature]})
+
         payload = {
-            "inputs": [
-                {
-                    "name": "AUDIO_BYTES",
-                    "shape": [1],
-                    "datatype": "BYTES",
-                    "data": [audio_b64]
-                },
-                {
-                    "name": "TEXT_PROMPT",
-                    "shape": [1],
-                    "datatype": "BYTES",
-                    "data": [prompt]
-                }
-            ],
+            "inputs": inputs,
             "outputs": [{"name": "GENERATED_TEXT"}]
         }
         

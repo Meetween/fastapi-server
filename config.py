@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     recordings_base_path: Path = Path("/mnt/recordings")
     recording_format: Optional[str] = "wav"
 
-    min_catchup_duration_seconds: int = 180  
+    min_catchup_duration_seconds: int = 60
     log_level: str = "INFO"
 
 settings = Settings()
