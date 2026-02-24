@@ -64,7 +64,6 @@ class TestSchedulerIntegration:
     async def test_scheduler_is_configured(self):
         """Test that scheduler is properly configured"""
         assert isinstance(scheduler, AsyncIOScheduler)
-        assert scheduler.running or not scheduler.running
 
     def test_scheduler_job_registered_on_startup(self):
         """Test that cleanup job is registered when server starts"""
