@@ -331,9 +331,9 @@ async def caption_audio(
         
     Returns:
         TranscriptionResult with current chunk transcription.
-        - is_interim: True if chunk doesn't end with punctuation
-        - is_final: True if chunk ends with sentence punctuation
-        - message_id: Increments each time is_final=True
+        - is_interim: Always False (every chunk is treated as final)
+        - stability: Always 1.0
+        - message_id: Increments on every chunk
     """
     if caption_handler is None:
         caption_handler = CaptionHandler()
