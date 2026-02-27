@@ -353,10 +353,19 @@ async def caption_audio(
     )
     
     text, _, message_id = caption_handler.process_chunk(transcription)
-    # Old logic: interim vs final based on punctuation
-    # stability = 0.8 if is_final else 0.6
-    # result_type = ResultType.FINAL_RESULT if is_final else ResultType.PARTIAL_RESULT
-    # is_interim=not is_final
+
+    if not text:
+        return TranscriptionResult(
+            participant_id=participant_id,
+            message_id=message_id,
+            timestamp=timestamp,
+            is_interim=False,
+            language=language,
+            stability=0.0,
+            text="",
+            confidence=0.0,
+            result_type=ResultType.NO_RESULT,
+        )
 
     return TranscriptionResult(
         participant_id=participant_id,
