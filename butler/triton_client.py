@@ -153,3 +153,51 @@ class TritonClient:
             logger.error(f"[TritonClient] Error processing response: {e}")
             raise RuntimeError(f"Triton response processing failed: {str(e)}")
 
+    def _build_chat_prompt(
+        self,
+        prompt: str,
+        context: Optional[str] = None,
+        history: Optional[List[HistoryEntry]] = None,
+    ) -> str:
+        """Build a single text prompt from context, history, and current question."""
+        parts = []
+        if context:
+            parts.append(f"Context:\n{context.strip()}")
+        if history:
+            history_text = "\n".join(
+                f"{entry.role.capitalize()}: {entry.content}" for entry in history
+            )
+            parts.append(f"Previous conversation:\n{history_text}")
+        parts.append(f"User: {prompt.strip()}")
+        return "\n\n".join(parts)
+
+    async def generate_text_from_text(
+        self,
+        prompt: str,
+        context: Optional[str] = None,
+        history: Optional[List[HistoryEntry]] = None,
+        max_new_tokens: int = 512,
+        do_sample: bool = False,
+        temperature: float = 0.0,
+        repetition_penalty: float = 1.0,
+    ) -> str:
+        """
+        Generate text response from text-only input (Q&A). Uses minimal silent audio
+        so the same Triton audio+text infer endpoint can be used; the question and
+        history are sent in the text prompt.
+        """
+        combined_prompt = self._build_chat_prompt(prompt=prompt, context=context, history=history)
+        sample_rate = 16000
+        duration_sec = 0.1
+        num_samples = int(sample_rate * duration_sec)
+        silent_audio = torch.zeros(1, num_samples)
+        return await self._generate_text_from_audio(
+            prompt=combined_prompt,
+            audio=silent_audio,
+            sample_rate=sample_rate,
+            max_new_tokens=max_new_tokens,
+            do_sample=do_sample,
+            temperature=temperature,
+            repetition_penalty=repetition_penalty,
+        )
+
