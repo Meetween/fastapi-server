@@ -164,10 +164,12 @@ def mock_engine_manager():
     
     The mocks persist for the entire test session.
     """
-    # Create a mock engine with _generate method (used by summarize_audio and transcribe_audio)
+    # Create a mock engine with generation methods (used by summarize_audio, transcribe_audio, chat)
     mock_engine = Mock()
-    mock_engine._generate = Mock(return_value="Mock summary/transcription text for testing")
-    mock_engine.generate = Mock(return_value="Mock summary text for testing")
+    # Async mock for text-only chat generation
+    async def mock_generate_text_from_text(*args, **kwargs):
+        return "Mock chat response text for testing"
+    mock_engine.generate_text_from_text = mock_generate_text_from_text
     
     # Mock butler functions to return test data without processing audio
     def mock_summarize_audio(*args, **kwargs):
