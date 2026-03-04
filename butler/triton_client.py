@@ -102,7 +102,7 @@ class TritonClient:
             {"name": "AUDIO_BYTES", "shape": [1], "datatype": "BYTES", "data": [audio_b64]},
             {"name": "TEXT_PROMPT", "shape": [1], "datatype": "BYTES", "data": [prompt]},
             {"name": "MAX_NEW_TOKENS", "shape": [1], "datatype": "INT32", "data": [max_new_tokens]},
-            {"name": "DO_SAMPLE", "shape": [1], "datatype": "INT32", "data": [int(do_sample)]},
+            {"name": "DO_SAMPLE", "shape": [1], "datatype": "BOOL", "data": [do_sample]},
             {"name": "REPETITION_PENALTY", "shape": [1], "datatype": "FP32", "data": [repetition_penalty]},
         ]
         if do_sample and temperature > 0.0:
