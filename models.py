@@ -62,6 +62,10 @@ class MeetweenTaskRequest(BaseModel):
     prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM", max_length=2048)
     context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
     history: Optional[List[HistoryEntry]] = Field(None, description="Optional conversation history.")
+    max_new_tokens: Optional[int] = Field(None, ge=256, le=32768, description="Max tokens to generate")
+    do_sample: Optional[bool] = None
+    temperature: Optional[float] = Field(None, ge=0.0, le=2.0, description="Sampling temperature when do_sample=True")
+    repetition_penalty: Optional[float] = Field(None, ge=1.0, le=2.0, description="Penalty for repeated tokens")
 
 class MeetweenAudioRequest(MeetweenTaskRequest):
     audio: str
