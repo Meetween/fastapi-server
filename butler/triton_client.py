@@ -73,44 +73,48 @@ class TritonClient:
         prompt: str,
         audio: torch.Tensor,
         sample_rate: int,
-        max_new_tokens: int = 512,
-        do_sample: bool = False,
-        temperature: float = 0.0,
-        repetition_penalty: float = 1.0,
+        max_new_tokens: Optional[int] = None,
+        do_sample: Optional[bool] = None,
+        temperature: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
         context: Optional[str] = None,
         history: Optional[List[HistoryEntry]] = None
     ) -> str:
         """
         Generate text from audio using Triton server.
-        
+
+        Optional params (max_new_tokens, do_sample, temperature, repetition_penalty):
+        when provided, sent to Triton; when None, omitted and Triton uses its defaults.
+
         Args:
             prompt: Task instruction
             audio: Audio tensor
             sample_rate: Audio sample rate
-            max_new_tokens: Maximum tokens to generate
-            do_sample: Use sampling (True) or greedy decoding (False)
-            temperature: Sampling temperature (used when do_sample=True)
-            repetition_penalty: Penalty for repeated tokens
-            
+            max_new_tokens: Max tokens to generate (optional)
+            do_sample: Use sampling (optional)
+            temperature: Sampling temperature when do_sample=True (optional)
+            repetition_penalty: Penalty for repeated tokens (optional)
+
         Returns:
             Generated text
         """
         wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
         audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
 
+        # Always send all inputs; use defaults when caller doesn't specify (Triton expects all)
+        # For batched model, scalar inputs use shape [1, 1] (batch_dim=1, dims[1]=1)
         inputs = [
-            {"name": "AUDIO_BYTES", "shape": [1], "datatype": "BYTES", "data": [audio_b64]},
-            {"name": "TEXT_PROMPT", "shape": [1], "datatype": "BYTES", "data": [prompt]},
-            {"name": "MAX_NEW_TOKENS", "shape": [1], "datatype": "INT32", "data": [max_new_tokens]},
-            {"name": "DO_SAMPLE", "shape": [1], "datatype": "BOOL", "data": [do_sample]},
-            {"name": "REPETITION_PENALTY", "shape": [1], "datatype": "FP32", "data": [repetition_penalty]},
+            {"name": "AUDIO_BYTES", "shape": [1, 1], "datatype": "BYTES", "data": [audio_b64]},
+            {"name": "TEXT_PROMPT", "shape": [1, 1], "datatype": "BYTES", "data": [prompt]},
+            {"name": "MAX_NEW_TOKENS", "shape": [1, 1], "datatype": "INT32", "data": [max_new_tokens or 8192]},
+            {"name": "DO_SAMPLE", "shape": [1, 1], "datatype": "BOOL", "data": [do_sample if do_sample is not None else False]},
+            {"name": "REPETITION_PENALTY", "shape": [1, 1], "datatype": "FP32", "data": [repetition_penalty if repetition_penalty is not None else 1.0]},
+            {"name": "TEMPERATURE", "shape": [1, 1], "datatype": "FP32", "data": [temperature if (temperature is not None and (do_sample or False)) else 1.0]},
         ]
-        if do_sample and temperature > 0.0:
-            inputs.append({"name": "TEMPERATURE", "shape": [1], "datatype": "FP32", "data": [temperature]})
 
         payload = {
             "inputs": inputs,
-            "outputs": [{"name": "GENERATED_TEXT"}]
+            "outputs": [{"name": "GENERATED_TEXT"}],
         }
         
         if self.verbose:

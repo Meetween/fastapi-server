@@ -69,12 +69,23 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                 logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
                 # Perform transcription
+                gen_kwargs = {}
+                if request.max_new_tokens is not None:
+                    gen_kwargs["max_new_tokens"] = request.max_new_tokens
+                if request.do_sample is not None:
+                    gen_kwargs["do_sample"] = request.do_sample
+                if request.temperature is not None:
+                    gen_kwargs["temperature"] = request.temperature
+                if request.repetition_penalty is not None:
+                    gen_kwargs["repetition_penalty"] = request.repetition_penalty
+
                 result = await transcribe_audio(
                     engine=EngineManager.get_lmm(),
                     audio_bytes=audio_pcm,
                     sample_rate=16000,
                     language=request.language or "en-US",
-                    participant_id=request.participant_id
+                    participant_id=request.participant_id,
+                    **gen_kwargs,
                 )
             finally:
                 # Clean up temp file
@@ -178,12 +189,23 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
             # Perform transcription
+            gen_kwargs = {}
+            if request.max_new_tokens is not None:
+                gen_kwargs["max_new_tokens"] = request.max_new_tokens
+            if request.do_sample is not None:
+                gen_kwargs["do_sample"] = request.do_sample
+            if request.temperature is not None:
+                gen_kwargs["temperature"] = request.temperature
+            if request.repetition_penalty is not None:
+                gen_kwargs["repetition_penalty"] = request.repetition_penalty
+
             result = await transcribe_audio(
                 engine=EngineManager.get_lmm(),
                 audio_bytes=audio_pcm,
                 sample_rate=16000,
                 language=request.language or "en-US",
-                participant_id=request.participant_id
+                participant_id=request.participant_id,
+                **gen_kwargs,
             )
 
             return MeetweenTranscriptionResponse(

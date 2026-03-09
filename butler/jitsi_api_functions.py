@@ -261,33 +261,51 @@ async def transcribe_audio(
     sample_rate: int = 48000,
     participant_id: Optional[str] = None,
     language: str = "en-US",
-    max_tokens: int = 8192
+    max_new_tokens: Optional[int] = None,
+    do_sample: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
 ) -> TranscriptionResult:
     """
     Full meeting transcription.
-    
+
+    Optional gen params (max_new_tokens, do_sample, temperature, repetition_penalty):
+    when provided, passed to Triton; when None, omitted and Triton uses its defaults.
+
     Args:
         engine: Initialized TritonClient
         audio_bytes: Raw PCM LINEAR16 audio bytes (full meeting)
         sample_rate: Input sample rate (Hz)
         participant_id: User ID
         language: BCP-47 language code
-        max_tokens: Max generation tokens (model supports up to 131072)
-        
+        max_new_tokens: Max tokens to generate (optional) (model supports up to 131072)
+        do_sample: Use sampling (optional)
+        temperature: Sampling temperature (optional)
+        repetition_penalty: Penalty for repeated tokens (optional)
+
     Returns:
         TranscriptionResult with complete transcript
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
-    
+
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
-    
+
+    gen_kwargs: dict = {}
+    if max_new_tokens is not None:
+        gen_kwargs["max_new_tokens"] = max_new_tokens
+    if do_sample is not None:
+        gen_kwargs["do_sample"] = do_sample
+    if temperature is not None:
+        gen_kwargs["temperature"] = temperature
+    if repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = repetition_penalty
+
     transcription = await engine._generate_text_from_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        max_new_tokens=max_tokens,
-        do_sample=False
+        **gen_kwargs,
     )
     
     return TranscriptionResult(
@@ -349,7 +367,7 @@ async def caption_audio(
         sample_rate=target_sr,
         max_new_tokens=max_tokens,
         do_sample=False,
-        repetition_penalty=1.2,
+        repetition_penalty=1.2,  # captioning benefits from slight repetition penalty
     )
     
     text, _, message_id = caption_handler.process_chunk(transcription)
