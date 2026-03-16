@@ -20,13 +20,12 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
     full chat history (e.g. prior Q&A or meeting transcription). Returns text
     response from TritonClient.
     """
-    if not EngineManager.get_lmm():
+    engine = EngineManager.get_lmm()
+    if not engine:
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded",
         )
-
-    engine = EngineManager.get_lmm()
     try:
         result = await engine.generate_text_from_text(
             prompt=request.prompt,
