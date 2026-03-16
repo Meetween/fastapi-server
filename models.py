@@ -88,16 +88,6 @@ class MeetweenTextRequest(MeetweenTaskRequest):
     text: str
 
 
-class ChatRequest(BaseModel):
-    """Request for /chat (question and answer) endpoint. History sent via text (e.g. transcription)."""
-    user_id: str
-    meeting_id: str
-    room_name: str
-    input_type: Literal["text", "audio"] = "text"
-    prompt: str = Field(..., description="User question or prompt")
-    context: Optional[str] = Field(None, description="Optional context (e.g. meeting transcription)")
-    history: Optional[List[HistoryEntry]] = Field(None, description="Full chat history for multi-turn Q&A")
-
 class MeetweenCatchupRequest(MeetweenTaskRequest):
     max_duration: Optional[float] = None
 
@@ -110,14 +100,6 @@ class MeetweenTaskResponse(BaseModel):
     language: Optional[str]
     participant_id: Optional[str]
     error: Optional[str] = None
-
-
-class ChatResponse(BaseModel):
-    """Response from /chat endpoint - text from TritonClient."""
-    result: str
-    room_name: str
-    meeting_id: str
-    user_id: Optional[str] = None
 
 
 class MeetweenSummarizationResponse(BaseModel):

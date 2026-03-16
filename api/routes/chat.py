@@ -7,14 +7,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager
-from models import ChatRequest, ChatResponse
+from models import MeetweenTaskRequest, MeetweenTaskResponse
 
 router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest = Body(...)):
+@router.post("/chat", response_model=MeetweenTaskResponse)
+async def chat(request: MeetweenTaskRequest = Body(...)):
     """
     Question and answer endpoint. Send a text prompt with optional context and
     full chat history (e.g. prior Q&A or meeting transcription). Returns text
@@ -35,11 +35,14 @@ async def chat(request: ChatRequest = Body(...)):
             max_new_tokens=512,
             do_sample=False,
         )
-        return ChatResponse(
-            result=result.strip(),
+        return MeetweenTaskResponse(
+            type=request.type,
+            resultType="text",
             room_name=request.room_name,
             meeting_id=request.meeting_id,
-            user_id=request.user_id,
+            result=result.strip(),
+            language=request.language,
+            participant_id=request.participant_id,
         )
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
