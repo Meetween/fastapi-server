@@ -24,7 +24,9 @@ class TritonClient:
         triton_url: str = "http://localhost:9000",
         model_name: str = "speechlmm",
         timeout: int = 1800,
-        verbose: bool = False
+        verbose: bool = False,
+        max_context_chars: int = 300_000,
+        max_history_chars: int = 600_000,
     ):
         """
         Initialize Triton client.
@@ -40,6 +42,8 @@ class TritonClient:
         self.timeout = timeout
         self.verbose = verbose
         self.device = "cuda"
+        self.max_context_chars = max_context_chars
+        self.max_history_chars = max_history_chars
         
         self.inference_url = f"{self.triton_url}/v2/models/{self.model_name}/infer"
         
@@ -162,11 +166,19 @@ class TritonClient:
         """Build a single text prompt from context, history, and current question."""
         parts = []
         if context:
-            parts.append(f"Context:\n{context.strip()}")
+            ctx = context.strip()
+            if len(ctx) > self.max_context_chars:
+                ctx = ctx[-self.max_context_chars:]
+                ctx = "(context truncated for length)\n" + ctx
+            parts.append(f"Context:\n{ctx}")
         if history:
             history_text = "\n".join(
                 f"{entry.role.capitalize()}: {entry.content}" for entry in history
             )
+            history_text = history_text.strip()
+            if len(history_text) > self.max_history_chars:
+                history_text = history_text[-self.max_history_chars:]
+                history_text = "(history truncated for length)\n" + history_text
             parts.append(f"Previous conversation:\n{history_text}")
         parts.append(f"User: {prompt.strip()}")
         return "\n\n".join(parts)
