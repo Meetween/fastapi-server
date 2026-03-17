@@ -98,7 +98,6 @@ class SessionManager:
         return False
 
     # Session and chat history management
-
     @classmethod
     def get_or_create_session(cls, meeting_id: str, room_name: Optional[str] = None) -> Session:
         """
@@ -117,74 +116,58 @@ class SessionManager:
         return session
 
     @classmethod
-    def update_transcript(cls, meeting_id: str, transcript: Optional[str]) -> None:
+    def update_transcript(cls, meeting_id: str, room_name: Optional[str], transcript: Optional[str]) -> None:
         """Update the stored transcript for a meeting."""
-        if transcript is None:
-            return
-        session = cls.get_or_create_session(meeting_id=meeting_id)
-        session.transcript = transcript
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        session.transcript = f"{session.transcript or ''} {transcript}".strip()
 
     @classmethod
-    def get_transcript(cls, meeting_id: str) -> Optional[str]:
+    def get_transcript(cls, meeting_id: str, room_name: Optional[str]) -> Optional[str]:
         """Return the current transcript for a meeting, if any."""
-        session = cls._sessions.get(meeting_id)
-        return session.transcript if session else None
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        return session.transcript
 
     @classmethod
-    def get_participant_history(cls, meeting_id: str, user_id: str) -> List[HistoryEntry]:
+    def get_participant_history(cls, meeting_id: str, room_name: Optional[str], participant_id: str) -> List[HistoryEntry]:
         """
         Get the in-memory chat history for a participant in a meeting.
 
         Returns an empty list if no history is stored yet.
         """
-        session = cls._sessions.get(meeting_id)
-        if not session:
-            return []
-        return list(session.participant_histories.get(user_id, []))
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        return session.participant_histories.get(participant_id, [])
 
     @classmethod
     def store_chat_turn(
         cls,
-        *,
         meeting_id: str,
         room_name: Optional[str],
-        user_id: str,
-        base_history: Optional[List[HistoryEntry]],
+        participant_id: str,
         user_prompt: str,
         assistant_reply: str,
-        transcript: Optional[str] = None,
     ) -> None:
         """
         Store a single Q&A turn for a participant.
-
-        - `base_history` is the history that was provided to the model
-          (e.g. from the request body or previously stored state).
-        - The stored history will be `base_history` plus the new user/assistant
-          messages, and will be available for future calls.
         """
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
-
-        if transcript is not None:
-            session.transcript = transcript
-
-        history: List[HistoryEntry] = []
-        if base_history:
-            history.extend(base_history)
-
-        history.append(HistoryEntry(role="user", content=user_prompt))
-        history.append(HistoryEntry(role="assistant", content=assistant_reply))
-
-        session.participant_histories[user_id] = history
+        if participant_id not in session.participant_histories:
+            session.participant_histories[participant_id] = []
+        session.participant_histories[participant_id].extend([
+            HistoryEntry(role="user", content=user_prompt),
+            HistoryEntry(role="assistant", content=assistant_reply),
+        ])
         logger.debug(
-            "Stored chat turn for meeting_id=%s user_id=%s (history_len=%d)",
+            "Stored chat turn for meeting_id=%s participant_id=%s (participant_histories=%d)",
             meeting_id,
-            user_id,
-            len(history),
+            participant_id,
+            len(session.participant_histories[participant_id]),
         )
 
     @classmethod
-    def clear_session(cls, meeting_id: str) -> None:
+    def clear_session(cls, meeting_id: str, room_name: Optional[str]) -> None:
         """Remove all in-memory state for a meeting."""
-        if meeting_id in cls._sessions:
-            del cls._sessions[meeting_id]
-            logger.info(f"Cleared session: {meeting_id}")
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        session.participant_histories.clear()
+        session.transcript = None
+        logger.info(f"Cleared session: {meeting_id} room_name={room_name}")
+        cls._sessions.pop(meeting_id, None)

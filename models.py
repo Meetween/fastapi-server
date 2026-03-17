@@ -8,7 +8,8 @@ import base64
 taskTypes = Literal[
     "transcription",
     "summary",
-    "catch_me_up"
+    "catch_me_up",
+    "chat"
 ]
 
 """

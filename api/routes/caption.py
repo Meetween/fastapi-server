@@ -97,6 +97,14 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 language=request.language,
                                 stability=result.stability
                             )
+
+                            if not result.is_interim:
+                                SessionManager.update_transcript(
+                                    meeting_id=meeting_id,
+                                    room_name=room_name,
+                                    transcript=result.text,
+                                )
+
                             await websocket.send_json(response.model_dump())
 
                         except Exception as e:
