@@ -166,8 +166,10 @@ class SessionManager:
     @classmethod
     def clear_session(cls, meeting_id: str, room_name: Optional[str]) -> None:
         """Remove all in-memory state for a meeting."""
-        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        session = cls._sessions.pop(meeting_id, None)
+        if not session:
+            return
+
         session.participant_histories.clear()
         session.transcript = None
         logger.info(f"Cleared session: {meeting_id} room_name={room_name}")
-        cls._sessions.pop(meeting_id, None)
