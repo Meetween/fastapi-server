@@ -140,6 +140,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             if room_name:
                 AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
             SessionManager.remove_connection(meeting_id)
+            SessionManager.reset_caption_handler(meeting_id=meeting_id)
         except Exception as e:
             logger.warning(f"Error during cleanup, {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
