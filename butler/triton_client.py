@@ -188,10 +188,10 @@ class TritonClient:
         prompt: str,
         context: Optional[str] = None,
         history: Optional[List[HistoryEntry]] = None,
-        max_new_tokens: int = 512,
-        do_sample: bool = False,
-        temperature: float = 0.0,
-        repetition_penalty: float = 1.0,
+        max_new_tokens: Optional[int] = None,
+        do_sample: Optional[bool] = None,
+        temperature: Optional[float] = None,
+        repetition_penalty: Optional[float] = None,
     ) -> str:
         """
         Generate text response from text-only input (Q&A). Uses minimal silent audio
