@@ -6,15 +6,42 @@ Triton Client - Interface to Triton Inference Server for SpeechLMM
 import base64
 import io
 import logging
-from models import HistoryEntry
-import torch
-import soundfile as sf
+from pathlib import Path
 from typing import List, Optional
 
 import httpx
+import torch
+import soundfile as sf
+
+from models import HistoryEntry
+
 
 logger = logging.getLogger(__name__)
 
+
+_SYSTEM_PROMPT_CACHE: Optional[str] = None
+
+
+def _load_chat_system_prompt_template() -> str:
+    """
+    Load the chat system prompt template from the prompts folder.
+    The template uses `{meeting_transcript}`, `{chat_history}`, and `{user_question}`
+    placeholders that will be formatted in `_build_chat_prompt`.
+    """
+    global _SYSTEM_PROMPT_CACHE
+    if _SYSTEM_PROMPT_CACHE is None:
+        prompt_path = Path(__file__).parent / "prompts" / "chat_system_prompt.yml"
+        try:
+            with open(prompt_path, "r", encoding="utf-8") as f:
+                _SYSTEM_PROMPT_CACHE = f.read().strip()
+        except FileNotFoundError:
+            _SYSTEM_PROMPT_CACHE = (
+                "You are an intelligent meeting assistant embedded in a videoconference platform.\n\n"
+                "<context>\n{meeting_transcript}\n</context>\n\n"
+                "<history>\n{chat_history}\n</history>\n\n"
+                "<question>\n{user_question}\n</question>"
+            )
+    return _SYSTEM_PROMPT_CACHE
 
 class TritonClient:
     """Client for Triton Inference Server with SpeechLMM model interface"""
@@ -163,25 +190,33 @@ class TritonClient:
         context: Optional[str] = None,
         history: Optional[List[HistoryEntry]] = None,
     ) -> str:
-        """Build a single text prompt from context, history, and current question."""
-        parts = []
-        if context:
-            ctx = context.strip()
-            if len(ctx) > self.max_context_chars:
-                ctx = ctx[-self.max_context_chars:]
-                ctx = "(context truncated for length)\n" + ctx
-            parts.append(f"Context:\n{ctx}")
+        """Build a single text prompt using the chat system template and runtime values."""
+        template = _load_chat_system_prompt_template()
+
+        meeting_transcript = (context or "").strip()
+        if meeting_transcript:
+            if len(meeting_transcript) > self.max_context_chars:
+                meeting_transcript = meeting_transcript[-self.max_context_chars :]
+                meeting_transcript = "(context truncated for length)\n" + meeting_transcript
+
         if history:
             history_text = "\n".join(
                 f"{entry.role.capitalize()}: {entry.content}" for entry in history
-            )
-            history_text = history_text.strip()
+            ).strip()
             if len(history_text) > self.max_history_chars:
-                history_text = history_text[-self.max_history_chars:]
+                history_text = history_text[-self.max_history_chars :]
                 history_text = "(history truncated for length)\n" + history_text
-            parts.append(f"Previous conversation:\n{history_text}")
-        parts.append(f"User: {prompt.strip()}")
-        return "\n\n".join(parts)
+            chat_history = history_text
+        else:
+            chat_history = ""
+
+        user_question = (prompt or "").strip()
+
+        return template.format(
+            meeting_transcript=meeting_transcript,
+            chat_history=chat_history,
+            user_question=user_question,
+        )
 
     async def generate_text_from_text(
         self,
