@@ -52,8 +52,8 @@ class TritonClient:
         model_name: str = "speechlmm",
         timeout: int = 1800,
         verbose: bool = False,
-        max_context_chars: int = 300_000,
-        max_history_chars: int = 600_000,
+        max_context_chars: Optional[int] = None,
+        max_history_chars: Optional[int] = None,
     ):
         """
         Initialize Triton client.
@@ -69,8 +69,9 @@ class TritonClient:
         self.timeout = timeout
         self.verbose = verbose
         self.device = "cuda"
-        self.max_context_chars = max_context_chars
-        self.max_history_chars = max_history_chars
+        # Allow caller/config to override these limits; keep safe defaults.
+        self.max_context_chars = max_context_chars if max_context_chars is not None else 300_000
+        self.max_history_chars = max_history_chars if max_history_chars is not None else 600_000
         
         self.inference_url = f"{self.triton_url}/v2/models/{self.model_name}/infer"
         
