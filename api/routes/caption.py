@@ -137,15 +137,13 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     finally:
         # Cleanup
         try:
-            remaining = SessionManager.remove_connection(meeting_id, websocket)
-
-            if remaining == 0:
-                if room_name:
-                    AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
-                SessionManager.clear_meeting_state_if_inactive(
-                    meeting_id=meeting_id,
-                    room_name=room_name,
-                )
+            SessionManager.remove_connection(meeting_id)
+            if room_name:
+                AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
+            SessionManager.clear_meeting_state_if_inactive(
+                meeting_id=meeting_id,
+                room_name=room_name,
+            )
         except Exception as e:
             logger.warning(f"Error during cleanup, {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
