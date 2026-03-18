@@ -34,34 +34,39 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
                 detail="Field 'prompt' is required for chat.",
             )
 
-        transcript = SessionManager.get_transcript(
-            meeting_id=request.meeting_id,
-            room_name=request.room_name,
-        )
         participant_id = request.participant_id or "default"
-        history = SessionManager.get_participant_history(
+        async with SessionManager.participant_history_mutex(
             meeting_id=request.meeting_id,
             room_name=request.room_name,
             participant_id=participant_id,
-        )
+        ):
+            transcript = SessionManager.get_transcript(
+                meeting_id=request.meeting_id,
+                room_name=request.room_name,
+            )
+            history = SessionManager.get_participant_history(
+                meeting_id=request.meeting_id,
+                room_name=request.room_name,
+                participant_id=participant_id,
+            )
 
-        result = await engine.generate_text_from_text(
-            prompt=request.prompt,
-            context=transcript,
-            history=history,
-            max_new_tokens=request.max_new_tokens,
-            do_sample=request.do_sample,
-            temperature=request.temperature,
-            repetition_penalty=request.repetition_penalty
-        )
+            result = await engine.generate_text_from_text(
+                prompt=request.prompt,
+                context=transcript,
+                history=history,
+                max_new_tokens=request.max_new_tokens,
+                do_sample=request.do_sample,
+                temperature=request.temperature,
+                repetition_penalty=request.repetition_penalty
+            )
 
-        SessionManager.store_chat_turn(
-            meeting_id=request.meeting_id,
-            room_name=request.room_name,
-            participant_id=participant_id,
-            user_prompt=request.prompt,
-            assistant_reply=result.strip(),
-        )
+            SessionManager.store_chat_turn(
+                meeting_id=request.meeting_id,
+                room_name=request.room_name,
+                participant_id=participant_id,
+                user_prompt=request.prompt,
+                assistant_reply=result.strip(),
+            )
         return MeetweenTaskResponse(
             type=request.type,
             resultType="text",

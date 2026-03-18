@@ -1,4 +1,6 @@
 import logging
+import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -35,6 +37,8 @@ class SessionManager:
     _connections: Dict[str, List[WebSocket]] = {}
     _caption_handlers: Dict[str, CaptionHandler] = {}
     _sessions: Dict[str, Session] = {}
+    _participant_locks: Dict[str, asyncio.Lock] = {}
+    _participant_locks_guard: Optional[asyncio.Lock] = None
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -146,6 +150,54 @@ class SessionManager:
             return True
         return False
 
+    @classmethod
+    def _participant_lock_key(cls, meeting_id: str, room_name: Optional[str], participant_id: str) -> str:
+        return f"{meeting_id}:{room_name or ''}:{participant_id}"
+
+    @classmethod
+    def _get_participant_locks_guard(cls) -> asyncio.Lock:
+        if cls._participant_locks_guard is None:
+            cls._participant_locks_guard = asyncio.Lock()
+        return cls._participant_locks_guard
+
+    @classmethod
+    async def _get_or_create_participant_lock(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        participant_id: str,
+    ) -> asyncio.Lock:
+        key = cls._participant_lock_key(meeting_id=meeting_id, room_name=room_name, participant_id=participant_id)
+        guard = cls._get_participant_locks_guard()
+        async with guard:
+            lock = cls._participant_locks.get(key)
+            if lock is None:
+                lock = asyncio.Lock()
+                cls._participant_locks[key] = lock
+            return lock
+
+    @classmethod
+    @asynccontextmanager
+    async def participant_history_mutex(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        participant_id: str,
+    ):
+        """
+        Serialize operations that depend on a consistent participant history.
+
+        This is intended to wrap the sequence:
+        get_history -> await model.generate -> store_turn
+        """
+        lock = await cls._get_or_create_participant_lock(
+            meeting_id=meeting_id,
+            room_name=room_name,
+            participant_id=participant_id,
+        )
+        async with lock:
+            yield
+
     # Session and chat history management
     @classmethod
     def get_or_create_session(cls, meeting_id: str, room_name: Optional[str] = None) -> Session:
@@ -237,3 +289,8 @@ class SessionManager:
         session.participant_histories.clear()
         session.transcript = None
         logger.info(f"Cleared session: {meeting_id} room_name={room_name}")
+
+        prefix = f"{meeting_id}:{room_name or ''}:"
+        for key in list(cls._participant_locks.keys()):
+            if key.startswith(prefix):
+                cls._participant_locks.pop(key, None)
