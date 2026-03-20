@@ -97,6 +97,14 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 language=request.language,
                                 stability=result.stability
                             )
+
+                            if not result.is_interim:
+                                SessionManager.update_transcript(
+                                    meeting_id=meeting_id,
+                                    room_name=room_name,
+                                    transcript=result.text,
+                                )
+
                             await websocket.send_json(response.model_dump())
 
                         except Exception as e:
@@ -129,9 +137,13 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     finally:
         # Cleanup
         try:
+            SessionManager.remove_connection(meeting_id)
             if room_name:
                 AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
-            SessionManager.remove_connection(meeting_id)
+            SessionManager.clear_meeting_state_if_inactive(
+                meeting_id=meeting_id,
+                room_name=room_name,
+            )
         except Exception as e:
             logger.warning(f"Error during cleanup, {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
