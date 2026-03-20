@@ -49,17 +49,23 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
                 room_name=request.room_name,
                 participant_id=participant_id,
             )
+            history_snapshot = list(history)
 
-            result = await engine.generate_text_from_text(
-                prompt=request.prompt,
-                context=transcript,
-                history=history,
-                max_new_tokens=request.max_new_tokens,
-                do_sample=request.do_sample,
-                temperature=request.temperature,
-                repetition_penalty=request.repetition_penalty
-            )
+        result = await engine.generate_text_from_text(
+            prompt=request.prompt,
+            context=transcript,
+            history=history_snapshot,
+            max_new_tokens=request.max_new_tokens,
+            do_sample=request.do_sample,
+            temperature=request.temperature,
+            repetition_penalty=request.repetition_penalty
+        )
 
+        async with SessionManager.participant_history_mutex(
+            meeting_id=request.meeting_id,
+            room_name=request.room_name,
+            participant_id=participant_id,
+        ):
             SessionManager.store_chat_turn(
                 meeting_id=request.meeting_id,
                 room_name=request.room_name,
