@@ -6,6 +6,7 @@ from typing import Dict, List, Optional
 
 from fastapi import WebSocket
 
+from config import settings
 from butler import CaptionHandler
 from butler.triton_client import TritonClient
 from models import HistoryEntry
@@ -31,6 +32,8 @@ class Session:
 
 class SessionManager:
     """Manages WebSocket connections, caption handlers, and meeting sessions"""
+    HISTORY_TURNS_LIMIT: int = settings.triton.max_history_turns
+    TRANSCRIPT_CHARS_LIMIT: int = settings.triton.max_context_chars
 
     _instance = None
 
@@ -193,9 +196,15 @@ class SessionManager:
 
     @classmethod
     def update_transcript(cls, meeting_id: str, room_name: Optional[str], transcript: Optional[str]) -> None:
-        """Update the stored transcript for a meeting."""
+        """Append transcript text for a meeting"""
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        if not transcript:
+            return
+
         session.transcript = f"{session.transcript or ''} {transcript}".strip()
+
+        if len(session.transcript) > cls.TRANSCRIPT_CHARS_LIMIT:
+            session.transcript = session.transcript[-cls.TRANSCRIPT_CHARS_LIMIT :]
 
     @classmethod
     def get_transcript(cls, meeting_id: str, room_name: Optional[str]) -> Optional[str]:
@@ -232,6 +241,12 @@ class SessionManager:
             HistoryEntry(role="user", content=user_prompt),
             HistoryEntry(role="assistant", content=assistant_reply),
         ])
+
+        max_entries = cls.HISTORY_TURNS_LIMIT * 2
+        entries = session.participant_histories[participant_id]
+        if len(entries) > max_entries:
+            session.participant_histories[participant_id] = entries[-max_entries:]
+
         logger.debug(
             "Stored chat turn for meeting_id=%s participant_id=%s (participant_histories=%d)",
             meeting_id,
