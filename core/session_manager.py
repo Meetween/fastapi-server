@@ -97,6 +97,8 @@ class SessionManager:
         cls._connections.clear()
         cls._caption_handlers.clear()
         cls._sessions.clear()
+        async with cls._get_participant_locks_guard():
+            cls._participant_locks.clear()
         logger.info("All connections closed")
 
     @classmethod
@@ -158,8 +160,10 @@ class SessionManager:
         """
         Serialize operations that depend on a consistent participant history.
 
-        This is intended to wrap the sequence:
-        get_history -> await model.generate -> store_turn
+        Intended usage is:
+        - snapshot participant history (and any other dependent reads)
+        - run expensive inference outside the mutex (optional but recommended)
+        - store the resulting turn under the mutex
         """
         lock = await cls._get_or_create_participant_lock(
             meeting_id=meeting_id,
