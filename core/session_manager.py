@@ -204,6 +204,7 @@ class SessionManager:
         session.transcript = f"{session.transcript or ''} {transcript}".strip()
 
         if len(session.transcript) > cls.TRANSCRIPT_CHARS_LIMIT:
+            logger.info(f"Truncating transcript for meeting_id={meeting_id} from {len(session.transcript)} to {cls.TRANSCRIPT_CHARS_LIMIT}")
             session.transcript = session.transcript[-cls.TRANSCRIPT_CHARS_LIMIT :]
 
     @classmethod
@@ -245,9 +246,10 @@ class SessionManager:
         max_entries = cls.HISTORY_TURNS_LIMIT * 2
         entries = session.participant_histories[participant_id]
         if len(entries) > max_entries:
+            logger.info(f"Truncating chat history for meeting_id={meeting_id} participant_id={participant_id} from {len(entries)} to {max_entries}")
             session.participant_histories[participant_id] = entries[-max_entries:]
 
-        logger.debug(
+        logger.info(
             "Stored chat turn for meeting_id=%s participant_id=%s (participant_histories=%d)",
             meeting_id,
             participant_id,
