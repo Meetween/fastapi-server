@@ -83,6 +83,14 @@ Compatible with the custom `MeetweenTranscriptionService`.
 
 **Response** `MeetweenTaskResponse`
 
+### Agenda Tracking
+
+**Endpoint**: `/api/agenda-tracking`
+
+**Request**: `MeetweenAgendaTrackingRequest`
+
+**Response**: `MeetweenAgendaTrackingResponse`
+
 ## Configuration
 
 ### Jigasi Configuration

@@ -8,6 +8,7 @@ soundfile
 requests>=2.31.0
 httpx>=0.25.0
 apscheduler>=3.10.0
+pyyaml>=6.0.0
 
 # Audio processing dependencies
 torch==2.3.1

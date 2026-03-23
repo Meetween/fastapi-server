@@ -9,7 +9,15 @@ taskTypes = Literal[
     "transcription",
     "summary",
     "catch_me_up",
-    "chat"
+    "chat",
+    "agendaTracking",
+]
+
+agendaStatusTypes = Literal[
+    "pending",
+    "in_progress",
+    "completed",
+    "skipped",
 ]
 
 """
@@ -54,6 +62,13 @@ class HistoryEntry(BaseModel):
     role: Literal["user", "assistant"]
     content: str
 
+
+class AgendaItem(BaseModel):
+    index: int = Field(..., ge=0)
+    text: str = Field(..., min_length=1, description="Agenda item text")
+    status: agendaStatusTypes = "pending"
+
+
 class MeetweenTaskRequest(BaseModel):
     type: taskTypes
     room_name: str
@@ -91,6 +106,22 @@ class MeetweenTextRequest(MeetweenTaskRequest):
 
 class MeetweenCatchupRequest(MeetweenTaskRequest):
     max_duration: Optional[float] = None
+
+
+class MeetweenAgendaTrackingRequest(BaseModel):
+    type: taskTypes = "agendaTracking"
+    meeting_id: str
+    room_id: str
+    items: List[AgendaItem]
+    requested_by: Optional[Literal["moderator", "admin"]] = None
+
+
+class MeetweenAgendaTrackingResponse(BaseModel):
+    taskType: Literal["agendaTracking"] = "agendaTracking"
+    meeting_id: str
+    room_id: str
+    items: List[AgendaItem]
+
 
 class MeetweenTaskResponse(BaseModel):
     type: taskTypes

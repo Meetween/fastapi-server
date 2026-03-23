@@ -25,6 +25,7 @@ from api.routes import (
     summary,
     config,
     chat,
+    agenda,
 )
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -247,6 +248,7 @@ app.include_router(transcription.router)
 app.include_router(summary.router)
 app.include_router(config.router)
 app.include_router(chat.router)
+app.include_router(agenda.router)
 
 
 if __name__ == "__main__":
