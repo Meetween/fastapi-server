@@ -32,9 +32,7 @@ class EngineManager:
                     triton_url=settings.triton.url,
                     model_name=settings.triton.model_name,
                     timeout=settings.triton.timeout,
-                    verbose=True,
-                    max_context_chars=settings.triton.max_context_chars,
-                    max_history_chars=settings.triton.max_history_chars,
+                    verbose=True
                 )
                 logger.info("Triton client initialized successfully")
             except Exception as e:

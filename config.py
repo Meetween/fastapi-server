@@ -9,9 +9,6 @@ class TritonSettings(BaseModel):
     url: str = Field(default="http://localhost:9000", env="TRITON_URL")
     model_name: str = Field(default="speechlmm", env="TRITON_MODEL_NAME")
     timeout: int = Field(default=1800, env="TRITON_TIMEOUT")
-    max_context_chars: int = Field(default=300_000, env="TRITON_MAX_CONTEXT_CHARS")
-    max_history_turns: int = Field(default=400, env="TRITON_MAX_HISTORY_TURNS")
-    max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
 
 class Settings(BaseSettings):
 
