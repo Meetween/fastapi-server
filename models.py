@@ -109,7 +109,7 @@ class MeetweenCatchupRequest(MeetweenTaskRequest):
 
 
 class MeetweenAgendaTrackingRequest(BaseModel):
-    type: taskTypes = "agendaTracking"
+    type: Literal["agendaTracking"] = "agendaTracking"
     meeting_id: str
     room_id: str
     items: List[AgendaItem]
