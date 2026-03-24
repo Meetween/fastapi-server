@@ -36,7 +36,7 @@ def _build_chat_prompt(
             chat_history = "(history truncated for length)\n" + chat_history
     return format_template(
         "chat_prompt",
-        filename=str(Path(__file__).resolve().parents[2] / "butler" / "prompts" / "chat_system_prompt.yml"),
+        filename="chat_system_prompt.yml",
         meeting_transcript=meeting_transcript,
         chat_history=chat_history,
         user_question=query.strip(),

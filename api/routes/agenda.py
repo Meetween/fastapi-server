@@ -140,7 +140,7 @@ def _build_agenda_prompt(items: List[AgendaItem], transcript: str) -> str:
     allowed_statuses = ", ".join(sorted(_VALID_STATUSES))
     return format_template(
         "agenda_prompt",
-        filename=str(Path(__file__).resolve().parents[2] / "butler" / "prompts" / "agenda_system_prompt.yml"),
+        filename="agenda_system_prompt.yml",
         allowed_statuses=allowed_statuses,
         meeting_transcript=transcript.strip(),
         agenda_items=agenda_lines,
