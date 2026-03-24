@@ -6,9 +6,10 @@ from pydantic import BaseModel, Field, field_validator
 import base64
 
 taskTypes = Literal[
-		"transcription",
-		"summary",
-		"catch_me_up"
+    "transcription",
+    "summary",
+    "catch_me_up",
+    "chat"
 ]
 
 """
@@ -86,6 +87,7 @@ class MeetweenAudioRequest(MeetweenTaskRequest):
 
 class MeetweenTextRequest(MeetweenTaskRequest):
     text: str
+
 
 class MeetweenCatchupRequest(MeetweenTaskRequest):
     max_duration: Optional[float] = None
