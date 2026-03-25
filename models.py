@@ -1,8 +1,8 @@
 """
 Pydantic models for Meetween API
 """
-from typing import Optional, Literal, Union, List, Dict
-from pydantic import BaseModel, Field, field_validator
+from typing import Optional, Literal, Union, List
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import base64
 
 taskTypes = Literal[
@@ -120,6 +120,13 @@ class MeetweenAgendaTrackingResponse(BaseModel):
     taskType: Literal["agendaTracking"] = "agendaTracking"
     meeting_id: str
     room_id: str
+    items: List[AgendaItem]
+
+
+class AgendaTrackingModelOutput(BaseModel):
+    """JSON body from the LLM: {\"items\": [AgendaItem, ...]}."""
+
+    model_config = ConfigDict(extra="forbid")
     items: List[AgendaItem]
 
 

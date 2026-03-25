@@ -4,15 +4,15 @@ Infers agenda progress from the full meeting transcript.
 """
 import json
 import logging
-import re
-from pathlib import Path
 from typing import Dict, List, get_args
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, HTTPException, Response
+from pydantic import ValidationError
 
 from core import EngineManager, SessionManager
 from models import (
     AgendaItem,
+    AgendaTrackingModelOutput,
     agendaStatusTypes,
     MeetweenAgendaTrackingRequest,
     MeetweenAgendaTrackingResponse,
@@ -25,85 +25,46 @@ logger = logging.getLogger(__name__)
 _VALID_STATUSES = set(get_args(agendaStatusTypes))
 
 
-def _extract_json_block(raw_text: str) -> str:
-    """Extract the first JSON object/array from model output."""
-    text = (raw_text or "").strip()
-    if not text:
+def _agenda_items_output_schema() -> dict:
+    """JSON Schema for model output: object with an items array of AgendaItem shapes."""
+    return {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": AgendaItem.model_json_schema(),
+            }
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+
+
+def _decode_json(raw_text: str) -> object:
+    """Strictly decode JSON from the entire LLM response."""
+    if not raw_text:
         raise ValueError("Model output is empty")
-
-    if text.startswith("{") or text.startswith("["):
-        return text
-
-    match = re.search(r"(\{[\s\S]*\}|\[[\s\S]*\])", text)
-    if not match:
-        raise ValueError("No JSON found in model output")
-    return match.group(1)
-
-
-def _extract_status_pairs(raw_text: str) -> List[Dict[str, str]]:
-    """
-    Extract loose index/status pairs from plain text.
-    Examples:
-    - "index: 1 status: completed"
-    - "index=1, status=in_progress"
-    """
-    text = (raw_text or "").strip()
-    if not text:
-        return []
-
-    pattern = re.compile(
-        r"index\s*[:=]\s*(\d+)[^\n\r]*?status\s*[:=]\s*([a-zA-Z_]+)",
-        flags=re.IGNORECASE,
-    )
-    return [
-        {"index": int(match.group(1)), "status": match.group(2).strip().lower()}
-        for match in pattern.finditer(text)
-    ]
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        raise ValueError(f"Invalid JSON in model output: {raw_text}")
 
 
 def _build_items_from_inference(
-    inferred_payload: object,
+    inferred_items: List[AgendaItem],
     original_items: List[AgendaItem],
 ) -> List[AgendaItem]:
     """
     Normalize model output and preserve original ordering.
-    Supports:
-    - [{"index": 0, "status": "completed"}, ...]
-    - {"items": [{"index": 0, "status": "completed"}, ...]}
-    - [{"agenda_item": "...", "status": "completed"}, ...]
+    Uses index-based status updates while preserving original ordering and text.
     """
-    inferred_items = inferred_payload
-    if isinstance(inferred_payload, dict):
-        inferred_items = inferred_payload.get("items")
-
-    if not isinstance(inferred_items, list):
-        raise ValueError("Inferred payload must contain an items list")
-
     by_index: Dict[int, str] = {}
-    by_text: Dict[str, str] = {}
-
     for item in inferred_items:
-        if not isinstance(item, dict):
-            continue
-
-        status = str(item.get("status", "")).strip().lower()
-        if status not in _VALID_STATUSES:
-            continue
-
-        idx = item.get("index")
-        if isinstance(idx, int):
-            by_index[idx] = status
-            continue
-
-        text = item.get("text") or item.get("agenda_item")
-        if isinstance(text, str) and text.strip():
-            by_text[text.strip().lower()] = status
+        by_index[item.index] = item.status
 
     normalized_items: List[AgendaItem] = []
     for item in original_items:
-        status = by_index.get(item.index)
-        if status is None:
-            status = by_text.get(item.text.strip().lower(), item.status)
+        status = by_index.get(item.index, item.status)
         normalized_items.append(
             AgendaItem(index=item.index, text=item.text, status=status)
         )
@@ -122,33 +83,68 @@ def _build_agenda_response(
     )
 
 
-def _parse_inference_payload(result: str) -> object | None:
+def _inference_items_match_request(
+    inferred: List[AgendaItem],
+    original: List[AgendaItem],
+) -> bool:
+    """
+    Ensure model output matches the request: same indices, no duplicates,
+    and each item text matches the corresponding agenda line (after strip).
+    """
+    if len(inferred) != len(original):
+        return False
+    orig_by_index: Dict[int, AgendaItem] = {o.index: o for o in original}
+    expected_indices = set(orig_by_index.keys())
+    seen: set[int] = set()
+    for item in inferred:
+        if item.index in seen:
+            return False
+        seen.add(item.index)
+        orig = orig_by_index.get(item.index)
+        if orig is None:
+            return False
+        if item.text.strip() != orig.text.strip():
+            return False
+    return seen == expected_indices
+
+
+def _parse_inference_payload(
+    result: str,
+    original_items: List[AgendaItem],
+) -> List[AgendaItem] | None:
     try:
-        return json.loads(_extract_json_block(result))
-    except ValueError:
-        loose_items = _extract_status_pairs(result)
-        if loose_items:
-            return {"items": loose_items}
-
-    return None
-
+        decoded = _decode_json(result)
+        validated = AgendaTrackingModelOutput.model_validate(decoded)
+        if not _inference_items_match_request(validated.items, original_items):
+            return None
+        return list(validated.items)
+    except (ValueError, ValidationError):
+        return None
 
 def _build_agenda_prompt(items: List[AgendaItem], transcript: str) -> str:
     agenda_lines = "\n".join(
         f"- index={item.index}, item={item.text}" for item in items
     )
     allowed_statuses = ", ".join(sorted(_VALID_STATUSES))
+    json_schema = json.dumps(_agenda_items_output_schema(), indent=2)
     return format_template(
         "agenda_prompt",
         filename="agenda_system_prompt.yml",
         allowed_statuses=allowed_statuses,
         meeting_transcript=transcript.strip(),
         agenda_items=agenda_lines,
+        json_schema=json_schema,
     )
 
 
-@router.post("/agenda-tracking", response_model=MeetweenAgendaTrackingResponse)
-async def agenda_tracking(request: MeetweenAgendaTrackingRequest = Body(...)):
+@router.post(
+    "/agenda-tracking",
+    response_model=MeetweenAgendaTrackingResponse,
+    responses={204: {"description": "No Content"}},
+)
+async def agenda_tracking(
+    request: MeetweenAgendaTrackingRequest = Body(...),
+) -> MeetweenAgendaTrackingResponse | Response:
     engine = EngineManager.get_lmm()
     if not engine:
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
@@ -159,18 +155,18 @@ async def agenda_tracking(request: MeetweenAgendaTrackingRequest = Body(...)):
     ) or ""
 
     if not transcript.strip():
-        return _build_agenda_response(request, request.items)
+        return Response(status_code=204)
     try:
         agenda_prompt = _build_agenda_prompt(request.items, transcript)
         result = await engine.generate_text_from_text(prompt=agenda_prompt)
-
-        parsed = _parse_inference_payload(result)
+        parsed = _parse_inference_payload(result, request.items)
         if parsed is None:
             logger.warning(
-                "Agenda tracking output not parseable; preserving existing statuses. output=%r",
+                "Agenda tracking output invalid (parse/schema or mismatch with request items); "
+                "preserving existing statuses. output=%r",
                 (result or "")[:300],
             )
-            return _build_agenda_response(request, request.items)
+            return Response(status_code=204)
 
         normalized_items = _build_items_from_inference(parsed, request.items)
         return _build_agenda_response(request, normalized_items)
