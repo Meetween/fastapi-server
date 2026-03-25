@@ -32,12 +32,8 @@ def test_agenda_tracking_without_transcript_returns_given_items(
 
     response = client.post("/api/agenda-tracking", json=payload)
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["taskType"] == "agendaTracking"
-    assert data["meeting_id"] == test_meeting_id
-    assert data["room_id"] == room_id
-    assert [item["status"] for item in data["items"]] == ["pending", "pending", "pending"]
+    assert response.status_code == 204
+    assert response.content == b""
 
 
 def test_agenda_tracking_with_transcript_infers_item_statuses(
@@ -62,9 +58,9 @@ def test_agenda_tracking_with_transcript_infers_item_statuses(
     async def mock_generate_text_from_text(*args, **kwargs):
         return (
             '{"items":['
-            '{"index":0,"status":"completed"},'
-            '{"index":1,"status":"skipped"},'
-            '{"index":2,"status":"pending"}'
+            '{"index":0,"text":"Budget discussion","status":"completed"},'
+            '{"index":1,"text":"Hiring plan","status":"skipped"},'
+            '{"index":2,"text":"Marketing strategy","status":"pending"}'
             "]}"
         )
 
@@ -103,9 +99,8 @@ def test_agenda_tracking_unparseable_output_preserves_existing_statuses(
     with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
         response = client.post("/api/agenda-tracking", json=payload)
 
-    assert response.status_code == 200
-    data = response.json()
-    assert [item["status"] for item in data["items"]] == ["pending", "pending", "pending"]
+    assert response.status_code == 204
+    assert response.content == b""
 
     SessionManager.clear_session(meeting_id=test_meeting_id, room_name=room_id, force=True)
 
@@ -130,9 +125,9 @@ def test_agenda_tracking_uses_text_generation_method(
         called["text"] = True
         return (
             '{"items":['
-            '{"index":0,"status":"completed"},'
-            '{"index":1,"status":"in_progress"},'
-            '{"index":2,"status":"pending"}'
+            '{"index":0,"text":"Budget discussion","status":"completed"},'
+            '{"index":1,"text":"Hiring plan","status":"in_progress"},'
+            '{"index":2,"text":"Marketing strategy","status":"pending"}'
             "]}"
         )
 
