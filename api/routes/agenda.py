@@ -4,6 +4,7 @@ Infers agenda progress from the full meeting transcript.
 """
 import json
 import logging
+import re
 from typing import Dict, List, get_args
 
 from fastapi import APIRouter, Body, HTTPException, Response
@@ -23,6 +24,14 @@ router = APIRouter(prefix="/api", tags=["agenda-tracking"])
 logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = set(get_args(agendaStatusTypes))
+
+
+def _normalize_agenda_text(text: str) -> str:
+    """
+    Normalize agenda text for tolerant comparisons.
+    Ignores casing, whitespace, and punctuation-only differences.
+    """
+    return re.sub(r"[\W_]+", "", text.casefold())
 
 
 def _agenda_items_output_schema() -> dict:
@@ -89,7 +98,7 @@ def _inference_items_match_request(
 ) -> bool:
     """
     Ensure model output matches the request: same indices, no duplicates,
-    and each item text matches the corresponding agenda line (after strip).
+    and each item text matches the corresponding agenda line after normalization.
     """
     if len(inferred) != len(original):
         return False
@@ -103,7 +112,7 @@ def _inference_items_match_request(
         orig = orig_by_index.get(item.index)
         if orig is None:
             return False
-        if item.text.strip() != orig.text.strip():
+        if _normalize_agenda_text(item.text) != _normalize_agenda_text(orig.text):
             return False
     return seen == expected_indices
 
