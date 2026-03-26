@@ -14,7 +14,6 @@ def _payload(meeting_id: str, room_id: str):
         "meeting_id": meeting_id,
         "room_id": room_id,
         "requested_by": "moderator",
-        "update_interval_seconds": 180,
         "items": [
             {"index": 0, "text": "Budget discussion", "status": "pending"},
             {"index": 1, "text": "Hiring plan", "status": "pending"},
