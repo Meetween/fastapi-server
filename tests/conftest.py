@@ -166,6 +166,8 @@ def mock_engine_manager():
     """
     # Create a mock engine with generation methods (used by summarize_audio, transcribe_audio, chat)
     mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
     # Async mock for text-only chat generation
     async def mock_generate_text_from_text(*args, **kwargs):
         return "Mock chat response text for testing"

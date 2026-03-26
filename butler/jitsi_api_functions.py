@@ -434,11 +434,8 @@ async def summarize_audio(
         audio=audio_tensor,
         sample_rate=target_sr,
         max_new_tokens=max_tokens,
-        do_sample=False,
-        context=context,
-        history=history
+        do_sample=False
     )
-    
     return summary.strip()
 
 
