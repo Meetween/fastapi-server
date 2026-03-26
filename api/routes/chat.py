@@ -118,6 +118,8 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             language=request.language,
             participant_id=request.participant_id,
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Chat error: {e}", exc_info=True)
         raise HTTPException(
