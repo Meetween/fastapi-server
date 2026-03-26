@@ -133,7 +133,7 @@ def test_agenda_tracking_uses_text_generation_method(
             return (
                 '{"items":['
                 '{"index":0,"text":"Budget discussion","status":"completed"},'
-                '{"index":1,"text":"Hiring plan","status":"in_progress"},'
+                '{"index":1,"text":"Hiring plan","status":"skipped"},'
                 '{"index":2,"text":"Marketing strategy","status":"pending"}'
                 "]}"
             )
@@ -149,7 +149,7 @@ def test_agenda_tracking_uses_text_generation_method(
         data = response.json()
         assert [item["status"] for item in data["items"]] == [
             "completed",
-            "in_progress",
+            "skipped",
             "pending",
         ]
     finally:

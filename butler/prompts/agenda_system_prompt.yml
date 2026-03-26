@@ -17,7 +17,6 @@ agenda_prompt: |
   - Do not invent new agenda items.
   - Use only these statuses: {allowed_statuses}.
   - Prefer conservative decisions when evidence is weak.
-  - If an item was discussed but not concluded, mark it `in_progress`.
   - If an item has not been discussed, mark it `pending`.
   - If an item discussion is finished, mark it `completed`.
   - If participants explicitly defer/skip it, mark it `skipped`.

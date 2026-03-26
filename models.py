@@ -15,7 +15,6 @@ taskTypes = Literal[
 
 agendaStatusTypes = Literal[
     "pending",
-    "in_progress",
     "completed",
     "skipped",
 ]
