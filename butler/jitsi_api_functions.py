@@ -298,7 +298,7 @@ async def transcribe_audio(
     if repetition_penalty is not None:
         gen_kwargs["repetition_penalty"] = repetition_penalty
 
-    transcription = await engine._generate_text_from_audio(
+    transcription = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -358,7 +358,7 @@ async def caption_audio(
     # Get language-specific ASR prompt
     prompt = PromptLoader.get_prompt("ASR", language)
     
-    transcription = await engine._generate_text_from_audio(
+    transcription = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
@@ -429,7 +429,7 @@ async def summarize_audio(
     if prompt is None:
         prompt = PromptLoader.get_prompt("SSUM", language)
     
-    summary = await engine._generate_text_from_audio(
+    summary = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,

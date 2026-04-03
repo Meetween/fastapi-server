@@ -168,10 +168,10 @@ def mock_engine_manager():
     mock_engine = Mock()
     mock_engine.max_context_chars = 300_000
     mock_engine.max_history_chars = 600_000
-    # Async mock for text-only chat generation
-    async def mock_generate_text_from_text(*args, **kwargs):
+    # Async mock for text-only generation
+    async def mock_generate_text(*args, **kwargs):
         return "Mock chat response text for testing"
-    mock_engine.generate_text_from_text = mock_generate_text_from_text
+    mock_engine._generate_text = mock_generate_text
     
     # Mock butler functions to return test data without processing audio
     def mock_summarize_audio(*args, **kwargs):
