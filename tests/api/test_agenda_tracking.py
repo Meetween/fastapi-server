@@ -54,7 +54,7 @@ def test_agenda_tracking_with_transcript_infers_item_statuses(
 
         mock_engine = Mock()
 
-        async def mock_generate_text_from_text(*args, **kwargs):
+        async def mock_generate_text(*args, **kwargs):
             return (
                 '{"items":['
                 '{"index":0,"text":"Budget discussion","status":"completed"},'
@@ -63,7 +63,7 @@ def test_agenda_tracking_with_transcript_infers_item_statuses(
                 "]}"
             )
 
-        mock_engine.generate_text_from_text = mock_generate_text_from_text
+        mock_engine._generate_text = mock_generate_text
 
         with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
             response = client.post("/api/agenda-tracking", json=payload)
@@ -96,10 +96,10 @@ def test_agenda_tracking_unparseable_output_preserves_existing_statuses(
 
         mock_engine = Mock()
 
-        async def mock_generate_text_from_text(*args, **kwargs):
+        async def mock_generate_text(*args, **kwargs):
             return "<answer><item>invalid-output</item></answer>"
 
-        mock_engine.generate_text_from_text = mock_generate_text_from_text
+        mock_engine._generate_text = mock_generate_text
 
         with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
             response = client.post("/api/agenda-tracking", json=payload)
@@ -128,7 +128,7 @@ def test_agenda_tracking_uses_text_generation_method(
         mock_engine = Mock()
         called = {"text": False}
 
-        async def mock_generate_text_from_text(*args, **kwargs):
+        async def mock_generate_text(*args, **kwargs):
             called["text"] = True
             return (
                 '{"items":['
@@ -138,7 +138,7 @@ def test_agenda_tracking_uses_text_generation_method(
                 "]}"
             )
 
-        mock_engine.generate_text_from_text = mock_generate_text_from_text
+        mock_engine._generate_text = mock_generate_text
 
         with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
             response = client.post("/api/agenda-tracking", json=payload)
@@ -173,7 +173,7 @@ def test_agenda_tracking_accepts_punctuation_only_item_text_differences(
 
         mock_engine = Mock()
 
-        async def mock_generate_text_from_text(*args, **kwargs):
+        async def mock_generate_text(*args, **kwargs):
             return (
                 '{"items":['
                 '{"index":0,"text":"Budget discussion!","status":"completed"},'
@@ -182,7 +182,7 @@ def test_agenda_tracking_accepts_punctuation_only_item_text_differences(
                 "]}"
             )
 
-        mock_engine.generate_text_from_text = mock_generate_text_from_text
+        mock_engine._generate_text = mock_generate_text
 
         with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
             response = client.post("/api/agenda-tracking", json=payload)

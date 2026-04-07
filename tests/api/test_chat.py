@@ -107,11 +107,11 @@ def test_chat_uses_session_manager_context_and_history_only(
     mock_engine.max_context_chars = 300_000
     mock_engine.max_history_chars = 600_000
 
-    async def mock_generate_text_from_text(*args, **kwargs):
+    async def mock_generate_text(*args, **kwargs):
         captured["prompt"] = kwargs["prompt"]
         return "Budget approved, timeline open."
 
-    mock_engine.generate_text_from_text = mock_generate_text_from_text
+    mock_engine._generate_text = mock_generate_text
 
     with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
         response = client.post("/api/chat", json=payload)

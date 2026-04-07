@@ -167,7 +167,11 @@ async def agenda_tracking(
         return Response(status_code=204)
     try:
         agenda_prompt = _build_agenda_prompt(request.items, transcript)
-        result = await engine.generate_text_from_text(prompt=agenda_prompt)
+        result = await engine._generate_text(
+            prompt=agenda_prompt,
+            audio=None,
+            sample_rate=16000
+        )
         parsed = _parse_inference_payload(result, request.items)
         if parsed is None:
             logger.warning(

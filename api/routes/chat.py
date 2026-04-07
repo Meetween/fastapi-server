@@ -89,8 +89,10 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             max_history_chars=engine.max_history_chars,
         )
         
-        result = await engine.generate_text_from_text(
+        result = await engine._generate_text(
             prompt=combined_prompt,
+            audio=None,
+            sample_rate=16000,
             max_new_tokens=request.max_new_tokens,
             do_sample=request.do_sample,
             temperature=request.temperature,

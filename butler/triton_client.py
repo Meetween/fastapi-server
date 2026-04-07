@@ -20,7 +20,7 @@ class TritonClient:
     def __init__(
         self,
         triton_url: str = "http://localhost:9000",
-        model_name: str = "speechlmm",
+        model_name: str = "qwen25_omni",
         timeout: int = 1800,
         verbose: bool = False,
         max_context_chars: Optional[int] = 300_000,
@@ -70,7 +70,7 @@ class TritonClient:
         buffer.seek(0)
         return buffer.read()
     
-    async def _generate_text_from_audio(
+    async def _generate_text(
         self,
         prompt: str,
         audio: torch.Tensor,
@@ -93,24 +93,32 @@ class TritonClient:
             max_new_tokens: Max tokens to generate (optional)
             do_sample: Use sampling (optional)
             temperature: Sampling temperature when do_sample=True (optional)
-            repetition_penalty: Penalty for repeated tokens (optional)
+            repetition_penalty: Accepted for compatibility but ignored
 
         Returns:
             Generated text
         """
-        wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
-        audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
+        wav_bytes = b""
+        audio_b64 = None
+        if audio is not None:
+            wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
+            audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
 
         # Always send all inputs; use defaults when caller doesn't specify (Triton expects all)
         # For batched model, scalar inputs use shape [1, 1] (batch_dim=1, dims[1]=1)
         inputs = [
-            {"name": "AUDIO_BYTES", "shape": [1, 1], "datatype": "BYTES", "data": [audio_b64]},
             {"name": "TEXT_PROMPT", "shape": [1, 1], "datatype": "BYTES", "data": [prompt]},
             {"name": "MAX_NEW_TOKENS", "shape": [1, 1], "datatype": "INT32", "data": [max_new_tokens or 8192]},
             {"name": "DO_SAMPLE", "shape": [1, 1], "datatype": "BOOL", "data": [do_sample if do_sample is not None else False]},
             {"name": "REPETITION_PENALTY", "shape": [1, 1], "datatype": "FP32", "data": [repetition_penalty if repetition_penalty is not None else 1.0]},
             {"name": "TEMPERATURE", "shape": [1, 1], "datatype": "FP32", "data": [temperature if (temperature is not None and (do_sample or False)) else 1.0]},
         ]
+
+        if audio_b64 is not None:
+            inputs.insert(
+                0,
+                {"name": "AUDIO_BYTES", "shape": [1, 1], "datatype": "BYTES", "data": [audio_b64]},
+            )
 
         payload = {
             "inputs": inputs,
@@ -152,29 +160,4 @@ class TritonClient:
         except Exception as e:
             logger.error(f"[TritonClient] Error processing response: {e}")
             raise RuntimeError(f"Triton response processing failed: {str(e)}")
-
-    async def generate_text_from_text(
-        self,
-        prompt: str,
-        max_new_tokens: Optional[int] = None,
-        do_sample: Optional[bool] = None,
-        temperature: Optional[float] = None,
-        repetition_penalty: Optional[float] = None,
-    ) -> str:
-        """
-        Generate text from a raw prompt. Prompt composition is handled by endpoints.
-        """
-        sample_rate = 16000
-        duration_sec = 0.1
-        num_samples = int(sample_rate * duration_sec)
-        silent_audio = torch.zeros(1, num_samples)
-        return await self._generate_text_from_audio(
-            prompt=prompt,
-            audio=silent_audio,
-            sample_rate=sample_rate,
-            max_new_tokens=max_new_tokens,
-            do_sample=do_sample,
-            temperature=temperature,
-            repetition_penalty=repetition_penalty,
-        )
-
+            
