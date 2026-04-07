@@ -1,0 +1,14 @@
+profiles:
+  speechlmm:
+    triton:
+      url: "http://localhost:9000"
+      model_name: "speechlmm"
+      prompt_protocol: "speechlmm_plain"
+
+  qwen25_omni:
+    triton:
+      url: "http://localhost:9100"
+      model_name: "qwen25_omni"
+      prompt_protocol: "qwen_json"
+      # Caption formatting (Qwen backend supports this)
+      caption_chars: 60

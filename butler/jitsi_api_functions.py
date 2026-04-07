@@ -302,6 +302,7 @@ async def transcribe_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
+        task="transcribe",
         **gen_kwargs,
     )
     
@@ -362,6 +363,7 @@ async def caption_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
+        task="caption",
         max_new_tokens=max_tokens,
         do_sample=False,
         repetition_penalty=1.2,
@@ -433,6 +435,7 @@ async def summarize_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
+        task="summary",
         max_new_tokens=max_tokens,
         do_sample=False
     )

@@ -170,7 +170,10 @@ async def agenda_tracking(
         result = await engine._generate_text(
             prompt=agenda_prompt,
             audio=None,
-            sample_rate=16000
+            sample_rate=16000,
+            task="chat",
+            max_new_tokens=512,
+            do_sample=False,
         )
         parsed = _parse_inference_payload(result, request.items)
         if parsed is None:

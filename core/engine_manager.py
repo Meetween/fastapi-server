@@ -35,6 +35,8 @@ class EngineManager:
                     verbose=True,
                     max_context_chars=settings.triton.max_context_chars,
                     max_history_chars=settings.triton.max_history_chars,
+                    prompt_protocol=settings.triton.prompt_protocol,
+                    caption_chars=settings.triton.caption_chars,
                 )
                 logger.info("Triton client initialized successfully")
             except Exception as e:
