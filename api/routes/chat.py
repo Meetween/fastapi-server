@@ -93,6 +93,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             prompt=combined_prompt,
             audio=None,
             sample_rate=16000,
+            task="chat",
             max_new_tokens=request.max_new_tokens,
             do_sample=request.do_sample,
             temperature=request.temperature,

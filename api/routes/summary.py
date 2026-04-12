@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Body
 from fastapi.responses import StreamingResponse
 
 from core import EngineManager
-from utils import StorageManager
+from utils import StorageManager, pydub_to_pcm16
 from config import settings
 from models import (
     MeetweenTaskResponse,
@@ -66,8 +66,11 @@ async def get_summary_text(request: LMMRequest) -> str:
             audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
 
             # Get raw PCM data
-            audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
-            audio_pcm = audio_array.tobytes()
+            # NOTE: old implementation commented out: it truncates 32-bit samples
+            # to int16 and can make Qwen hear the audio as constant noise.
+            # audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
+            # audio_pcm = audio_array.tobytes()
+            audio_pcm = pydub_to_pcm16(audio_segment)
 
             logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 

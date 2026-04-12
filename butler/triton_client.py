@@ -7,6 +7,7 @@ import base64
 import io
 import logging
 from typing import Optional
+import json
 
 import httpx
 import torch
@@ -25,6 +26,8 @@ class TritonClient:
         verbose: bool = False,
         max_context_chars: Optional[int] = 300_000,
         max_history_chars: Optional[int] = 600_000,
+        prompt_protocol: str = "speechlmm_plain",
+        caption_chars: int = 60,
     ):
         """
         Initialize Triton client.
@@ -42,6 +45,8 @@ class TritonClient:
         self.device = "cuda"
         self.max_context_chars = max_context_chars
         self.max_history_chars = max_history_chars
+        self.prompt_protocol = (prompt_protocol or "speechlmm_plain").strip().lower()
+        self.caption_chars = int(caption_chars) if caption_chars is not None else 60
         
         self.inference_url = f"{self.triton_url}/v2/models/{self.model_name}/infer"
         
@@ -53,6 +58,7 @@ class TritonClient:
         if self.verbose:
             logger.info(f"[TritonClient] Initialized with URL: {self.triton_url}")
             logger.info(f"[TritonClient] Model: {self.model_name}")
+            logger.info(f"[TritonClient] Prompt protocol: {self.prompt_protocol}")
     
     async def close(self):
         """Close the HTTP client connection pool"""
@@ -75,6 +81,7 @@ class TritonClient:
         prompt: str,
         audio: torch.Tensor,
         sample_rate: int,
+        task: Optional[str] = None,
         max_new_tokens: Optional[int] = None,
         do_sample: Optional[bool] = None,
         temperature: Optional[float] = None,
@@ -104,20 +111,33 @@ class TritonClient:
             wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
             audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
 
+        # Optional adapter for models that support a structured prompt protocol (Qwen backend).
+        # SpeechLMM expects a plain string prompt.
+        prompt_to_send = prompt
+        if self.prompt_protocol == "qwen_json":
+            mode = (task or "").strip().lower()
+            if not mode:
+                # Infer best-effort from whether audio is present.
+                mode = "chat" if audio_b64 is None else "transcribe"
+            payload_obj: dict = {"mode": mode, "prompt": prompt_to_send}
+            if mode == "caption":
+                payload_obj["caption_chars"] = self.caption_chars
+            prompt_to_send = json.dumps(payload_obj, ensure_ascii=False)
+
         # Always send all inputs; use defaults when caller doesn't specify (Triton expects all)
         # For batched model, scalar inputs use shape [1, 1] (batch_dim=1, dims[1]=1)
         inputs = [
-            {"name": "TEXT_PROMPT", "shape": [1, 1], "datatype": "BYTES", "data": [prompt]},
-            {"name": "MAX_NEW_TOKENS", "shape": [1, 1], "datatype": "INT32", "data": [max_new_tokens or 8192]},
-            {"name": "DO_SAMPLE", "shape": [1, 1], "datatype": "BOOL", "data": [do_sample if do_sample is not None else False]},
-            {"name": "REPETITION_PENALTY", "shape": [1, 1], "datatype": "FP32", "data": [repetition_penalty if repetition_penalty is not None else 1.0]},
-            {"name": "TEMPERATURE", "shape": [1, 1], "datatype": "FP32", "data": [temperature if (temperature is not None and (do_sample or False)) else 1.0]},
+            {"name": "TEXT_PROMPT", "shape": [1, 1], "datatype": "BYTES", "data": [[prompt_to_send]]},
+            {"name": "MAX_NEW_TOKENS", "shape": [1, 1], "datatype": "INT32", "data": [[max_new_tokens or 8192]]},
+            {"name": "DO_SAMPLE", "shape": [1, 1], "datatype": "BOOL", "data": [[do_sample if do_sample is not None else False]]},
+            {"name": "REPETITION_PENALTY", "shape": [1, 1], "datatype": "FP32", "data": [[repetition_penalty if repetition_penalty is not None else 1.0]]},
+            {"name": "TEMPERATURE", "shape": [1, 1], "datatype": "FP32", "data": [[temperature if (temperature is not None and (do_sample or False)) else 1.0]]},
         ]
 
         if audio_b64 is not None:
             inputs.insert(
                 0,
-                {"name": "AUDIO_BYTES", "shape": [1, 1], "datatype": "BYTES", "data": [audio_b64]},
+                {"name": "AUDIO_BYTES", "shape": [1, 1], "datatype": "BYTES", "data": [[audio_b64]]},
             )
 
         payload = {
