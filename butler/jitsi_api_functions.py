@@ -345,6 +345,44 @@ async def summarize_audio(
     )
     return summary.strip()
 
+async def summarize_text(
+    engine: TritonClient,
+    text: str,
+    language: str = "en-US",
+    max_new_tokens: Optional[int] = None,
+    do_sample: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+) -> str:
+    """
+    Summarize text input.
+    
+    Args:
+        engine: Initialized TritonClient
+        text: Text to summarize
+        language: BCP-47 language code
+        max_new_tokens: Max generation tokens
+        do_sample: Use sampling
+        temperature: Sampling temperature
+        repetition_penalty: Penalty for repeated tokens
+        
+    Returns:
+        Summary text
+    """
+    prompt = PromptLoader.get_prompt(TASK_TYPE_TEXT_SUMMARY, language)
+    prompt_with_text = f"{prompt}\n\n{text}"
+    summary = await engine._generate_text(
+        prompt=prompt_with_text,
+        audio=None,
+        sample_rate=16000,
+        task=TASK_TYPE_TEXT_SUMMARY,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        repetition_penalty=repetition_penalty
+    )
+    return summary.strip()
+
 async def translate_audio(
     engine: TritonClient,
     audio_bytes: bytes,
@@ -356,7 +394,7 @@ async def translate_audio(
     do_sample: Optional[bool] = None,
     temperature: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
-) -> MeetweenTranslationResponse:
+) -> str:
     """
     Speech to Text translation.
 
@@ -398,16 +436,7 @@ async def translate_audio(
         **gen_kwargs,
     )
 
-    return MeetweenTranslationResponse(
-        type="MT",
-        resultType="text",
-        room_name="",
-        meeting_id="",
-        result=translation,
-        language=language,
-        target_language=target_lang,
-        participant_id=participant_id
-    ) 
+    return translation.strip()
 
 async def translate_text(
     engine: TritonClient,
@@ -419,7 +448,7 @@ async def translate_text(
     do_sample: Optional[bool] = None,
     temperature: Optional[float] = None,
     repetition_penalty: Optional[float] = None,
-) -> MeetweenTranslationResponse:
+) -> str:
     """
     Text translation.
     
@@ -457,51 +486,6 @@ async def translate_text(
         **gen_kwargs,
     )
 
-    return MeetweenTranslationResponse(
-        type="MT",
-        resultType="text",
-        room_name="",
-        meeting_id="",
-        result=translation,
-        language=language,
-        target_language=target_lang,
-        participant_id=participant_id
-    )
+    return translation.strip()
 
-async def summarize_text(
-    engine: TritonClient,
-    text: str,
-    language: str = "en-US",
-    max_new_tokens: Optional[int] = None,
-    do_sample: Optional[bool] = None,
-    temperature: Optional[float] = None,
-    repetition_penalty: Optional[float] = None,
-) -> str:
-    """
-    Summarize text input.
-    
-    Args:
-        engine: Initialized TritonClient
-        text: Text to summarize
-        language: BCP-47 language code
-        max_new_tokens: Max generation tokens
-        do_sample: Use sampling
-        temperature: Sampling temperature
-        repetition_penalty: Penalty for repeated tokens
-        
-    Returns:
-        Summary text
-    """
-    prompt = get_task_prompt(TASK_TYPE_TEXT_SUMMARY, language)
-    prompt_with_text = f"{prompt}\n\n{text}"
-    summary = await engine._generate_text(
-        prompt=prompt_with_text,
-        audio=None,
-        sample_rate=16000,
-        task=TASK_TYPE_TEXT_SUMMARY,
-        max_new_tokens=max_new_tokens,
-        do_sample=do_sample,
-        temperature=temperature,
-        repetition_penalty=repetition_penalty
-    )
-    return summary.strip()
+ 

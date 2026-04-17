@@ -160,6 +160,10 @@ class MeetweenTaskResponse(BaseModel):
     participant_id: Optional[str]
     error: Optional[str] = None
 
+class MeetweenTranslationResponse(MeetweenTaskResponse):
+    type: Literal["ST", "MT"]
+    target_language: str
+
 class MeetweenSummarizationResponse(BaseModel):
     """Response model for summarization endpoint"""
     type: Literal["summarization"] = "summarization"

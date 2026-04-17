@@ -23,6 +23,7 @@ from api.routes import (
     chat,
     agenda,
     auth,
+    translation,
 )
 
 from fastapi import FastAPI
@@ -105,6 +106,7 @@ app.include_router(chat.router)
 app.include_router(agenda.router)
 app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
+app.include_router(translation.router)
 
 
 if __name__ == "__main__":
