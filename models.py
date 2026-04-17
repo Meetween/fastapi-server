@@ -12,6 +12,8 @@ taskTypes = Literal[
     "transcription",
     TASK_TYPE_TEXT_SUMMARY,
     TASK_TYPE_SPEECH_SUMMARY,
+    "ST",
+    "MT",
     "catch_me_up",
     "chat",
     "agendaTracking",
@@ -60,6 +62,14 @@ class MeetweenTranscriptionResponse(BaseModel):
     is_interim: Optional[bool] = None
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
+
+class MeetweenTranslationRequest(MeetweenTranscriptionRequest):
+    target_language: str
+
+class MeetweenTranslationResponse(MeetweenTranscriptionResponse):
+    """Response model for transcription endpoints"""
+    result: str
+    transcript: Optional[str]
 
 class HistoryEntry(BaseModel):
     role: Literal["user", "assistant"]
@@ -125,6 +135,13 @@ class MeetweenAgendaTrackingResponse(BaseModel):
     room_id: str
     items: List[AgendaItem]
 
+class MeetweenMTRequest(MeetweenTextRequest):
+    type: Literal["MT"] = "MT"
+    target_language: str
+
+class MeetweenSTRequest(MeetweenAudioRequest):
+    type: Literal["ST"] = "ST"
+    target_language: str
 
 class AgendaTrackingModelOutput(BaseModel):
     """JSON body from the LLM: {\"items\": [AgendaItem, ...]}."""
@@ -142,7 +159,6 @@ class MeetweenTaskResponse(BaseModel):
     language: Optional[str]
     participant_id: Optional[str]
     error: Optional[str] = None
-
 
 class MeetweenSummarizationResponse(BaseModel):
     """Response model for summarization endpoint"""
@@ -164,3 +180,4 @@ LMMRequest = Union[
     MeetweenTextRequest,
     MeetweenTaskRequest
 ]
+
