@@ -10,7 +10,7 @@ Provides three main functions:
 Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
-from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
+from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry, MeetweenTranslationResponse
 import numpy as np
 import torch
 try:
@@ -345,6 +345,128 @@ async def summarize_audio(
     )
     return summary.strip()
 
+async def translate_audio(
+    engine: TritonClient,
+    audio_bytes: bytes,
+    language: str,
+    target_lang: str,
+    sample_rate: int = 16000,
+    participant_id: Optional[str] = None,
+    max_new_tokens: Optional[int] = None,
+    do_sample: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+) -> MeetweenTranslationResponse:
+    """
+    Speech to Text translation.
+
+    Args:
+        engine: Initialized TritonClient
+        audio_bytes: Raw PCM LINEAR16 audio bytes (full meeting/segment)
+        language: Language of input text, BCP-47 language code
+        target_lang: Translation language, BCP-47 language code
+        sample_rate: Input sample rate (Hz)
+        participant_id: User ID
+        max_tokens: Max generation tokens (model supports up to 131072)
+        do_sample: Use sampling (optional)
+        temperature: Sampling temperature (optional)
+        repetition_penalty: Penalty for repeated tokens (optional)
+
+    Returns:
+        Translation of input audio
+    """ 
+
+       # Get language-specific MT prompt
+    prompt = PromptLoader.get_prompt("MT", language, target_language=target_lang)
+    gen_kwargs: dict = {}
+    if max_new_tokens is not None:
+        gen_kwargs["max_new_tokens"] = max_new_tokens
+    if do_sample is not None:
+        gen_kwargs["do_sample"] = do_sample
+    if temperature is not None:
+        gen_kwargs["temperature"] = temperature
+    if repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = repetition_penalty
+    
+    audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
+
+    translation = await engine._generate_text(
+        prompt=prompt,
+        audio=audio_tensor,
+        sample_rate=target_sr,
+        task="MT",
+        **gen_kwargs,
+    )
+
+    return MeetweenTranslationResponse(
+        type="MT",
+        resultType="text",
+        room_name="",
+        meeting_id="",
+        result=translation,
+        language=language,
+        target_language=target_lang,
+        participant_id=participant_id
+    ) 
+
+async def translate_text(
+    engine: TritonClient,
+    input_text: str,
+    language: str,
+    target_lang: str,
+    participant_id: Optional[str] = None,
+    max_new_tokens: Optional[int] = None,
+    do_sample: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+) -> MeetweenTranslationResponse:
+    """
+    Text translation.
+    
+    Args:
+        engine: Initialized TritonClient
+        input_text: Text to be translated
+        language: Language of input text, BCP-47 language code
+        target_lang: Translation language, BCP-47 language code
+        max_tokens: Max generation tokens (model supports up to 131072)
+        do_sample: Use sampling (optional)
+        temperature: Sampling temperature (optional)
+        repetition_penalty: Penalty for repeated tokens (optional)
+
+    Returns:
+        Translation of input text
+    """
+    # Get language-specific MT prompt
+    prompt = PromptLoader.get_prompt("MT", language, target_language=target_lang)
+    prompt += f"\n{input_text}"
+    gen_kwargs: dict = {}
+    if max_new_tokens is not None:
+        gen_kwargs["max_new_tokens"] = max_new_tokens
+    if do_sample is not None:
+        gen_kwargs["do_sample"] = do_sample
+    if temperature is not None:
+        gen_kwargs["temperature"] = temperature
+    if repetition_penalty is not None:
+        gen_kwargs["repetition_penalty"] = repetition_penalty
+
+    translation = await engine._generate_text(
+        prompt=prompt,
+        audio=None,
+        sample_rate=16000,
+        task="MT",
+        **gen_kwargs,
+    )
+
+    return MeetweenTranslationResponse(
+        type="MT",
+        resultType="text",
+        room_name="",
+        meeting_id="",
+        result=translation,
+        language=language,
+        target_language=target_lang,
+        participant_id=participant_id
+    )
 
 async def summarize_text(
     engine: TritonClient,
