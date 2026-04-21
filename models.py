@@ -66,10 +66,12 @@ class MeetweenTranscriptionResponse(BaseModel):
 class MeetweenTranslationRequest(MeetweenTranscriptionRequest):
     target_language: str
 
-class MeetweenTranslationResponse(MeetweenTranscriptionResponse):
-    """Response model for transcription endpoints"""
+class MeetweenWSTranslationResponse(MeetweenTranscriptionResponse):
+    """WebSocket response for real-time speech translation chunks."""
+    type: Literal["MT", "ST"]
     result: str
-    transcript: Optional[str]
+    target_language: str
+    transcript: Optional[str] = None
 
 class HistoryEntry(BaseModel):
     role: Literal["user", "assistant"]
