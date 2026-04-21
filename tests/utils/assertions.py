@@ -105,6 +105,24 @@ def assert_transcription_response(data: Dict[str, Any]) -> None:
         assert isinstance(data["transcript"], str), "Transcript should be a string"
 
 
+def assert_translation_response(data: Dict[str, Any], expected_type: str = "MT") -> None:
+    """
+    Assert that a response matches the MeetweenTranslationResponse structure.
+
+    Args:
+        data: Response JSON data
+        expected_type: Expected task type ("MT" or "ST")
+
+    Raises:
+        AssertionError: If response doesn't match expected structure
+    """
+    assert data.get("type") == expected_type, f"Expected type '{expected_type}', got '{data.get('type')}'"
+    assert "result" in data, "Translation response should contain 'result'"
+    assert isinstance(data["result"], str), "Result should be a string"
+    assert len(data["result"].strip()) > 0, "Result should not be empty"
+    assert "target_language" in data, "Translation response should contain 'target_language'"
+
+
 def assert_file_download_response(response: Response, expected_content_type: Optional[str] = None) -> bytes:
     """
     Assert that a response is a valid file download.

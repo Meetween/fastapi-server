@@ -232,22 +232,35 @@ def mock_engine_manager():
     # Mock butler functions where they're used in routes
     summarize_patcher = patch('api.routes.summary.summarize_audio', side_effect=mock_summarize_audio)
     transcribe_patcher = patch('api.routes.transcription.transcribe_audio', side_effect=mock_transcribe_audio)
-    
+
+    async def mock_translate_text(*args, **kwargs):
+        return "Mock translation text for testing"
+
+    async def mock_translate_audio(*args, **kwargs):
+        return "Mock audio translation text for testing"
+
+    translate_text_patcher = patch('api.routes.translation.translate_text', side_effect=mock_translate_text)
+    translate_audio_patcher = patch('api.routes.translation.translate_audio', side_effect=mock_translate_audio)
+
     # Start all patches
     get_lmm_patcher.start()
     initialize_patcher.start()
     cleanup_patcher.start()
     summarize_patcher.start()
     transcribe_patcher.start()
-    
+    translate_text_patcher.start()
+    translate_audio_patcher.start()
+
     yield
-    
+
     # Stop all patches
     get_lmm_patcher.stop()
     initialize_patcher.stop()
     cleanup_patcher.stop()
     summarize_patcher.stop()
     transcribe_patcher.stop()
+    translate_text_patcher.stop()
+    translate_audio_patcher.stop()
 
 
 _TEST_AUTH_EMAIL = "pytest-guard@meetween.test"

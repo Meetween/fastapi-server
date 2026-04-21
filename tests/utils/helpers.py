@@ -27,7 +27,7 @@ def create_audio_payload(
 ) -> Dict[str, Any]:
     """
     Create a payload with base64-encoded audio.
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
@@ -62,7 +62,7 @@ def create_text_payload(
 ) -> Dict[str, Any]:
     """
     Create a payload with text input.
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
@@ -96,7 +96,7 @@ def create_generic_payload(
 ) -> Dict[str, Any]:
     """
     Create a generic payload (no audio or text, loads from recordings).
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
@@ -104,7 +104,7 @@ def create_generic_payload(
         language: Language code (default: "en-US")
         task_type: Task type (default: TASK_TYPE_TEXT_SUMMARY)
         **kwargs: Additional fields to include
-        
+
     Returns:
         Payload dictionary
     """
@@ -221,6 +221,50 @@ def obtain_bearer_headers(
         last_name=last_name,
     )
     return login_headers(client, email=email, password=password)
+
+
+def create_mt_payload(
+    room_name: str,
+    meeting_id: str,
+    text: str,
+    target_language: str = "de",
+    language: str = "en",
+    participant_id: str = None,
+) -> Dict[str, Any]:
+    """Create a MeetweenMTRequest payload for text translation."""
+    payload = {
+        "type": "MT",
+        "room_name": room_name,
+        "meeting_id": meeting_id,
+        "text": text,
+        "language": language,
+        "target_language": target_language,
+    }
+    if participant_id:
+        payload["participant_id"] = participant_id
+    return payload
+
+
+def create_st_payload(
+    room_name: str,
+    meeting_id: str,
+    audio_data: bytes,
+    target_language: str = "de",
+    language: str = "en",
+    participant_id: str = None,
+) -> Dict[str, Any]:
+    """Create a MeetweenSTRequest payload for speech translation."""
+    payload = {
+        "type": "ST",
+        "room_name": room_name,
+        "meeting_id": meeting_id,
+        "audio": base64.b64encode(audio_data).decode("utf-8"),
+        "language": language,
+        "target_language": target_language,
+    }
+    if participant_id:
+        payload["participant_id"] = participant_id
+    return payload
 
 
 def generate_test_meeting_id() -> str:
