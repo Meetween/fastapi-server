@@ -16,7 +16,7 @@ from utils.storage import StorageManager
 
 from api.routes import (
     health,
-    caption,
+    websocket,
     transcription,
     summary,
     app_config,
@@ -98,7 +98,7 @@ async def shutdown_event():
 
 
 app.include_router(health.router)
-app.include_router(caption.ws_router)
+app.include_router(websocket.ws_router)
 app.include_router(transcription.router)
 app.include_router(summary.router)
 app.include_router(app_config.router)

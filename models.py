@@ -25,16 +25,29 @@ agendaStatusTypes = Literal[
     "skipped",
 ]
 
+
+class MeetweenTranslationItem(BaseModel):
+    target_language: str
+    text: str
+
 """
 Used with jigasi websocket connection
 """
-class MeetweenTranscriptionRequest(BaseModel):
+class MeetweenWebsocketRequest(BaseModel):
     type: Literal["audio"] = "audio"
     participant_id: Optional[str] = None
     language: Optional[str] = "en-US"
     audio: str = Field(..., description="Base64 encoded audio data")
     meeting_id: str
     room_name: str
+    target_languages: Optional[List[str]] = None
+
+    @field_validator('target_languages', mode='before')
+    @classmethod
+    def normalize_target_languages(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
 
     @field_validator('audio')
     @classmethod
@@ -63,15 +76,8 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
-class MeetweenTranslationRequest(MeetweenTranscriptionRequest):
-    target_language: str
-
-class MeetweenWSTranslationResponse(MeetweenTranscriptionResponse):
-    """WebSocket response for real-time speech translation chunks."""
-    type: Literal["MT", "ST"]
-    result: str
-    target_language: str
-    transcript: Optional[str] = None
+class MeetweenWebsocketResponse(MeetweenTranscriptionResponse):
+    translations: Optional[List[MeetweenTranslationItem]] = None
 
 class HistoryEntry(BaseModel):
     role: Literal["user", "assistant"]
