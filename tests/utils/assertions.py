@@ -67,13 +67,13 @@ def assert_error_response(
     return data
 
 
-def assert_task_response(data: Dict[str, Any], expected_type: str = "summary") -> None:
+def assert_task_response(data: Dict[str, Any], expected_type: str = "TSUM") -> None:
     """
     Assert that a response matches the MeetweenTaskResponse structure.
     
     Args:
         data: Response JSON data
-        expected_type: Expected task type (default: "summary")
+        expected_type: Expected task type (default: "TSUM")
         
     Raises:
         AssertionError: If response doesn't match expected structure

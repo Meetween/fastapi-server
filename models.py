@@ -5,9 +5,13 @@ from typing import Optional, Literal, Union, List
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 import base64
 
+TASK_TYPE_TEXT_SUMMARY = "TSUM"
+TASK_TYPE_SPEECH_SUMMARY = "SSUM"
+
 taskTypes = Literal[
     "transcription",
-    "summary",
+    TASK_TYPE_TEXT_SUMMARY,
+    TASK_TYPE_SPEECH_SUMMARY,
     "catch_me_up",
     "chat",
     "agendaTracking",

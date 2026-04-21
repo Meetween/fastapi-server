@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 from tests.utils.assertions import assert_error_response
 from tests.utils.helpers import create_audio_payload, create_text_payload
+from models import TASK_TYPE_TEXT_SUMMARY
 
 
 @pytest.mark.integration
@@ -35,7 +36,7 @@ class TestErrorHandling:
     ):
         """Test that missing room_name returns validation error"""
         payload = {
-            "type": "summary",
+            "type": TASK_TYPE_TEXT_SUMMARY,
             "meeting_id": test_meeting_id,
             "language": "en-US"
         }
@@ -53,7 +54,7 @@ class TestErrorHandling:
     ):
         """Test that missing meeting_id returns validation error"""
         payload = {
-            "type": "summary",
+            "type": TASK_TYPE_TEXT_SUMMARY,
             "room_name": test_room_name,
             "language": "en-US"
         }
@@ -72,7 +73,7 @@ class TestErrorHandling:
     ):
         """Test that invalid base64 audio returns validation error"""
         payload = {
-            "type": "summary",
+            "type": TASK_TYPE_TEXT_SUMMARY,
             "room_name": test_room_name,
             "meeting_id": test_meeting_id,
             "language": "en-US",
