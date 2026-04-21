@@ -30,7 +30,7 @@ Used with jigasi websocket connection
 """
 class MeetweenTranscriptionRequest(BaseModel):
     type: Literal["audio"] = "audio"
-    participant_id: Optional[str]
+    participant_id: Optional[str] = None
     language: Optional[str] = "en-US"
     audio: str = Field(..., description="Base64 encoded audio data")
     meeting_id: str
@@ -86,8 +86,8 @@ class MeetweenTaskRequest(BaseModel):
     type: taskTypes
     room_name: str
     meeting_id: str
-    participant_id: Optional[str]
-    language: Optional[str]
+    participant_id: Optional[str] = None
+    language: Optional[str] = None
     prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM", max_length=2048)
     context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
     history: Optional[List[HistoryEntry]] = Field(None, description="Optional conversation history.")
