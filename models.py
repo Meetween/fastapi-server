@@ -164,8 +164,8 @@ class MeetweenTaskResponse(BaseModel):
     room_name: str
     meeting_id: str
     result: str
-    language: Optional[str]
-    participant_id: Optional[str]
+    language: Optional[str] = "en"
+    participant_id: Optional[str] = None
     error: Optional[str] = None
 
 class MeetweenTranslationResponse(MeetweenTaskResponse):

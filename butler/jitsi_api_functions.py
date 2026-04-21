@@ -10,7 +10,7 @@ Provides three main functions:
 Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
-from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry, MeetweenTranslationResponse
+from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
 import numpy as np
 import torch
 try:
