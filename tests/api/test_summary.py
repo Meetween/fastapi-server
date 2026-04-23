@@ -73,26 +73,20 @@ class TestSummarizeEndpoint:
         self,
         client: TestClient,
         test_room_name: str,
-        test_meeting_id: str,
-        sample_text: str,
+        test_meeting_id: str
     ):
         """Test summary endpoint that loads from recordings"""
-        SessionManager.update_transcript(
-            meeting_id=test_meeting_id,
-            room_name=test_room_name,
-            transcript=sample_text,
-        )
-
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_SPEECH_SUMMARY,
             participant_id="test-participant-3"
         )
         
         response = client.post("/api/summarize", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type=TASK_TYPE_TEXT_SUMMARY)
+        assert_task_response(data, expected_type=TASK_TYPE_SPEECH_SUMMARY)
 
     @pytest.mark.parametrize("language", ["en-US", "en-GB", "de-DE", "fr-FR"])
     def test_summarize_with_different_languages(
@@ -104,17 +98,12 @@ class TestSummarizeEndpoint:
         language: str
     ):
         """Test summary endpoint with different language codes"""
-        SessionManager.update_transcript(
-            meeting_id=test_meeting_id,
-            room_name=test_room_name,
-            transcript=sample_text,
-        )
-
         payload = create_text_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
             text=sample_text,
             language=language,
+            task_type=TASK_TYPE_TEXT_SUMMARY,
             participant_id="test-participant-lang"
         )
         
@@ -147,18 +136,12 @@ class TestSummarizeDownloadEndpoint:
         client: TestClient,
         test_room_name: str,
         test_meeting_id: str,
-        sample_text: str,
     ):
         """Test summary download endpoint returns downloadable file"""
-        SessionManager.update_transcript(
-            meeting_id=test_meeting_id,
-            room_name=test_room_name,
-            transcript=sample_text,
-        )
-
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_SPEECH_SUMMARY,
             participant_id="test-participant-4"
         )
         

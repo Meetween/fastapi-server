@@ -467,9 +467,11 @@ async def summarize_text(
         Summary text
     """
     prompt = PromptLoader.get_prompt(TASK_TYPE_TEXT_SUMMARY, language)
+    prompt_with_text = f"{prompt}\n\n{text}"
     summary = await engine._generate_text(
-        prompt=prompt,
-        text=text,
+        prompt=prompt_with_text,
+        audio=None,
+        sample_rate=16000,
         task=TASK_TYPE_TEXT_SUMMARY,
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,

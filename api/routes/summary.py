@@ -5,7 +5,7 @@ import os
 
 import numpy as np
 from pydub import AudioSegment
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, HTTPException, Body, Response
 from fastapi.responses import StreamingResponse
 
 from core import EngineManager
@@ -29,7 +29,10 @@ router = APIRouter(prefix="/api", tags=["summary"])
 logger = logging.getLogger(__name__)
 
 
-def _validate_summary_task_type(request: LMMRequest) -> str:
+def _validate_summary_task_type(
+    request: LMMRequest,
+    expected_type: str | None = None,
+) -> str:
     if request.type not in [TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY]:
         raise HTTPException(
             status_code=422,
@@ -38,13 +41,21 @@ def _validate_summary_task_type(request: LMMRequest) -> str:
                 f"Expected '{TASK_TYPE_TEXT_SUMMARY}' or '{TASK_TYPE_SPEECH_SUMMARY}'."
             ),
         )
+    if expected_type is not None and request.type != expected_type:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid summary task type '{request.type}' for this endpoint. "
+                f"Expected '{expected_type}'."
+            ),
+        )
     return request.type
 
 
-async def get_summary_text_from_audio(request: LMMRequest) -> str:
+async def get_summary_text(request: LMMRequest) -> str:
     """
-    Core summarization logic for audio input.
-    Takes a request and returns the summary text string.
+    Core summarization dispatcher for summarization requests.
+    Takes a LMMRequest and returns the summary text string.
     
     Args:
         request: LMMRequest
@@ -59,7 +70,7 @@ async def get_summary_text_from_audio(request: LMMRequest) -> str:
             detail="SpeechLMM model not loaded"
         )
 
-    # Handle audio input
+    # Handle audio input payload.
     if isinstance(request, MeetweenAudioRequest):
         audio_bytes = request.get_audio_bytes()
 
@@ -101,11 +112,23 @@ async def get_summary_text_from_audio(request: LMMRequest) -> str:
 
     # Handle text input
     if isinstance(request, MeetweenTextRequest):
-        # Preserve original behavior for /summarize text requests.
-        return "Text summary requested: Please implement me"
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="Empty text data")
+        return await summarize_text(
+            engine=engine,
+            text=request.text,
+            language=request.language or "en-US",
+            max_new_tokens=request.max_new_tokens,
+            do_sample=request.do_sample,
+            temperature=request.temperature,
+            repetition_penalty=request.repetition_penalty,
+        )
 
-    # Handle generic request - load from recordings
+
     if isinstance(request, MeetweenTaskRequest):
+        if request.type == TASK_TYPE_TEXT_SUMMARY:
+            return await get_summary_text_from_transcript(request)
+
         meeting_id = request.meeting_id
         room_name = request.room_name
         meeting_path = settings.recordings_base_path / room_name / meeting_id
@@ -204,7 +227,7 @@ async def get_summary_text_from_transcript(request: LMMRequest) -> str:
     if not engine:
         raise HTTPException(
             status_code=503,
-            detail="SpeechLMM model not loaded"
+            detail="Engine not loaded"
         )
 
     transcript = SessionManager.get_transcript(request.meeting_id, request.room_name) or ""
@@ -237,7 +260,7 @@ async def api_summarize(request: LMMRequest = Body(...)):
     """
     try:
         task_type = _validate_summary_task_type(request)
-        summary = await get_summary_text_from_audio(request)
+        summary = await get_summary_text(request)
         
         return MeetweenTaskResponse(
             type=task_type,
@@ -255,31 +278,6 @@ async def api_summarize(request: LMMRequest = Body(...)):
         raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
 
 
-@router.post("/text-summary", response_model=MeetweenTaskResponse)
-async def api_text_summary(request: LMMRequest = Body(...)):
-    """
-    Summarize from server-side session transcript.
-    """
-    try:
-        _validate_summary_task_type(request)
-        summary = await get_summary_text_from_transcript(request)
-
-        return MeetweenTaskResponse(
-            type=TASK_TYPE_TEXT_SUMMARY,
-            resultType="text",
-            room_name=request.room_name,
-            meeting_id=request.meeting_id,
-            result=summary,
-            language=request.language,
-            participant_id=request.participant_id
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Text summarization error: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Text summarization failed: {str(e)}")
-
-
 @router.post("/summarize-download")
 async def api_summarize_download(request: LMMRequest = Body(...)):
     """
@@ -294,7 +292,7 @@ async def api_summarize_download(request: LMMRequest = Body(...)):
     """
     try:
         _validate_summary_task_type(request)
-        summary = await get_summary_text_from_audio(request)
+        summary = await get_summary_text(request)
         summary_bytes = summary.encode('utf-8')
         filename = f"summary_{request.room_name}_{request.meeting_id}.txt"
         return StreamingResponse(

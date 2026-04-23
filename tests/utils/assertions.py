@@ -6,6 +6,7 @@ Works with both FastAPI TestClient and httpx responses.
 from typing import Any, Dict, Optional, Union
 from fastapi.testclient import TestClient
 import httpx
+from models import TASK_TYPE_TEXT_SUMMARY
 
 # Type alias for response objects (TestClient and httpx are compatible)
 Response = Union[httpx.Response, Any]
@@ -67,13 +68,13 @@ def assert_error_response(
     return data
 
 
-def assert_task_response(data: Dict[str, Any], expected_type: str = "TSUM") -> None:
+def assert_task_response(data: Dict[str, Any], expected_type: str = TASK_TYPE_TEXT_SUMMARY) -> None:
     """
     Assert that a response matches the MeetweenTaskResponse structure.
     
     Args:
         data: Response JSON data
-        expected_type: Expected task type (default: "TSUM")
+        expected_type: Expected task type (default: TASK_TYPE_TEXT_SUMMARY)
         
     Raises:
         AssertionError: If response doesn't match expected structure
