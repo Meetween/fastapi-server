@@ -51,12 +51,6 @@ class TestSummarizeEndpoint:
         sample_text: str
     ):
         """Test summary endpoint with plain text input"""
-        SessionManager.update_transcript(
-            meeting_id=test_meeting_id,
-            room_name=test_room_name,
-            transcript=sample_text,
-        )
-
         payload = create_text_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
@@ -87,6 +81,31 @@ class TestSummarizeEndpoint:
         
         data = assert_successful_response(response)
         assert_task_response(data, expected_type=TASK_TYPE_SPEECH_SUMMARY)
+
+    def test_summarize_from_transcript(
+        self,
+        client: TestClient,
+        test_room_name: str,
+        test_meeting_id: str,
+        sample_text: str,
+    ):
+        """Test summary endpoint that loads TSUM from server transcript"""
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            transcript=sample_text,
+        )
+        payload = create_generic_payload(
+            room_name=test_room_name,
+            meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_TEXT_SUMMARY,
+            participant_id="test-participant-tsum",
+        )
+
+        response = client.post("/api/summarize", json=payload)
+
+        data = assert_successful_response(response)
+        assert_task_response(data, expected_type=TASK_TYPE_TEXT_SUMMARY)
 
     @pytest.mark.parametrize("language", ["en-US", "en-GB", "de-DE", "fr-FR"])
     def test_summarize_with_different_languages(

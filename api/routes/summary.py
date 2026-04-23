@@ -5,7 +5,7 @@ import os
 
 import numpy as np
 from pydub import AudioSegment
-from fastapi import APIRouter, HTTPException, Body, Response
+from fastapi import APIRouter, HTTPException, Body
 from fastapi.responses import StreamingResponse
 
 from core import EngineManager
@@ -72,6 +72,7 @@ async def get_summary_text(request: LMMRequest) -> str:
 
     # Handle audio input payload.
     if isinstance(request, MeetweenAudioRequest):
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
         audio_bytes = request.get_audio_bytes()
 
         if len(audio_bytes) == 0:
@@ -112,6 +113,7 @@ async def get_summary_text(request: LMMRequest) -> str:
 
     # Handle text input
     if isinstance(request, MeetweenTextRequest):
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="Empty text data")
         return await summarize_text(
@@ -127,7 +129,9 @@ async def get_summary_text(request: LMMRequest) -> str:
 
     if isinstance(request, MeetweenTaskRequest):
         if request.type == TASK_TYPE_TEXT_SUMMARY:
+            _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
             return await get_summary_text_from_transcript(request)
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
 
         meeting_id = request.meeting_id
         room_name = request.room_name
@@ -259,11 +263,10 @@ async def api_summarize(request: LMMRequest = Body(...)):
     Returns a summary with task metadata
     """
     try:
-        task_type = _validate_summary_task_type(request)
         summary = await get_summary_text(request)
         
         return MeetweenTaskResponse(
-            type=task_type,
+            type=request.type,
             resultType="text",
             room_name=request.room_name,
             meeting_id=request.meeting_id,
@@ -291,7 +294,6 @@ async def api_summarize_download(request: LMMRequest = Body(...)):
     Returns a downloadable .txt file containing the summary.
     """
     try:
-        _validate_summary_task_type(request)
         summary = await get_summary_text(request)
         summary_bytes = summary.encode('utf-8')
         filename = f"summary_{request.room_name}_{request.meeting_id}.txt"
