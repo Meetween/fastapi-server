@@ -5,6 +5,8 @@ import base64
 import uuid
 from typing import Dict, Any
 
+from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
+
 
 def create_audio_payload(
     room_name: str,
@@ -12,7 +14,7 @@ def create_audio_payload(
     audio_data: bytes,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = "summary"
+    task_type: str = TASK_TYPE_SPEECH_SUMMARY
 ) -> Dict[str, Any]:
     """
     Create a payload with base64-encoded audio.
@@ -23,7 +25,7 @@ def create_audio_payload(
         audio_data: Raw audio bytes
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: "summary")
+        task_type: Task type (default: TASK_TYPE_SPEECH_SUMMARY)
         
     Returns:
         Payload dictionary
@@ -47,7 +49,7 @@ def create_text_payload(
     text: str,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = "summary"
+    task_type: str = TASK_TYPE_TEXT_SUMMARY
 ) -> Dict[str, Any]:
     """
     Create a payload with text input.
@@ -58,7 +60,7 @@ def create_text_payload(
         text: Text content
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: "summary")
+        task_type: Task type (default: TASK_TYPE_TEXT_SUMMARY)
         
     Returns:
         Payload dictionary
@@ -80,7 +82,7 @@ def create_generic_payload(
     meeting_id: str,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = "summary",
+    task_type: str = TASK_TYPE_TEXT_SUMMARY,
     **kwargs
 ) -> Dict[str, Any]:
     """
@@ -91,7 +93,7 @@ def create_generic_payload(
         meeting_id: Meeting ID
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: "summary")
+        task_type: Task type (default: TASK_TYPE_TEXT_SUMMARY)
         **kwargs: Additional fields to include
         
     Returns:

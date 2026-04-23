@@ -17,35 +17,62 @@ from models import (
     MeetweenTextRequest,
     MeetweenTaskRequest,
     MeetweenCatchupRequest,
-    LMMRequest
+    LMMRequest,
+    TASK_TYPE_TEXT_SUMMARY,
+    TASK_TYPE_SPEECH_SUMMARY,
 )
-from butler import AudioConverter, summarize_audio
+from butler import summarize_audio, summarize_text
+from core import SessionManager
 
 router = APIRouter(prefix="/api", tags=["summary"])
 
 logger = logging.getLogger(__name__)
 
 
+def _validate_summary_task_type(
+    request: LMMRequest,
+    expected_type: str | None = None,
+) -> str:
+    if request.type not in [TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid summary task type '{request.type}' for this payload. "
+                f"Expected '{TASK_TYPE_TEXT_SUMMARY}' or '{TASK_TYPE_SPEECH_SUMMARY}'."
+            ),
+        )
+    if expected_type is not None and request.type != expected_type:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid summary task type '{request.type}' for this endpoint. "
+                f"Expected '{expected_type}'."
+            ),
+        )
+    return request.type
+
+
 async def get_summary_text(request: LMMRequest) -> str:
     """
-    Core summarization logic extracted as a reusable module.
-    Takes a request and returns the summary text string.
+    Core summarization dispatcher for summarization requests.
+    Takes a LMMRequest and returns the summary text string.
     
-    This function handles:
-    - audio: Base64-encoded audio data (MeetweenAudioRequest)
-    - text: Plain text input (MeetweenTextRequest)
-    - Neither: Basic request (MeetweenTaskRequest), use local recording
-    
-    Returns the summary text as a string.
+    Args:
+        request: LMMRequest
+        
+    Returns:
+        Summary text
     """
-    if not EngineManager.get_lmm():
+    engine = EngineManager.get_lmm()
+    if not engine:
         raise HTTPException(
             status_code=503,
             detail="SpeechLMM model not loaded"
         )
 
-    # Handle audio input
+    # Handle audio input payload.
     if isinstance(request, MeetweenAudioRequest):
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
         audio_bytes = request.get_audio_bytes()
 
         if len(audio_bytes) == 0:
@@ -66,20 +93,15 @@ async def get_summary_text(request: LMMRequest) -> str:
             audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
 
             # Get raw PCM data
-            # NOTE: old implementation commented out: it truncates 32-bit samples
-            # to int16 and can make Qwen hear the audio as constant noise.
-            # audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
-            # audio_pcm = audio_array.tobytes()
             audio_pcm = pydub_to_pcm16(audio_segment)
-
             logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
             # Generate summary
-            summary = await summarize_audio(
+            return await summarize_audio(
                 audio_bytes=audio_pcm,
                 sample_rate=16000,
-                engine=EngineManager.get_lmm(),
-                language=request.language,
+                engine=engine,
+                language=request.language or "en-US",
                 prompt=request.prompt,
                 context=request.context,
                 history=request.history
@@ -88,16 +110,29 @@ async def get_summary_text(request: LMMRequest) -> str:
             # Clean up temp file
             if os.path.exists(temp_path):
                 os.unlink(temp_path)
-        
-        return summary
 
     # Handle text input
-    elif isinstance(request, MeetweenTextRequest):
-        # TODO: Implement text summarization
-        return f"Text summary requested: Please implement me"
+    if isinstance(request, MeetweenTextRequest):
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
+        if not request.text.strip():
+            raise HTTPException(status_code=400, detail="Empty text data")
+        return await summarize_text(
+            engine=engine,
+            text=request.text,
+            language=request.language or "en-US",
+            max_new_tokens=request.max_new_tokens,
+            do_sample=request.do_sample,
+            temperature=request.temperature,
+            repetition_penalty=request.repetition_penalty,
+        )
 
-    # Handle generic request - load from recordings
-    elif isinstance(request, MeetweenTaskRequest):
+
+    if isinstance(request, MeetweenTaskRequest):
+        if request.type == TASK_TYPE_TEXT_SUMMARY:
+            _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
+            return await get_summary_text_from_transcript(request)
+        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
+
         meeting_id = request.meeting_id
         room_name = request.room_name
         meeting_path = settings.recordings_base_path / room_name / meeting_id
@@ -106,7 +141,7 @@ async def get_summary_text(request: LMMRequest) -> str:
             logger.error(f"No audio found. Can't summarize. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
-                detail=f"No audio found to summarize."
+                detail="No audio found to summarize."
             )
 
         # Load metadata
@@ -118,7 +153,6 @@ async def get_summary_text(request: LMMRequest) -> str:
 
         if chunk_count == 0:
             logger.error(f"No valid audio found. Can't summarize. Meeting: {room_name}/{meeting_id}")
-
             raise HTTPException(
                 status_code=400,
                 detail="No valid audio found to summarize."
@@ -148,7 +182,6 @@ async def get_summary_text(request: LMMRequest) -> str:
 
                     combined_audio += chunk_audio
                     successful_chunks += 1
-
                 except Exception as e:
                     # Skip corrupted chunks and continue
                     logger.warning(f"Skipping corrupted chunk {chunk_path.name}: {e}")
@@ -158,7 +191,7 @@ async def get_summary_text(request: LMMRequest) -> str:
             logger.error(f"No valid audio found. Recording contains {chunk_count} chunks but none could be decoded.")
             raise HTTPException(
                 status_code=400,
-                detail=f"No valid audio found. Audio could not be decoded"
+                detail="No valid audio found. Audio could not be decoded"
             )
 
         logger.info(f"Successfully combined {successful_chunks}/{chunk_count} chunks")
@@ -173,25 +206,50 @@ async def get_summary_text(request: LMMRequest) -> str:
         duration_seconds = len(combined_audio) / 1000.0
         logger.info(f"Combined audio: {len(audio_pcm)} bytes, {duration_seconds:.1f}s at 16kHz")
 
-        # Generate summary
-        summary = await summarize_audio(
+        return await summarize_audio(
             audio_bytes=audio_pcm,
             sample_rate=16000,
-            engine=EngineManager.get_lmm(),
+            engine=engine,
             language=request.language or "en-US",
             prompt=request.prompt,
             context=request.context,
-            history=request.history
+            history=request.history,
         )
 
-        return summary
 
-    else:
-        logger.error("Invalid request type. Must provide audio, text, or meeting_id.")
+async def get_summary_text_from_transcript(request: LMMRequest) -> str:
+    """
+    Generate text summary from server-side session transcript.
+    
+    Args:
+        request: LMMRequest
+        
+    Returns:
+        Summary text
+    """
+    engine = EngineManager.get_lmm()
+    if not engine:
         raise HTTPException(
-            status_code=400,
-            detail="Invalid request type. Must provide audio, text, or meeting_id."
+            status_code=503,
+            detail="Engine not loaded"
         )
+
+    transcript = SessionManager.get_transcript(request.meeting_id, request.room_name) or ""
+    if not transcript.strip():
+        raise HTTPException(
+            status_code=404,
+            detail="No transcript found to summarize."
+        )
+
+    return await summarize_text(
+        engine=engine,
+        text=transcript,
+        language=request.language or "en-US",
+        max_new_tokens=request.max_new_tokens,
+        do_sample=request.do_sample,
+        temperature=request.temperature,
+        repetition_penalty=request.repetition_penalty,
+    )
 
 
 @router.post("/summarize", response_model=MeetweenTaskResponse)
@@ -208,7 +266,7 @@ async def api_summarize(request: LMMRequest = Body(...)):
         summary = await get_summary_text(request)
         
         return MeetweenTaskResponse(
-            type="summary",
+            type=request.type,
             resultType="text",
             room_name=request.room_name,
             meeting_id=request.meeting_id,

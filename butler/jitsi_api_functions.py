@@ -11,7 +11,7 @@ Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
 import json
-from models import HistoryEntry
+from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
 import numpy as np
 import torch
 import torchaudio
@@ -429,17 +429,53 @@ async def summarize_audio(
     
     # Get language-specific SSUM prompt if custom prompt not provided
     if prompt is None:
-        prompt = PromptLoader.get_prompt("SSUM", language)
+        prompt = PromptLoader.get_prompt(TASK_TYPE_SPEECH_SUMMARY, language)
     
     summary = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task="summary",
+        task=TASK_TYPE_SPEECH_SUMMARY,
         max_new_tokens=max_tokens,
         do_sample=False
     )
     return summary.strip()
 
 
-
+async def summarize_text(
+    engine: TritonClient,
+    text: str,
+    language: str = "en-US",
+    max_new_tokens: Optional[int] = None,
+    do_sample: Optional[bool] = None,
+    temperature: Optional[float] = None,
+    repetition_penalty: Optional[float] = None,
+) -> str:
+    """
+    Summarize text input.
+    
+    Args:
+        engine: Initialized TritonClient
+        text: Text to summarize
+        language: BCP-47 language code
+        max_new_tokens: Max generation tokens
+        do_sample: Use sampling
+        temperature: Sampling temperature
+        repetition_penalty: Penalty for repeated tokens
+        
+    Returns:
+        Summary text
+    """
+    prompt = PromptLoader.get_prompt(TASK_TYPE_TEXT_SUMMARY, language)
+    prompt_with_text = f"{prompt}\n\n{text}"
+    summary = await engine._generate_text(
+        prompt=prompt_with_text,
+        audio=None,
+        sample_rate=16000,
+        task=TASK_TYPE_TEXT_SUMMARY,
+        max_new_tokens=max_new_tokens,
+        do_sample=do_sample,
+        temperature=temperature,
+        repetition_penalty=repetition_penalty
+    )
+    return summary.strip()

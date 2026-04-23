@@ -13,6 +13,8 @@ from tests.utils.helpers import (
     create_text_payload,
     create_generic_payload
 )
+from models import TASK_TYPE_SPEECH_SUMMARY, TASK_TYPE_TEXT_SUMMARY
+from core import SessionManager
 
 
 @pytest.mark.integration
@@ -38,7 +40,7 @@ class TestSummarizeEndpoint:
         response = client.post("/api/summarize", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="summary")
+        assert_task_response(data, expected_type=TASK_TYPE_SPEECH_SUMMARY)
         assert "result" in data or "summary" in data
 
     def test_summarize_with_text(
@@ -59,7 +61,7 @@ class TestSummarizeEndpoint:
         response = client.post("/api/summarize", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="summary")
+        assert_task_response(data, expected_type=TASK_TYPE_TEXT_SUMMARY)
 
     def test_summarize_from_recordings(
         self,
@@ -71,13 +73,39 @@ class TestSummarizeEndpoint:
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_SPEECH_SUMMARY,
             participant_id="test-participant-3"
         )
         
         response = client.post("/api/summarize", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="summary")
+        assert_task_response(data, expected_type=TASK_TYPE_SPEECH_SUMMARY)
+
+    def test_summarize_from_transcript(
+        self,
+        client: TestClient,
+        test_room_name: str,
+        test_meeting_id: str,
+        sample_text: str,
+    ):
+        """Test summary endpoint that loads TSUM from server transcript"""
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            transcript=sample_text,
+        )
+        payload = create_generic_payload(
+            room_name=test_room_name,
+            meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_TEXT_SUMMARY,
+            participant_id="test-participant-tsum",
+        )
+
+        response = client.post("/api/summarize", json=payload)
+
+        data = assert_successful_response(response)
+        assert_task_response(data, expected_type=TASK_TYPE_TEXT_SUMMARY)
 
     @pytest.mark.parametrize("language", ["en-US", "en-GB", "de-DE", "fr-FR"])
     def test_summarize_with_different_languages(
@@ -94,13 +122,14 @@ class TestSummarizeEndpoint:
             meeting_id=test_meeting_id,
             text=sample_text,
             language=language,
+            task_type=TASK_TYPE_TEXT_SUMMARY,
             participant_id="test-participant-lang"
         )
         
         response = client.post("/api/summarize", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="summary")
+        assert_task_response(data, expected_type=TASK_TYPE_TEXT_SUMMARY)
         if "language" in data:
             assert data["language"] == language
 
@@ -109,7 +138,7 @@ class TestSummarizeEndpoint:
         client: TestClient
     ):
         """Test summary endpoint with missing required fields"""
-        payload = {"type": "summary"}
+        payload = {"type": TASK_TYPE_TEXT_SUMMARY}
         
         response = client.post("/api/summarize", json=payload)
         
@@ -125,12 +154,13 @@ class TestSummarizeDownloadEndpoint:
         self,
         client: TestClient,
         test_room_name: str,
-        test_meeting_id: str
+        test_meeting_id: str,
     ):
         """Test summary download endpoint returns downloadable file"""
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
+            task_type=TASK_TYPE_SPEECH_SUMMARY,
             participant_id="test-participant-4"
         )
         

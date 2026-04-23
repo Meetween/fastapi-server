@@ -21,7 +21,7 @@ class TestHealthEndpoints:
         assert "version" in data
         assert "status" in data
         assert data["status"] == "running"
-        assert "speechlmm_loaded" in data
+        assert "engine_loaded" in data
 
     def test_health_check_endpoint(self, client: TestClient):
         """Test health check endpoint"""
@@ -32,4 +32,4 @@ class TestHealthEndpoints:
         data = assert_successful_response(response)
         assert "status" in data
         assert data["status"] == "healthy"
-        assert "speechlmm" in data
+        assert "engine" in data
