@@ -67,6 +67,9 @@ async def handle_speech_request(request: MeetweenSTRequest) -> MeetweenTranslati
 async def handle_text_request(request: MeetweenMTRequest) -> MeetweenTranslationResponse:
     logger.info(f"Translating text, {request.language}->{request.target_language}")
 
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="No text provided for translation")
+
     translation = await translate_text(
         engine=EngineManager.get_lmm(),
         input_text=request.text,
