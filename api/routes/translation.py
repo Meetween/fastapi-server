@@ -11,6 +11,7 @@ from models import (
     MeetweenTranslationResponse,
     MeetweenMTRequest,
     MeetweenSTRequest,
+    TaskType,
 )
 from butler import translate_audio, translate_text
 
@@ -53,7 +54,7 @@ async def handle_speech_request(request: MeetweenSTRequest) -> MeetweenTranslati
     )
 
     return MeetweenTranslationResponse(
-        type="ST",
+        type=TaskType.SPEECH_TRANSLATION,
         resultType="text",
         room_name=request.room_name,
         meeting_id=request.meeting_id,
@@ -79,7 +80,7 @@ async def handle_text_request(request: MeetweenMTRequest) -> MeetweenTranslation
     )
 
     return MeetweenTranslationResponse(
-        type="MT",
+        type=TaskType.TEXT_TRANSLATION,
         resultType="text",
         room_name=request.room_name,
         meeting_id=request.meeting_id,
@@ -94,8 +95,8 @@ async def handle_text_request(request: MeetweenMTRequest) -> MeetweenTranslation
 async def api_translate(request: TranslationRequest):
     """
     Supports two input types:
-    - ST (type="ST"): Base64-encoded audio — speech translation (MeetweenSTRequest)
-    - MT (type="MT"): Plain text — text translation (MeetweenMTRequest)
+    - ST (type=TaskType.SPEECH_TRANSLATION): Base64-encoded audio — speech translation (MeetweenSTRequest)
+    - MT (type=TaskType.TEXT_TRANSLATION): Plain text — text translation (MeetweenMTRequest)
 
     Returns a single translation result.
     """

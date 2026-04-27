@@ -10,7 +10,7 @@ Provides three main functions:
 Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
-from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
+from models import TaskType, HistoryEntry
 import numpy as np
 import torch
 try:
@@ -333,13 +333,13 @@ async def summarize_audio(
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
     # Single source of truth: always use language-specific SSUM prompt catalog.
-    prompt = get_task_prompt(TASK_TYPE_SPEECH_SUMMARY, language)
+    prompt = get_task_prompt(TaskType.SPEECH_SUMMARY, language)
     
     summary = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task=TASK_TYPE_SPEECH_SUMMARY,
+        task=TaskType.SPEECH_SUMMARY,
         max_new_tokens=max_tokens,
         do_sample=False
     )
@@ -369,13 +369,13 @@ async def summarize_text(
     Returns:
         Summary text
     """
-    prompt = PromptLoader.get_prompt(TASK_TYPE_TEXT_SUMMARY, language)
+    prompt = PromptLoader.get_prompt(TaskType.TEXT_SUMMARY, language)
     prompt_with_text = f"{prompt}\n\n{text}"
     summary = await engine._generate_text(
         prompt=prompt_with_text,
         audio=None,
         sample_rate=16000,
-        task=TASK_TYPE_TEXT_SUMMARY,
+        task=TaskType.TEXT_SUMMARY,
         max_new_tokens=max_new_tokens,
         do_sample=do_sample,
         temperature=temperature,
@@ -415,7 +415,7 @@ async def translate_audio(
     """
 
     # Get language-specific MT prompt
-    prompt = PromptLoader.get_prompt("MT", language, target_language=target_lang)
+    prompt = PromptLoader.get_prompt(TaskType.TEXT_TRANSLATION, language, target_language=target_lang)
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
         gen_kwargs["max_new_tokens"] = max_new_tokens
@@ -432,7 +432,7 @@ async def translate_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task="MT",
+        task=TaskType.TEXT_TRANSLATION,
         **gen_kwargs,
     )
 
@@ -466,7 +466,7 @@ async def translate_text(
         Translation of input text
     """
     # Get language-specific MT prompt
-    prompt = PromptLoader.get_prompt("MT", language, target_language=target_lang)
+    prompt = PromptLoader.get_prompt(TaskType.TEXT_TRANSLATION, language, target_language=target_lang)
     prompt += f"\n{input_text}"
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
@@ -482,7 +482,7 @@ async def translate_text(
         prompt=prompt,
         audio=None,
         sample_rate=16000,
-        task="MT",
+        task=TaskType.TEXT_TRANSLATION,
         **gen_kwargs,
     )
 

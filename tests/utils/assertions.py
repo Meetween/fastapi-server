@@ -6,7 +6,7 @@ Works with both FastAPI TestClient and httpx responses.
 from typing import Any, Dict, Optional, Union
 from fastapi.testclient import TestClient
 import httpx
-from models import TASK_TYPE_TEXT_SUMMARY
+from models import TaskType
 
 # Type alias for response objects (TestClient and httpx are compatible)
 Response = Union[httpx.Response, Any]
@@ -68,13 +68,13 @@ def assert_error_response(
     return data
 
 
-def assert_task_response(data: Dict[str, Any], expected_type: str = TASK_TYPE_TEXT_SUMMARY) -> None:
+def assert_task_response(data: Dict[str, Any], expected_type: str = TaskType.TEXT_SUMMARY) -> None:
     """
     Assert that a response matches the MeetweenTaskResponse structure.
     
     Args:
         data: Response JSON data
-        expected_type: Expected task type (default: TASK_TYPE_TEXT_SUMMARY)
+        expected_type: Expected task type (default: TaskType.TEXT_SUMMARY)
         
     Raises:
         AssertionError: If response doesn't match expected structure
@@ -105,13 +105,13 @@ def assert_transcription_response(data: Dict[str, Any]) -> None:
         assert isinstance(data["transcript"], str), "Transcript should be a string"
 
 
-def assert_translation_response(data: Dict[str, Any], expected_type: str = "MT") -> None:
+def assert_translation_response(data: Dict[str, Any], expected_type: str = TaskType.TEXT_TRANSLATION) -> None:
     """
     Assert that a response matches the MeetweenTranslationResponse structure.
 
     Args:
         data: Response JSON data
-        expected_type: Expected task type ("MT" or "ST")
+        expected_type: Expected task type (TaskType.TEXT_TRANSLATION or TaskType.SPEECH_TRANSLATION)
 
     Raises:
         AssertionError: If response doesn't match expected structure

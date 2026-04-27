@@ -4,7 +4,7 @@ Tests for the translation endpoint (/api/translate)
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
-
+from models import TaskType
 from tests.utils.assertions import assert_successful_response, assert_error_response, assert_translation_response
 from tests.utils.helpers import create_mt_payload, create_st_payload
 
@@ -32,7 +32,7 @@ class TestMTEndpoint:
         response = client.post("/api/translate", json=payload)
 
         data = assert_successful_response(response)
-        assert_translation_response(data, expected_type="MT")
+        assert_translation_response(data, expected_type=TaskType.TEXT_TRANSLATION)
         assert data["target_language"] == "de"
 
     @pytest.mark.parametrize("source,target", [
@@ -62,7 +62,7 @@ class TestMTEndpoint:
         response = client.post("/api/translate", json=payload)
 
         data = assert_successful_response(response)
-        assert_translation_response(data, expected_type="MT")
+        assert_translation_response(data, expected_type=TaskType.TEXT_TRANSLATION)
         assert data["target_language"] == target
 
     def test_mt_with_participant_id(
@@ -92,7 +92,7 @@ class TestMTEndpoint:
     ):
         """Missing text field returns 422"""
         payload = {
-            "type": "MT",
+            "type": TaskType.TEXT_TRANSLATION,
             "room_name": test_room_name,
             "meeting_id": test_meeting_id,
             "language": "en",
@@ -110,7 +110,7 @@ class TestMTEndpoint:
     ):
         """Missing target_language field returns 422"""
         payload = {
-            "type": "MT",
+            "type": TaskType.TEXT_TRANSLATION,
             "room_name": test_room_name,
             "meeting_id": test_meeting_id,
             "text": sample_text,
@@ -160,7 +160,7 @@ class TestSTEndpoint:
         response = client.post("/api/translate", json=payload)
 
         data = assert_successful_response(response)
-        assert_translation_response(data, expected_type="ST")
+        assert_translation_response(data, expected_type=TaskType.SPEECH_TRANSLATION)
         assert data["target_language"] == "de"
 
     @pytest.mark.parametrize("target", ["de", "fr", "es"])
@@ -182,7 +182,7 @@ class TestSTEndpoint:
         response = client.post("/api/translate", json=payload)
 
         data = assert_successful_response(response)
-        assert_translation_response(data, expected_type="ST")
+        assert_translation_response(data, expected_type=TaskType.SPEECH_TRANSLATION)
         assert data["target_language"] == target
 
     def test_st_empty_audio(
@@ -209,7 +209,7 @@ class TestSTEndpoint:
     ):
         """Invalid base64 audio data returns 422"""
         payload = {
-            "type": "ST",
+            "type": TaskType.SPEECH_TRANSLATION,
             "room_name": test_room_name,
             "meeting_id": test_meeting_id,
             "audio": "not-valid-base64!!!",
@@ -229,7 +229,7 @@ class TestSTEndpoint:
         """Missing target_language field returns 422"""
         import base64
         payload = {
-            "type": "ST",
+            "type": TaskType.SPEECH_TRANSLATION,
             "room_name": test_room_name,
             "meeting_id": test_meeting_id,
             "audio": base64.b64encode(dummy_audio_bytes).decode("utf-8"),

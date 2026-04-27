@@ -1,19 +1,23 @@
 """
 Pydantic models for Meetween API
 """
-from typing import Optional, Literal, Union, List
+from typing import Optional, Literal, Union, List, Final
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from enum import Enum
 import base64
 
-TASK_TYPE_TEXT_SUMMARY = "TSUM"
-TASK_TYPE_SPEECH_SUMMARY = "SSUM"
+class TaskType(str, Enum):
+    TEXT_TRANSLATION = "MT"
+    SPEECH_TRANSLATION = "ST"
+    TEXT_SUMMARY = "TSUM"
+    SPEECH_SUMMARY = "SSUM"
 
 taskTypes = Literal[
     "transcription",
-    TASK_TYPE_TEXT_SUMMARY,
-    TASK_TYPE_SPEECH_SUMMARY,
-    "ST",
-    "MT",
+    TaskType.TEXT_TRANSLATION,
+    TaskType.SPEECH_TRANSLATION,
+    TaskType.TEXT_SUMMARY,
+    TaskType.SPEECH_SUMMARY,
     "catch_me_up",
     "chat",
     "agendaTracking",
@@ -144,11 +148,11 @@ class MeetweenAgendaTrackingResponse(BaseModel):
     items: List[AgendaItem]
 
 class MeetweenMTRequest(MeetweenTextRequest):
-    type: Literal["MT"] = "MT"
+    type: Literal[TaskType.TEXT_TRANSLATION] = TaskType.TEXT_TRANSLATION
     target_language: str
 
 class MeetweenSTRequest(MeetweenAudioRequest):
-    type: Literal["ST"] = "ST"
+    type: Literal[TaskType.SPEECH_TRANSLATION] = TaskType.SPEECH_TRANSLATION
     target_language: str
 
 class AgendaTrackingModelOutput(BaseModel):
@@ -169,7 +173,7 @@ class MeetweenTaskResponse(BaseModel):
     error: Optional[str] = None
 
 class MeetweenTranslationResponse(MeetweenTaskResponse):
-    type: Literal["ST", "MT"]
+    type: Literal[TaskType.TEXT_TRANSLATION, TaskType.SPEECH_TRANSLATION]
     target_language: str
 
 class MeetweenSummarizationResponse(BaseModel):
