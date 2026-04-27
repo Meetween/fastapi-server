@@ -3,13 +3,12 @@ Chat (Q&A) endpoint. Accepts text prompt, optional context and full chat history
 returns text response.
 """
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager, SessionManager
 from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry
-from utils.prompt_template import format_template
+from utils.shared_prompts import PromptBundle
 
 router = APIRouter(prefix="/api", tags=["chat"])
 logger = logging.getLogger(__name__)
@@ -21,6 +20,7 @@ def _build_chat_prompt(
     history: list[HistoryEntry] | None,
     max_context_chars: int,
     max_history_chars: int,
+    language: str | None,
 ) -> str:
     meeting_transcript = (context or "").strip()
     if len(meeting_transcript) > max_context_chars:
@@ -34,12 +34,10 @@ def _build_chat_prompt(
         if len(chat_history) > max_history_chars:
             chat_history = chat_history[-max_history_chars:]
             chat_history = "(history truncated for length)\n" + chat_history
-    return format_template(
-        "chat_prompt",
-        filename="chat_system_prompt.yml",
+    return PromptBundle(language=language or "en-US").chat(
+        user_question=query.strip(),
         meeting_transcript=meeting_transcript,
         chat_history=chat_history,
-        user_question=query.strip(),
     )
 
 
@@ -48,7 +46,8 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
     """
     Question and answer endpoint for a meeting participant.
 
-    - Uses server-side transcript built from the caption WebSocket as `context`.
+    - Uses server-side transcript from the caption WebSocket when present; otherwise
+      falls back to the request `context` field (for clients without WebSocket captions).
     - Uses server-side per-participant history stored in `SessionManager`.
     """
     engine = EngineManager.get_lmm()
@@ -81,12 +80,17 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             )
             history_snapshot = list(history)
 
+        meeting_context = (transcript or "").strip()
+        if not meeting_context and request.context:
+            meeting_context = (request.context or "").strip()
+
         combined_prompt = _build_chat_prompt(
             query=request.prompt,
-            context=transcript,
+            context=meeting_context,
             history=history_snapshot,
             max_context_chars=engine.max_context_chars,
             max_history_chars=engine.max_history_chars,
+            language=request.language,
         )
         
         result = await engine._generate_text(

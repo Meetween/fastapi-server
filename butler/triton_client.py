@@ -110,16 +110,21 @@ class TritonClient:
         if audio is not None:
             wav_bytes = self._tensor_to_wav_bytes(audio, sample_rate)
             audio_b64 = base64.b64encode(wav_bytes).decode('utf-8')
+        elif self.prompt_protocol != "general_json":
+            # SpeechLMM Triton requires AUDIO_BYTES on every request; use brief silence for text-only.
+            silent = torch.zeros(1600, dtype=torch.float32)
+            wav_bytes = self._tensor_to_wav_bytes(silent, 16000)
+            audio_b64 = base64.b64encode(wav_bytes).decode("utf-8")
 
-        # Optional adapter for models that support a structured prompt protocol (Qwen backend).
+        # Optional adapter for models that support a structured prompt protocol.
         # SpeechLMM expects a plain string prompt.
         prompt_to_send = prompt
-        if self.prompt_protocol == "qwen_json":
+        if self.prompt_protocol == "general_json":
             mode = (task or "").strip().lower()
             if not mode:
                 # Infer best-effort from whether audio is present.
                 mode = "chat" if audio_b64 is None else "transcribe"
-            payload_obj: dict = {"mode": mode, "prompt": prompt_to_send}
+            payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
             if mode == "caption":
                 payload_obj["caption_chars"] = self.caption_chars
             prompt_to_send = json.dumps(payload_obj, ensure_ascii=False)

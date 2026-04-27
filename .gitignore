@@ -144,6 +144,24 @@ ENV/
 env.bak/
 venv.bak/
 
+# Runtime artifacts
+logs/
+tmp/
+cache/
+
+# Local recordings / media
+*.wav
+*.webm
+*.mp3
+*.mp4
+*.flac
+*.ogg
+*.pcm
+
+# Model / HF caches (keep out of git)
+huggingface_cache/
+.cache/
+
 # Spyder project settings
 .spyderproject
 .spyproject
