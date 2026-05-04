@@ -3,6 +3,7 @@ Tests for catchup endpoint (/api/catchup)
 """
 import pytest
 from fastapi.testclient import TestClient
+from core import SessionManager
 from tests.utils.assertions import (
     assert_successful_response,
     assert_task_response
@@ -19,9 +20,15 @@ class TestCatchupEndpoint:
         self,
         client: TestClient,
         test_room_name: str,
-        test_meeting_id: str
+        test_meeting_id: str,
+        sample_text: str,
     ):
         """Test catchup endpoint with default parameters"""
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            transcript=sample_text,
+        )
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
@@ -40,9 +47,15 @@ class TestCatchupEndpoint:
         client: TestClient,
         test_room_name: str,
         test_meeting_id: str,
+        sample_text: str,
         max_duration: float
     ):
         """Test catchup endpoint with different max_duration values"""
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            transcript=sample_text,
+        )
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
