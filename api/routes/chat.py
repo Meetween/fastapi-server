@@ -1,9 +1,10 @@
 """
-Chat (Q&A) endpoint. Accepts text prompt, optional context and full chat history;
-returns text response.
+Chat (Q&A) endpoint. Uses server-side transcript and per-participant history only.
+
+The request `context` field is not used (frontend does not rely on it); meeting text
+comes from SessionManager (caption WebSocket transcript).
 """
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Body
 

@@ -14,7 +14,11 @@ import json
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
 import numpy as np
 import torch
-import torchaudio
+try:
+    import torchaudio  # optional; may be missing or binary-incompatible
+except Exception:  # pragma: no cover
+    torchaudio = None
+import librosa
 from pathlib import Path
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
@@ -40,9 +44,24 @@ def monify_and_resample_audio(
         Tuple of (mono_audio_tensor, target_sr)
     """
     target_sr = target_sr or orig_sr
-    resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
-    audio = resampler(audio)
-    return audio.mean(dim=0, keepdim=True), target_sr
+    # Prefer torchaudio when available; otherwise fallback to librosa.
+    if torchaudio is not None:
+        resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
+        audio = resampler(audio)
+        return audio.mean(dim=0, keepdim=True), target_sr
+
+    # Fallback: CPU resample via librosa.
+    # audio: [channels, samples] or [1, channels, samples]
+    if audio.dim() == 3:
+        audio = audio.squeeze(0)
+    x = audio.detach().cpu().numpy()
+    if x.ndim == 1:
+        x = x[None, :]
+    # Mono first for speed/stability.
+    x_mono = x.mean(axis=0)
+    y = librosa.resample(x_mono.astype(np.float32), orig_sr=orig_sr, target_sr=target_sr)
+    y_t = torch.from_numpy(np.asarray(y, dtype=np.float32)).unsqueeze(0)
+    return y_t, target_sr
 
 
 class PromptLoader:
@@ -284,8 +303,7 @@ async def transcribe_audio(
         TranscriptionResult with complete transcript
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
-    
-    # Get language-specific ASR prompt
+
     prompt = PromptLoader.get_prompt("ASR", language)
 
     gen_kwargs: dict = {}
@@ -355,10 +373,9 @@ async def caption_audio(
         caption_handler = CaptionHandler()
     
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
-    
-    # Get language-specific ASR prompt
+
     prompt = PromptLoader.get_prompt("ASR", language)
-    
+
     transcription = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,
