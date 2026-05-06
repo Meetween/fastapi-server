@@ -89,12 +89,17 @@ class PromptLoader:
 
         lang_prompts = cls._select_language_prompts(task_prompts, lang_code)
         selected = cls._select_prompt_variant(lang_prompts)
-        target_lang_name = cls.LANGUAGE_NAMES.get(lang_code.lower(), lang_code.capitalize())
+        target_lang_name = cls._get_language_name(lang_code)
         return selected.replace("<target-language>", target_lang_name)
 
     @classmethod
     def _normalize_language_code(cls, language: str) -> str:
         return language.split("-")[0] if "-" in language else language
+
+    @classmethod
+    def _get_language_name(cls, lang_code: str) -> str:
+        """Convert language code to readable name."""
+        return cls.LANGUAGE_NAMES.get(lang_code.lower(), lang_code.capitalize())
 
     @classmethod
     def _select_language_prompts(cls, task_prompts: dict[str, Any], lang_code: str) -> Any:
