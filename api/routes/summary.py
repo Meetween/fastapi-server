@@ -120,7 +120,6 @@ async def get_summary_text(request: LMMRequest) -> str:
                 sample_rate=16000,
                 engine=engine,
                 language=request.language or "en-US",
-                prompt=request.prompt,
                 context=request.context,
                 history=request.history
             )
@@ -226,7 +225,6 @@ async def get_summary_text(request: LMMRequest) -> str:
             sample_rate=16000,
             engine=engine,
             language=request.language or "en-US",
-            prompt=request.prompt,
             context=request.context,
             history=request.history,
         )

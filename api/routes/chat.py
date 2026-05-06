@@ -37,7 +37,6 @@ def _build_chat_prompt(
             chat_history = "(history truncated for length)\n" + chat_history
     return format_template(
         "chat_prompt",
-        filename="chat_system_prompt.yml",
         meeting_transcript=meeting_transcript,
         chat_history=chat_history,
         user_question=query.strip(),
