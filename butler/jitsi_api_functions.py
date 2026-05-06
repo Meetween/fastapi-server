@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .triton_client import TritonClient
-from utils.shared_prompts import PromptBundle
 
 
 def monify_and_resample_audio(
@@ -305,7 +304,7 @@ async def transcribe_audio(
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = PromptBundle(language=language).transcribe(verbatim=True)
+    prompt = PromptLoader.get_prompt("ASR", language)
 
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
@@ -375,8 +374,8 @@ async def caption_audio(
     
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = PromptBundle(language=language, caption_chars=60).caption()
-    
+    prompt = PromptLoader.get_prompt("ASR", language)
+
     transcription = await engine._generate_text(
         prompt=prompt,
         audio=audio_tensor,

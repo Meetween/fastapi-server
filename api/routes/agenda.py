@@ -18,7 +18,7 @@ from models import (
     MeetweenAgendaTrackingRequest,
     MeetweenAgendaTrackingResponse,
 )
-from utils.shared_prompts import PromptBundle
+from utils.prompt_template import format_template
 
 router = APIRouter(prefix="/api", tags=["agenda-tracking"])
 logger = logging.getLogger(__name__)
@@ -136,10 +136,12 @@ def _build_agenda_prompt(items: List[AgendaItem], transcript: str) -> str:
     )
     allowed_statuses = ", ".join(sorted(_VALID_STATUSES))
     json_schema = json.dumps(_agenda_items_output_schema(), indent=2)
-    return PromptBundle(language="en-US").agenda_tracking(
+    return format_template(
+        "agenda_prompt",
+        filename="agenda_system_prompt.yml",
+        allowed_statuses=allowed_statuses,
         meeting_transcript=transcript.strip(),
         agenda_items=agenda_lines,
-        allowed_statuses=allowed_statuses,
         json_schema=json_schema,
     )
 
