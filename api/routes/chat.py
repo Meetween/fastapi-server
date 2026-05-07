@@ -1,8 +1,6 @@
 """
 Chat (Q&A) endpoint. Uses server-side transcript and per-participant history only.
 
-The request `context` field is not used (frontend does not rely on it); meeting text
-comes from SessionManager (caption WebSocket transcript).
 """
 import logging
 
