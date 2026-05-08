@@ -26,6 +26,7 @@ from api.routes import (
     config,
     chat,
     agenda,
+    auth,
 )
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
@@ -249,6 +250,7 @@ app.include_router(summary.router)
 app.include_router(config.router)
 app.include_router(chat.router)
 app.include_router(agenda.router)
+app.include_router(auth.router)
 
 
 if __name__ == "__main__":
