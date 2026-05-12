@@ -16,6 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from config import settings
 from core import EngineManager, SessionManager
+from src.database import async_mongo_manager
 from utils.storage import StorageManager
 
 from api.routes import (
@@ -66,12 +67,13 @@ def cleanup_old_recordings_job():
 
 
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     """Initialize server and load SpeechLMM model"""
 
     logger.info("Server starting up...")
 
     EngineManager.initialize()
+    await async_mongo_manager.connect()
     settings.recordings_base_path.mkdir(parents=True, exist_ok=True)
 
     # Schedule daily cleanup of old recordings
@@ -99,6 +101,7 @@ async def shutdown_event():
 
     await SessionManager.cleanup()
     await EngineManager.cleanup()
+    await async_mongo_manager.close()
 
     logger.info("Server shutdown complete")
 

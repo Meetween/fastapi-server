@@ -3,6 +3,7 @@ Pytest configuration and shared fixtures
 
 This module provides shared fixtures for all tests.
 """
+import asyncio
 import json
 import pytest
 import base64
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from pydub import AudioSegment
 from main import app
 from core import EngineManager
+from src.database import mongo as mongo_module
 
 
 # ============================================================================
@@ -153,6 +155,36 @@ def create_test_recording(temp_recordings_dir):
 # ============================================================================
 # Application & Client Fixtures
 # ============================================================================
+
+@pytest.fixture(scope="session", autouse=True)
+def mock_mongo_client():
+    """
+    Replace the Motor client factory with an in-memory mongomock client so
+    tests run without a live MongoDB instance. The mock is connected here
+    because the TestClient fixture below does not enter the FastAPI lifespan
+    context, so app startup events do not fire.
+    """
+    from mongomock_motor import AsyncMongoMockClient
+
+    patcher = patch.object(
+        mongo_module, "_create_client", lambda uri: AsyncMongoMockClient()
+    )
+    patcher.start()
+    asyncio.run(mongo_module.async_mongo_manager.connect())
+    yield
+    asyncio.run(mongo_module.async_mongo_manager.close())
+    patcher.stop()
+
+
+@pytest.fixture(autouse=True)
+def _clear_mongo_collections(mock_mongo_client):
+    """Reset Mongo state between tests to keep them independent."""
+    yield
+    from src.database.models import MeetingContext, User
+
+    for model in (User, MeetingContext):
+        asyncio.run(model.get_collection().delete_many({}))
+
 
 @pytest.fixture(scope="session", autouse=True)
 def mock_engine_manager():

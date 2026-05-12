@@ -5,8 +5,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
 from config import settings
-from models import (
+from src.schemas.auth import (
     UserCreateRequest,
+    UserCreateResponse,
     LoginRequest,
     MeetingContextRequest,
     TokenPairResponse,
@@ -51,19 +52,15 @@ def _get_current_subject(
     return subject
 
 
-@router.post("/users")
+@router.post("/users", response_model=UserCreateResponse)
 async def register_user(request: UserCreateRequest):
     try:
-        user = await create_user(
+        return await create_user(
             email=request.email,
             password=request.password,
             first_name=request.first_name,
             last_name=request.last_name,
         )
-        return {
-            "email": user["email"],
-            "is_active": user["is_active"],
-        }
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -84,7 +81,7 @@ async def upsert_context(
     request: MeetingContextRequest,
     current_subject: str = Depends(_get_current_subject),
 ):
-    context_record = store_user_meeting_context(
+    context_record = await store_user_meeting_context(
         user_id=current_subject,
         meeting_id=request.meeting_id,
         room_name=request.room_name,
@@ -125,7 +122,7 @@ async def get_context(
     meeting_id: str,
     current_subject: str = Depends(_get_current_subject),
 ):
-    record = get_user_meeting_context(user_id=current_subject, meeting_id=meeting_id)
+    record = await get_user_meeting_context(user_id=current_subject, meeting_id=meeting_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Meeting context not found")
     return record

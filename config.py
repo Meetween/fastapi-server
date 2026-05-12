@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     jwt_audience_access: str = Field(default="meetween-access", env="JWT_AUDIENCE_ACCESS")
     jwt_audience_refresh: str = Field(default="meetween-refresh", env="JWT_AUDIENCE_REFRESH")
 
+    mongo_uri: str = Field(default="mongodb://localhost:27017", env="MONGO_URI")
+    mongo_db_name: str = Field(default="meetween", env="MONGO_DB_NAME")
+    mongo_users_collection: str = Field(default="users", env="MONGO_USERS_COLLECTION")
+    mongo_meeting_context_collection: str = Field(
+        default="meeting_context", env="MONGO_MEETING_CONTEXT_COLLECTION"
+    )
+
     def model_post_init(self, __context) -> None:
         """
         Optional profile loader (plug-and-play).
