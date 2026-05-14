@@ -39,8 +39,8 @@ class AsyncMongoDBManager:
         if self.database is not None:
             return self.database
 
-        uri = connection_string or settings.mongo_uri
-        name = db_name or settings.mongo_db_name
+        uri = connection_string or settings.mongo.uri
+        name = db_name or settings.mongo.db_name
 
         try:
             self.client = _create_client(uri)

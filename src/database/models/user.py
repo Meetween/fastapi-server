@@ -15,7 +15,7 @@ class User(MongoModel):
     last_name: Optional[str] = Field(default=None, description="User's last name")
     is_active: bool = Field(default=True, description="Whether the user is active")
 
-    collection_name: ClassVar[str] = settings.mongo_users_collection
+    collection_name: ClassVar[str] = settings.mongo.users_collection
 
     @classmethod
     async def setup_indexes(cls) -> None:

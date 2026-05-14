@@ -1,10 +1,10 @@
-
-import os
 from pathlib import Path
-from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
 from typing import Optional
+
 import yaml
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic_settings import BaseSettings
+
 
 class TritonSettings(BaseModel):
     url: str = Field(default="http://localhost:9000", env="TRITON_URL")
@@ -15,6 +15,38 @@ class TritonSettings(BaseModel):
     max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
     prompt_protocol: str = Field(default="speechlmm_plain", env="TRITON_PROMPT_PROTOCOL")
     caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
+
+
+class AppJwtSettings(BaseModel):
+    """Application login JWT (access / refresh)."""
+
+    model_config = ConfigDict(frozen=True)
+    secret_key: str
+    algorithm: str
+    access_expire_minutes: int
+    refresh_expire_days: int
+    audience_access: str
+    audience_refresh: str
+
+
+class MeetingJwtSettings(BaseModel):
+    """Jitsi Prosody meeting JWT (`token_auth`). Signed with the same secret as app JWT."""
+
+    model_config = ConfigDict(frozen=True)
+    issuer: str
+    expire_minutes: int
+    meet_base_url: Optional[str]
+
+
+class MongoSettings(BaseModel):
+    """MongoDB connection and collection names."""
+
+    model_config = ConfigDict(frozen=True)
+    uri: str
+    db_name: str
+    users_collection: str
+    meeting_context_collection: str
+
 
 class Settings(BaseSettings):
 
@@ -46,6 +78,9 @@ class Settings(BaseSettings):
     )
     jwt_audience_access: str = Field(default="meetween-access", env="JWT_AUDIENCE_ACCESS")
     jwt_audience_refresh: str = Field(default="meetween-refresh", env="JWT_AUDIENCE_REFRESH")
+    jwt_jitsi_issuer: str = Field(default="meetween", env="JWT_JITSI_ISSUER")
+    jwt_jitsi_expire_minutes: int = Field(default=15, env="JWT_JITSI_EXPIRE_MINUTES")
+    jitsi_meet_base_url: Optional[str] = Field(default=None, env="JITSI_MEET_BASE_URL")
 
     mongo_uri: str = Field(default="mongodb://localhost:27017", env="MONGO_URI")
     mongo_db_name: str = Field(default="meetween", env="MONGO_DB_NAME")
@@ -81,5 +116,34 @@ class Settings(BaseSettings):
         except Exception:
             # Keep defaults/env behavior if profile loading fails.
             return
+
+    @property
+    def app_jwt(self) -> AppJwtSettings:
+        return AppJwtSettings(
+            secret_key=self.jwt_secret_key,
+            algorithm=self.jwt_algorithm,
+            access_expire_minutes=self.jwt_access_token_expire_minutes,
+            refresh_expire_days=self.jwt_refresh_token_expire_days,
+            audience_access=self.jwt_audience_access,
+            audience_refresh=self.jwt_audience_refresh,
+        )
+
+    @property
+    def meeting_jwt(self) -> MeetingJwtSettings:
+        return MeetingJwtSettings(
+            issuer=self.jwt_jitsi_issuer,
+            expire_minutes=self.jwt_jitsi_expire_minutes,
+            meet_base_url=self.jitsi_meet_base_url,
+        )
+
+    @property
+    def mongo(self) -> MongoSettings:
+        return MongoSettings(
+            uri=self.mongo_uri,
+            db_name=self.mongo_db_name,
+            users_collection=self.mongo_users_collection,
+            meeting_context_collection=self.mongo_meeting_context_collection,
+        )
+
 
 settings = Settings()

@@ -6,6 +6,7 @@ import uuid
 from typing import Dict, Any
 
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
+from utils.uuid_helper import new_meeting_id
 
 
 def create_audio_payload(
@@ -113,10 +114,10 @@ def create_generic_payload(
 
 def generate_test_meeting_id() -> str:
     """Generate a unique test meeting ID."""
-    return str(uuid.uuid4())
+    return new_meeting_id()
 
 
 def generate_test_room_name() -> str:
     """Generate a unique test room name."""
-    return f"test-room-{uuid.uuid4().hex[:12]}"
+    return f"test-room-{new_meeting_id().hex[:12]}"
 

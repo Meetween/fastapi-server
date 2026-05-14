@@ -2,7 +2,8 @@ import hashlib
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from urllib.parse import quote
+from uuid import UUID, uuid4
 
 from jose import jwt
 from pymongo import ReturnDocument
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
-    payload = f"{settings.jwt_secret_key}:{password}".encode("utf-8")
+    payload = f"{settings.app_jwt.secret_key}:{password}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -46,74 +47,88 @@ async def create_user(
 
 
 def create_access_token(*, sub: str) -> str:
+    aj = settings.app_jwt
     expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.jwt_access_token_expire_minutes
+        minutes=aj.access_expire_minutes
     )
-    to_encode = {"exp": expire, "sub": sub, "aud": settings.jwt_audience_access}
+    to_encode = {"exp": expire, "sub": sub, "aud": aj.audience_access}
     return jwt.encode(
-        to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+        to_encode, aj.secret_key, algorithm=aj.algorithm
     )
 
 
 def create_refresh_token(*, sub: str) -> str:
+    aj = settings.app_jwt
     expire = datetime.now(timezone.utc) + timedelta(
-        days=settings.jwt_refresh_token_expire_days
+        days=aj.refresh_expire_days
     )
     jti = str(uuid4())
     to_encode = {
         "exp": expire,
         "sub": sub,
         "jti": jti,
-        "aud": settings.jwt_audience_refresh,
+        "aud": aj.audience_refresh,
     }
     return jwt.encode(
-        to_encode, settings.jwt_secret_key, algorithm=settings.jwt_algorithm
+        to_encode, aj.secret_key, algorithm=aj.algorithm
     )
 
 
 def create_jitsi_token(*, sub: str, room: str, moderator: bool = False) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.jwt_access_token_expire_minutes
-    )
+    aj = settings.app_jwt
+    mj = settings.meeting_jwt
+    now = datetime.now(timezone.utc)
+    expire = now + timedelta(minutes=mj.expire_minutes)
     claims = {
+        "iss": mj.issuer,
         "aud": "jitsi",
         "sub": sub,
         "room": room,
         "moderator": moderator,
+        "iat": now,
         "exp": expire,
     }
-    return jwt.encode(claims, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(claims, aj.secret_key, algorithm=aj.algorithm)
 
 
 def verify_jwt_token(token: str, audience: str) -> dict:
+    aj = settings.app_jwt
     return jwt.decode(
         token,
-        settings.jwt_secret_key,
-        algorithms=[settings.jwt_algorithm],
+        aj.secret_key,
+        algorithms=[aj.algorithm],
         audience=audience,
     )
 
 
 def verify_jitsi_token(token: str) -> dict:
-    return verify_jwt_token(token=token, audience="jitsi")
+    aj = settings.app_jwt
+    mj = settings.meeting_jwt
+    return jwt.decode(
+        token,
+        aj.secret_key,
+        algorithms=[aj.algorithm],
+        audience="jitsi",
+        issuer=mj.issuer,
+    )
 
 
 async def store_user_meeting_context(
     *,
     user_id: str,
-    meeting_id: str,
-    room_name: str | None,
+    room_name: str,
+    meeting_id: UUID | None = None,
     metadata: dict | None = None,
 ) -> MeetingContext:
-    """Atomically upsert the (user_id, meeting_id) context document."""
+    """Atomically upsert one document per (user_id, room_name), matching the unique index on those fields."""
     now = datetime.now(timezone.utc)
     doc = await MeetingContext.get_collection().find_one_and_update(
-        {"user_id": user_id, "meeting_id": meeting_id},
+        {"user_id": user_id, "room_name": room_name},
         {
             "$set": {
                 "user_id": user_id,
-                "meeting_id": meeting_id,
                 "room_name": room_name,
+                "meeting_id": meeting_id,
                 "metadata": metadata or {},
                 "updated_at": now,
             },
@@ -125,9 +140,15 @@ async def store_user_meeting_context(
     return MeetingContext.from_dict(doc)
 
 
+def build_meet_join_url(*, base_url: str, room: str, jwt_token: str) -> str:
+    """Build https://meet.example.com/<room>?jwt=<token> (JWT URL-encoded)."""
+    base = base_url.rstrip("/")
+    return f"{base}/{quote(room, safe='')}?jwt={quote(jwt_token, safe='')}"
+
+
 async def get_user_meeting_context(
-    user_id: str, meeting_id: str
+    user_id: str, room_name: str
 ) -> MeetingContext | None:
     return await MeetingContext.find_one(
-        {"user_id": user_id, "meeting_id": meeting_id}
+        {"user_id": user_id, "room_name": room_name}
     )

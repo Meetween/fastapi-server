@@ -1,5 +1,8 @@
 import pytest
 
+from config import settings
+from tests.utils.helpers import generate_test_meeting_id
+
 
 @pytest.mark.integration
 class TestAuthEndpoints:
@@ -15,6 +18,9 @@ class TestAuthEndpoints:
         register_data = register_response.json()
         assert register_data["email"] == "auth-user@example.com"
         assert register_data["is_active"] is True
+
+        dup = client.post("/api/auth/users", json=register_payload)
+        assert dup.status_code == 409
 
         login_response = client.post(
             "/api/auth/login",
@@ -44,29 +50,26 @@ class TestAuthEndpoints:
         access_token = login_response.json()["access_token"]
         auth_headers = {"Authorization": f"Bearer {access_token}"}
 
-        upsert_payload = {
-            "meeting_id": "meeting-123",
-            "room_name": "room-123",
-            "metadata": {"source": "jwt-auth"},
-        }
-        upsert_response = client.post(
-            "/api/auth/context",
-            json=upsert_payload,
-            headers=auth_headers,
-        )
-        assert upsert_response.status_code == 200
-        upsert_data = upsert_response.json()
-        assert upsert_data["meeting_context"]["meeting_id"] == "meeting-123"
-
+        meeting_uuid = generate_test_meeting_id()
         issue_response = client.post(
             "/api/auth/jitsi/issue",
-            json={"room_name": "room-123", "moderator": True},
+            json={
+                "room_name": "room-123",
+                "meeting_id": meeting_uuid,
+                "moderator": True,
+                "metadata": {"source": "jwt-auth"},
+            },
             headers=auth_headers,
         )
         assert issue_response.status_code == 200
         issue_data = issue_response.json()
         assert "jitsi_token" in issue_data
         assert issue_data["room"] == "room-123"
+        assert issue_data["meeting_context"]["meeting_id"] == meeting_uuid
+        assert issue_data["meeting_context"]["room_name"] == "room-123"
+        assert issue_data["meeting_context"]["user_id"] == "jwt-user@example.com"
+        assert issue_data["meeting_context"]["metadata"]["source"] == "jwt-auth"
+        assert issue_data.get("meet_join_url") is None
 
         validate_response = client.post(
             "/api/auth/jitsi/validate",
@@ -75,13 +78,101 @@ class TestAuthEndpoints:
         assert validate_response.status_code == 200
         validate_data = validate_response.json()
         assert validate_data["valid"] is True
+        assert isinstance(validate_data["claims"], dict)
         assert validate_data["claims"]["room"] == "room-123"
+        assert validate_data["claims"]["iss"] == settings.meeting_jwt.issuer
+        assert "iat" in validate_data["claims"]
+        assert "meeting_id" not in validate_data["claims"]
 
         context_response = client.get(
-            "/api/auth/context/meeting-123",
+            "/api/auth/context/room-123",
             headers=auth_headers,
         )
         assert context_response.status_code == 200
         context_data = context_response.json()
         assert context_data["user_id"] == "jwt-user@example.com"
-        assert context_data["meeting_id"] == "meeting-123"
+        assert context_data["meeting_id"] == meeting_uuid
+
+    def test_jitsi_issue_omitted_meeting_id_keys_context_by_room(self, client):
+        register_response = client.post(
+            "/api/auth/users",
+            json={
+                "email": "legacy-room-key@example.com",
+                "password": "secret123",
+            },
+        )
+        assert register_response.status_code == 200
+        login_response = client.post(
+            "/api/auth/login",
+            json={"email": "legacy-room-key@example.com", "password": "secret123"},
+        )
+        token = login_response.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        issue_response = client.post(
+            "/api/auth/jitsi/issue",
+            json={"room_name": "legacy-room", "moderator": False},
+            headers=headers,
+        )
+        assert issue_response.status_code == 200
+        data = issue_response.json()
+        assert data["meeting_context"]["meeting_id"] is None
+        assert data["meeting_context"]["room_name"] == "legacy-room"
+        ctx = client.get("/api/auth/context/legacy-room", headers=headers)
+        assert ctx.status_code == 200
+        assert ctx.json()["meeting_id"] is None
+
+    def test_context_requires_bearer(self, client):
+        response = client.get("/api/auth/context/some-room")
+        assert response.status_code == 401
+
+    def test_jitsi_issue_requires_room_name(self, client):
+        register_response = client.post(
+            "/api/auth/users",
+            json={
+                "email": "noroom@example.com",
+                "password": "secret123",
+            },
+        )
+        assert register_response.status_code == 200
+        login_response = client.post(
+            "/api/auth/login",
+            json={"email": "noroom@example.com", "password": "secret123"},
+        )
+        assert login_response.status_code == 200
+        token = login_response.json()["access_token"]
+        bad = client.post(
+            "/api/auth/jitsi/issue",
+            json={},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert bad.status_code == 422
+
+    def test_jitsi_meet_join_url_when_base_configured(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "jitsi_meet_base_url", "https://meet.example.com")
+        register_response = client.post(
+            "/api/auth/users",
+            json={
+                "email": "joinurl@example.com",
+                "password": "secret123",
+            },
+        )
+        assert register_response.status_code == 200
+        login_response = client.post(
+            "/api/auth/login",
+            json={"email": "joinurl@example.com", "password": "secret123"},
+        )
+        token = login_response.json()["access_token"]
+        issue_response = client.post(
+            "/api/auth/jitsi/issue",
+            json={
+                "room_name": "My Room",
+                "moderator": False,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert issue_response.status_code == 200
+        url = issue_response.json()["meet_join_url"]
+        assert url is not None
+        assert url.startswith("https://meet.example.com/")
+        assert "My%20Room" in url or "My+Room" in url
+        assert "jwt=" in url
