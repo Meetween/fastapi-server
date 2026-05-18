@@ -32,7 +32,8 @@ class TestAuthEndpoints:
         assert "refresh_token" in login_data
         assert login_data["token_type"] == "bearer"
 
-    def test_jitsi_issue_and_context_with_access_token(self, client):
+    def test_jitsi_issue_and_context_with_access_token(self, client, monkeypatch):
+        monkeypatch.setattr(settings, "jitsi_meet_base_url", None)
         register_payload = {
             "email": "jwt-user@example.com",
             "password": "secret123",
