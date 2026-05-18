@@ -122,13 +122,14 @@ async def store_user_meeting_context(
 ) -> MeetingContext:
     """Atomically upsert one document per (user_id, room_name), matching the unique index on those fields."""
     now = datetime.now(timezone.utc)
+    meeting_id_str = str(meeting_id) if meeting_id is not None else None
     doc = await MeetingContext.get_collection().find_one_and_update(
         {"user_id": user_id, "room_name": room_name},
         {
             "$set": {
                 "user_id": user_id,
                 "room_name": room_name,
-                "meeting_id": meeting_id,
+                "meeting_id": meeting_id_str,
                 "metadata": metadata or {},
                 "updated_at": now,
             },
