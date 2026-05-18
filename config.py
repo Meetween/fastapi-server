@@ -1,20 +1,33 @@
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
-from pydantic_settings import BaseSettings
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = Path(__file__).resolve().parent / ".env"
+_REPO_ROOT = Path(__file__).resolve().parent
+
+_DEFAULT_TRITON_PROFILE: dict[str, str] = {
+    "url": "http://localhost:9100",
+    "model_name": "speechlmm",
+    "prompt_protocol": "speechlmm_plain",
+}
+_PROFILE_TRITON_KEYS = frozenset({"url", "model_name", "prompt_protocol", "caption_chars"})
 
 
 class TritonSettings(BaseModel):
-    url: str = Field(default="http://localhost:9000", env="TRITON_URL")
-    model_name: str = Field(default="qwen25_omni", env="TRITON_MODEL_NAME")
-    timeout: int = Field(default=1800, env="TRITON_TIMEOUT")
-    max_context_chars: int = Field(default=300_000, env="TRITON_MAX_CONTEXT_CHARS")
-    max_history_turns: int = Field(default=400, env="TRITON_MAX_HISTORY_TURNS")
-    max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
-    prompt_protocol: str = Field(default="speechlmm_plain", env="TRITON_PROMPT_PROTOCOL")
-    caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
+    """Triton inference client settings."""
+
+    model_config = ConfigDict(frozen=True)
+    url: str
+    model_name: str
+    timeout: int
+    max_context_chars: int
+    max_history_turns: int
+    max_history_chars: int
+    prompt_protocol: str
+    caption_chars: int
 
 
 class AppJwtSettings(BaseModel):
@@ -48,17 +61,75 @@ class MongoSettings(BaseModel):
     meeting_context_collection: str
 
 
+def _resolve_profiles_path(path: Path) -> Path:
+    if path.is_absolute():
+        return path
+    return (_REPO_ROOT / path).resolve()
+
+
+def _load_triton_profile_overrides(
+    *,
+    model_profile: str,
+    profiles_path: Path,
+) -> dict[str, Any]:
+    """Load url/model_name/prompt_protocol (and optional caption_chars) from YAML."""
+    merged = dict(_DEFAULT_TRITON_PROFILE)
+    try:
+        path = _resolve_profiles_path(profiles_path)
+        if not path.is_file():
+            return merged
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        prof = (data.get("profiles") or {}).get(model_profile)
+        if not isinstance(prof, dict):
+            return merged
+        triton = prof.get("triton")
+        if not isinstance(triton, dict):
+            return merged
+        merged.update(
+            {
+                k: v
+                for k, v in triton.items()
+                if k in _PROFILE_TRITON_KEYS and v is not None
+            }
+        )
+    except (OSError, yaml.YAMLError):
+        pass
+    return merged
+
+
+def _build_triton_settings(
+    *,
+    profile: dict[str, Any],
+    timeout: int,
+    max_context_chars: int,
+    max_history_turns: int,
+    max_history_chars: int,
+    caption_chars_default: int,
+) -> TritonSettings:
+    return TritonSettings(
+        url=str(profile["url"]),
+        model_name=str(profile["model_name"]),
+        prompt_protocol=str(profile["prompt_protocol"]),
+        timeout=timeout,
+        max_context_chars=max_context_chars,
+        max_history_turns=max_history_turns,
+        max_history_chars=max_history_chars,
+        caption_chars=int(profile.get("caption_chars", caption_chars_default)),
+    )
+
+
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILE,
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     app_name: str = "Meetween FastAPI Server"
     app_version: str = "1.0.0"
     host: str = "0.0.0.0"
     port: int = 8000
-
-    triton: TritonSettings = TritonSettings()
-
-    model_profile: str = Field(default="speechlmm", env="MODEL_PROFILE")
-    model_profiles_path: Path = Field(default=Path("model_profiles.yml"), env="MODEL_PROFILES_PATH")
 
     recordings_base_path: Path = Path("/mnt/recordings")
     recording_format: Optional[str] = "wav"
@@ -89,33 +160,30 @@ class Settings(BaseSettings):
         default="meeting_context", env="MONGO_MEETING_CONTEXT_COLLECTION"
     )
 
+    model_profile: str = Field(default="speechlmm", env="MODEL_PROFILE")
+    model_profiles_path: Path = Field(default=Path("model_profiles.yml"), env="MODEL_PROFILES_PATH")
+
+    triton_timeout: int = Field(default=1800, env="TRITON_TIMEOUT")
+    triton_max_context_chars: int = Field(default=300_000, env="TRITON_MAX_CONTEXT_CHARS")
+    triton_max_history_turns: int = Field(default=400, env="TRITON_MAX_HISTORY_TURNS")
+    triton_max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
+    triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
+
+    _triton: TritonSettings = PrivateAttr()
+
     def model_post_init(self, __context) -> None:
-        """
-        Optional profile loader (plug-and-play).
-        If MODEL_PROFILE is set and the YAML file exists, override self.triton fields.
-        """
-        try:
-            path = self.model_profiles_path
-            if not path.is_absolute():
-                # Resolve relative to repo root (this file's directory)
-                path = (Path(__file__).parent / path).resolve()
-            if not path.exists():
-                return
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-            profiles = (data or {}).get("profiles") or {}
-            prof = profiles.get(self.model_profile)
-            if not isinstance(prof, dict):
-                return
-            triton = prof.get("triton") or {}
-            if isinstance(triton, dict):
-                # Override only provided keys.
-                self.triton = self.triton.model_copy(
-                    update={k: v for k, v in triton.items() if v is not None}
-                )
-        except Exception:
-            # Keep defaults/env behavior if profile loading fails.
-            return
+        profile = _load_triton_profile_overrides(
+            model_profile=self.model_profile,
+            profiles_path=self.model_profiles_path,
+        )
+        self._triton = _build_triton_settings(
+            profile=profile,
+            timeout=self.triton_timeout,
+            max_context_chars=self.triton_max_context_chars,
+            max_history_turns=self.triton_max_history_turns,
+            max_history_chars=self.triton_max_history_chars,
+            caption_chars_default=self.triton_caption_chars,
+        )
 
     @property
     def app_jwt(self) -> AppJwtSettings:
@@ -135,6 +203,10 @@ class Settings(BaseSettings):
             expire_minutes=self.jwt_jitsi_expire_minutes,
             meet_base_url=self.jitsi_meet_base_url,
         )
+
+    @property
+    def triton(self) -> TritonSettings:
+        return self._triton
 
     @property
     def mongo(self) -> MongoSettings:

@@ -109,11 +109,9 @@ sudo apt-get install -y ffmpeg
 Set environment variables as needed (defaults are defined in `config.py`):
 
 ```bash
-export TRITON_URL="http://localhost:9000"
-export TRITON_MODEL_NAME="qwen25_omni"
-export TRITON_PROMPT_PROTOCOL="speechlmm_plain"
 export MODEL_PROFILE="speechlmm"
 export MODEL_PROFILES_PATH="model_profiles.yml"
+export TRITON_TIMEOUT="1800"
 ```
 
 ### 3) Start the server
@@ -157,20 +155,19 @@ Configuration is loaded through `pydantic-settings` in `config.py`.
 
 ### Triton Settings
 
+`url`, `model_name`, and `prompt_protocol` come from the selected entry in `model_profiles.yml` (via `MODEL_PROFILE`), not from env vars.
+
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRITON_URL` | `http://localhost:9000` | Triton HTTP endpoint |
-| `TRITON_MODEL_NAME` | `qwen25_omni` | Served model name |
 | `TRITON_TIMEOUT` | `1800` | Inference request timeout in seconds |
 | `TRITON_MAX_CONTEXT_CHARS` | `300000` | Maximum transcript/context size |
 | `TRITON_MAX_HISTORY_TURNS` | `400` | Maximum chat history turns |
 | `TRITON_MAX_HISTORY_CHARS` | `600000` | Maximum chat history characters |
-| `TRITON_PROMPT_PROTOCOL` | `speechlmm_plain` | Prompt serialization protocol |
-| `TRITON_CAPTION_CHARS` | `60` | Caption formatting length |
+| `TRITON_CAPTION_CHARS` | `60` | Caption formatting length (profile YAML may override) |
 
 ### Model Profiles
 
-Use `MODEL_PROFILE` + `MODEL_PROFILES_PATH` to switch model runtime config without changing code.
+Use `MODEL_PROFILE` + `MODEL_PROFILES_PATH` to switch Triton endpoint, model name, and prompt protocol without changing code.
 
 Example profiles are defined in `model_profiles.yml`:
 
