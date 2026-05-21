@@ -414,8 +414,8 @@ async def translate_audio(
         Translation of input audio
     """
 
-    # Get language-specific MT prompt
-    prompt = PromptLoader.get_prompt(TaskType.TEXT_TRANSLATION, language, target_language=target_lang)
+    # Get language-specific MT promp
+    prompt = PromptLoader.get_prompt(TaskType.SPEECH_TRANSLATION, language, target_language=target_lang)
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
         gen_kwargs["max_new_tokens"] = max_new_tokens
@@ -432,7 +432,7 @@ async def translate_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task=TaskType.TEXT_TRANSLATION,
+        task=TaskType.SPEECH_TRANSLATION,
         **gen_kwargs,
     )
 
