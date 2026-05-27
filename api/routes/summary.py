@@ -1,7 +1,5 @@
 import json
 import logging
-import tempfile
-import os
 
 import numpy as np
 from pydub import AudioSegment
@@ -9,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Body
 from fastapi.responses import StreamingResponse
 
 from core import EngineManager
-from utils import StorageManager, pydub_to_pcm16
+from utils import StorageManager, decode_uploaded_audio_to_pcm
 from config import settings
 from models import (
     MeetweenTaskResponse,
@@ -98,35 +96,21 @@ async def get_summary_text(request: LMMRequest) -> str:
 
         logger.info(f"Summarizing {len(audio_bytes)} bytes, language: {request.language}")
 
-        # Save audio to temp file
-        with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
-            temp_file.write(audio_bytes)
-            temp_path = temp_file.name
-
         try:
-            # Load audio with pydub (better ffmpeg support)
-            audio_segment = AudioSegment.from_file(temp_path)
+            audio_pcm = decode_uploaded_audio_to_pcm(audio_bytes)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-            # Convert to mono, 16kHz (model's native sample rate)
-            audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
+        logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
-            # Get raw PCM data
-            audio_pcm = pydub_to_pcm16(audio_segment)
-            logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
-
-            # Generate summary
-            return await summarize_audio(
-                audio_bytes=audio_pcm,
-                sample_rate=16000,
-                engine=engine,
-                language=request.language or "en-US",
-                context=request.context,
-                history=request.history
-            )
-        finally:
-            # Clean up temp file
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
+        return await summarize_audio(
+            audio_bytes=audio_pcm,
+            sample_rate=16000,
+            engine=engine,
+            language=request.language or "en-US",
+            context=request.context,
+            history=request.history,
+        )
 
     # Handle text input
     if isinstance(request, MeetweenTextRequest):

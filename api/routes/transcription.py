@@ -1,7 +1,5 @@
 import json
 import logging
-import tempfile
-import os
 import time
 
 import numpy as np
@@ -9,7 +7,7 @@ from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager
-from utils import StorageManager, UUIDHelper, pydub_to_pcm16
+from utils import StorageManager, UUIDHelper, decode_uploaded_audio_to_pcm
 from config import settings
 from models import (
     MeetweenTranscriptionResponse,
@@ -50,50 +48,31 @@ async def api_transcribe(request: LMMRequest = Body(...)):
 
             logger.info(f"Transcribing {len(audio_bytes)} bytes, language: {request.language}")
 
-            # Save audio to temp file
-            with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as temp_file:
-                temp_file.write(audio_bytes)
-                temp_path = temp_file.name
-
             try:
-                # Load audio with pydub (better ffmpeg support)
-                audio_segment = AudioSegment.from_file(temp_path)
+                audio_pcm = decode_uploaded_audio_to_pcm(audio_bytes)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-                # Convert to mono, 16kHz (model's native sample rate)
-                audio_segment = audio_segment.set_channels(1).set_frame_rate(16000)
+            logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
 
-                # Get raw PCM data
-                # NOTE: old implementation commented out: it truncates 32-bit samples
-                # to int16 and can make Qwen hear the audio as constant noise.
-                # audio_array = np.array(audio_segment.get_array_of_samples(), dtype=np.int16)
-                # audio_pcm = audio_array.tobytes()
-                audio_pcm = pydub_to_pcm16(audio_segment)
+            gen_kwargs = {}
+            if request.max_new_tokens is not None:
+                gen_kwargs["max_new_tokens"] = request.max_new_tokens
+            if request.do_sample is not None:
+                gen_kwargs["do_sample"] = request.do_sample
+            if request.temperature is not None:
+                gen_kwargs["temperature"] = request.temperature
+            if request.repetition_penalty is not None:
+                gen_kwargs["repetition_penalty"] = request.repetition_penalty
 
-                logger.info(f"Decoded audio: {len(audio_pcm)} bytes at 16000Hz")
-
-                # Perform transcription
-                gen_kwargs = {}
-                if request.max_new_tokens is not None:
-                    gen_kwargs["max_new_tokens"] = request.max_new_tokens
-                if request.do_sample is not None:
-                    gen_kwargs["do_sample"] = request.do_sample
-                if request.temperature is not None:
-                    gen_kwargs["temperature"] = request.temperature
-                if request.repetition_penalty is not None:
-                    gen_kwargs["repetition_penalty"] = request.repetition_penalty
-
-                result = await transcribe_audio(
-                    engine=EngineManager.get_lmm(),
-                    audio_bytes=audio_pcm,
-                    sample_rate=16000,
-                    language=request.language or "en-US",
-                    participant_id=request.participant_id,
-                    **gen_kwargs,
-                )
-            finally:
-                # Clean up temp file
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
+            result = await transcribe_audio(
+                engine=EngineManager.get_lmm(),
+                audio_bytes=audio_pcm,
+                sample_rate=16000,
+                language=request.language or "en-US",
+                participant_id=request.participant_id,
+                **gen_kwargs,
+            )
 
             return MeetweenTranscriptionResponse(
                 type="transcription",
