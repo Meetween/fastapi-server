@@ -138,7 +138,6 @@ def _build_agenda_prompt(items: List[AgendaItem], transcript: str) -> str:
     json_schema = json.dumps(_agenda_items_output_schema(), indent=2)
     return format_template(
         "agenda_prompt",
-        filename="agenda_system_prompt.yml",
         allowed_statuses=allowed_statuses,
         meeting_transcript=transcript.strip(),
         agenda_items=agenda_lines,

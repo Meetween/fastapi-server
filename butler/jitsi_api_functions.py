@@ -10,7 +10,6 @@ Provides three main functions:
 Audio format: PCM LINEAR16, 48kHz, mono/stereo
 """
 
-import json
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY, HistoryEntry
 import numpy as np
 import torch
@@ -19,12 +18,12 @@ try:
 except Exception:  # pragma: no cover
     torchaudio = None
 import librosa
-from pathlib import Path
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 from enum import Enum
 
 from .triton_client import TritonClient
+from utils.prompt_template import get_task_prompt
 
 
 def monify_and_resample_audio(
@@ -62,114 +61,6 @@ def monify_and_resample_audio(
     y = librosa.resample(x_mono.astype(np.float32), orig_sr=orig_sr, target_sr=target_sr)
     y_t = torch.from_numpy(np.asarray(y, dtype=np.float32)).unsqueeze(0)
     return y_t, target_sr
-
-
-class PromptLoader:
-    """Loads language-specific prompts from INPUTS_TEXT_LIST.json."""
-    
-    _prompts = None
-    
-    # Language code to readable name mapping
-    LANGUAGE_NAMES = {
-        'en': 'English',
-        'fr': 'French',
-        'de': 'German',
-        'it': 'Italian',
-        'es': 'Spanish',
-        'zh': 'Chinese',
-        'ja': 'Japanese',
-        'ko': 'Korean',
-        'pt': 'Portuguese',
-        'ru': 'Russian',
-        'ar': 'Arabic',
-        'hi': 'Hindi',
-    }
-    
-    @classmethod
-    def _load_prompts(cls):
-        """Load prompts from JSON file."""
-        if cls._prompts is None:
-            prompts_path = Path(__file__).parent / "prompts" / "INPUTS_TEXT_LIST.json"
-            with open(prompts_path, 'r', encoding='utf-8') as f:
-                cls._prompts = json.load(f)
-        return cls._prompts
-    
-    @classmethod
-    def _get_language_name(cls, lang_code: str) -> str:
-        """Convert language code to readable name."""
-        return cls.LANGUAGE_NAMES.get(lang_code.lower(), lang_code.capitalize())
-    
-    @classmethod
-    def _filter_prompts(cls, prompts: list) -> list:
-        """
-        Filter prompts to exclude those requiring <source-language>.
-        Only keep prompts that work with just <target-language> or no placeholders.
-        """
-        filtered = []
-        for prompt in prompts:
-            # Skip prompts that require <source-language> (we don't have source language)
-            if '<source-language>' in prompt:
-                continue
-            filtered.append(prompt)
-        return filtered
-    
-    @classmethod
-    def get_prompt(cls, task: str, language: str) -> str:
-        """
-        Get prompt for a specific task and language.
-        
-        Args:
-            task: Task type (ASR, SSUM, etc.)
-            language: BCP-47 language code (e.g., "en-US")
-            
-        Returns:
-            First prompt from the filtered list for the task and language,
-            with <target-language> substituted with actual language name.
-            Falls back to first prompt if filtering removes all options.
-        """
-        prompts = cls._load_prompts()
-        
-        # Convert BCP-47 to ISO 639-1 (e.g., "en-US" -> "en")
-        lang_code = language.split('-')[0] if '-' in language else language
-        
-        # Get prompts for task (default to ASR if task not found)
-        if task not in prompts:
-            # Fallback: use ASR task prompts
-            task_prompts = prompts.get('ASR', {})
-        else:
-            task_prompts = prompts[task]
-        
-        # Get language-specific prompt (default to English)
-        if lang_code in task_prompts:
-            lang_prompts = task_prompts[lang_code]
-        elif 'en' in task_prompts:
-            lang_prompts = task_prompts['en']
-        else:
-            # Fallback: use first available language
-            if task_prompts:
-                lang_prompts = list(task_prompts.values())[0]
-            else:
-                return "Process the following:"
-        
-        # Handle structured prompts (like SLU)
-        if not isinstance(lang_prompts, list):
-            return lang_prompts
-        
-        # Filter out prompts requiring <source-language>
-        filtered_prompts = cls._filter_prompts(lang_prompts)
-        
-        # If filtering removed all prompts, use the first original prompt as fallback
-        if not filtered_prompts:
-            filtered_prompts = lang_prompts[:1] if lang_prompts else ["Process the following:"]
-        
-        # Get first prompt from filtered list
-        prompt = filtered_prompts[0]
-        
-        # Substitute <target-language> with actual language name
-        target_lang_name = cls._get_language_name(lang_code)
-        prompt = prompt.replace('<target-language>', target_lang_name)
-        
-        return prompt
 
 
 class ResultType(str, Enum):
@@ -304,7 +195,7 @@ async def transcribe_audio(
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = PromptLoader.get_prompt("ASR", language)
+    prompt = get_task_prompt("ASR", language)
 
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
@@ -374,7 +265,7 @@ async def caption_audio(
     
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = PromptLoader.get_prompt("ASR", language)
+    prompt = get_task_prompt("ASR", language)
 
     transcription = await engine._generate_text(
         prompt=prompt,
@@ -421,7 +312,6 @@ async def summarize_audio(
     participant_id: Optional[str] = None,
     language: str = "en-US",
     max_tokens: int = 2048,
-    prompt: Optional[str] = None,
     context: Optional[str] = None,
     history: Optional[List[HistoryEntry]] = None
 ) -> str:
@@ -435,7 +325,6 @@ async def summarize_audio(
         participant_id: User ID
         language: BCP-47 language code
         max_tokens: Max generation tokens (model supports up to 131072)
-        prompt: Optional free-form prompt to pass to the LLM. If provided, overrides the default SSUM prompt.
         context: Optional context string to provide additional information to the model
         history: Optional conversation history.
         
@@ -443,10 +332,8 @@ async def summarize_audio(
         Summary text
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
-    
-    # Get language-specific SSUM prompt if custom prompt not provided
-    if prompt is None:
-        prompt = PromptLoader.get_prompt(TASK_TYPE_SPEECH_SUMMARY, language)
+    # Single source of truth: always use language-specific SSUM prompt catalog.
+    prompt = get_task_prompt(TASK_TYPE_SPEECH_SUMMARY, language)
     
     summary = await engine._generate_text(
         prompt=prompt,
@@ -483,7 +370,7 @@ async def summarize_text(
     Returns:
         Summary text
     """
-    prompt = PromptLoader.get_prompt(TASK_TYPE_TEXT_SUMMARY, language)
+    prompt = get_task_prompt(TASK_TYPE_TEXT_SUMMARY, language)
     prompt_with_text = f"{prompt}\n\n{text}"
     summary = await engine._generate_text(
         prompt=prompt_with_text,
