@@ -1,6 +1,7 @@
 """
 Tests for /api/chat endpoint (Q&A over text with optional history/context)
 """
+import base64
 import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
@@ -78,6 +79,28 @@ class TestChatEndpoint:
         response = client.post("/api/chat", json=payload)
 
         assert response.status_code == 400
+
+    def test_chat_accepts_json_audio_request(
+        self,
+        client: TestClient,
+        test_room_name: str,
+        test_meeting_id: str,
+    ):
+        payload = {
+            "type": "chat",
+            "meeting_id": test_meeting_id,
+            "room_name": test_room_name,
+            "participant_id": "user-voice",
+            "language": "en-US",
+            "audio": base64.b64encode(b"fake-webm-audio-bytes").decode("ascii"),
+            "history": [{"role": "user", "content": "What did I miss?"}],
+        }
+
+        with patch("api.routes.chat.uploaded_audio_to_tensor", return_value=(Mock(), 16000)):
+            response = client.post("/api/chat", json=payload)
+
+        data = assert_successful_response(response)
+        assert data["result"]
 
 
 def test_chat_uses_session_manager_context_and_history_only(

@@ -9,7 +9,14 @@ import logging
 from fastapi import APIRouter, HTTPException, Body
 
 from core import EngineManager, SessionManager
-from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry
+from models import (
+    HistoryEntry,
+    LMMRequest,
+    MeetweenAudioRequest,
+    MeetweenTaskResponse,
+    MeetweenTaskRequest,
+)
+from utils.audio import uploaded_audio_to_tensor
 from utils.prompt_template import format_template
 
 router = APIRouter(prefix="/api", tags=["chat"])
@@ -44,12 +51,13 @@ def _build_chat_prompt(
 
 
 @router.post("/chat", response_model=MeetweenTaskResponse)
-async def chat(request: MeetweenTaskRequest = Body(...)):
+async def chat(request: LMMRequest = Body(...)):
     """
     Question and answer endpoint for a meeting participant.
 
     - Uses server-side transcript built from the caption WebSocket as `context`.
     - Uses server-side per-participant history stored in `SessionManager`.
+    - Spoken questions: JSON body with base64 audio (`audio` field), decoded like /api/transcribe.
     """
     engine = EngineManager.get_lmm()
     if not engine:
@@ -58,68 +66,86 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             detail="SpeechLMM model not loaded",
         )
     try:
-        if not request.prompt:
+        audio_tensor = None
+        sample_rate = 16000
+        if isinstance(request, MeetweenAudioRequest):
+            try:
+                audio_tensor, sample_rate = uploaded_audio_to_tensor(
+                    request.get_audio_bytes()
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            logger.info("Decoded chat audio for generation at %sHz", sample_rate)
+
+        if not isinstance(request, MeetweenTaskRequest):
+            raise HTTPException(status_code=400, detail="Invalid request type for chat.")
+        task_request = request
+
+        prompt = (task_request.prompt or "").strip()
+        if not prompt and audio_tensor is None:
             raise HTTPException(
                 status_code=400,
-                detail="Field 'prompt' is required for chat.",
+                detail="Field 'prompt' or 'audio' is required for chat.",
             )
+        if not prompt and audio_tensor is not None:
+            prompt = "(spoken question in attached audio)"
 
-        participant_id = request.participant_id or "default"
+        participant_id = task_request.participant_id or "default"
         async with SessionManager.participant_history_mutex(
-            meeting_id=request.meeting_id,
-            room_name=request.room_name,
+            meeting_id=task_request.meeting_id,
+            room_name=task_request.room_name,
             participant_id=participant_id,
         ):
-            transcript = SessionManager.get_transcript(
-                meeting_id=request.meeting_id,
-                room_name=request.room_name,
+            meeting_transcript = SessionManager.get_transcript(
+                meeting_id=task_request.meeting_id,
+                room_name=task_request.room_name,
             )
             history = SessionManager.get_participant_history(
-                meeting_id=request.meeting_id,
-                room_name=request.room_name,
+                meeting_id=task_request.meeting_id,
+                room_name=task_request.room_name,
                 participant_id=participant_id,
             )
             history_snapshot = list(history)
 
         combined_prompt = _build_chat_prompt(
-            query=request.prompt,
-            context=transcript,
+            query=prompt,
+            context=meeting_transcript,
             history=history_snapshot,
             max_context_chars=engine.max_context_chars,
             max_history_chars=engine.max_history_chars,
         )
-        
+
         result = await engine._generate_text(
             prompt=combined_prompt,
-            audio=None,
-            sample_rate=16000,
+            audio=audio_tensor,
+            sample_rate=sample_rate,
             task="chat",
-            max_new_tokens=request.max_new_tokens,
-            do_sample=request.do_sample,
-            temperature=request.temperature,
-            repetition_penalty=request.repetition_penalty
+            max_new_tokens=task_request.max_new_tokens,
+            do_sample=task_request.do_sample,
+            temperature=task_request.temperature,
+            repetition_penalty=task_request.repetition_penalty,
         )
 
         async with SessionManager.participant_history_mutex(
-            meeting_id=request.meeting_id,
-            room_name=request.room_name,
+            meeting_id=task_request.meeting_id,
+            room_name=task_request.room_name,
             participant_id=participant_id,
         ):
             SessionManager.store_chat_turn(
-                meeting_id=request.meeting_id,
-                room_name=request.room_name,
+                meeting_id=task_request.meeting_id,
+                room_name=task_request.room_name,
                 participant_id=participant_id,
-                user_prompt=request.prompt,
+                user_prompt=prompt,
                 assistant_reply=result.strip(),
             )
         return MeetweenTaskResponse(
-            type=request.type,
+            type=task_request.type,
             resultType="text",
-            room_name=request.room_name,
-            meeting_id=request.meeting_id,
+            room_name=task_request.room_name,
+            meeting_id=task_request.meeting_id,
             result=result.strip(),
-            language=request.language,
-            participant_id=request.participant_id,
+            language=task_request.language,
+            participant_id=task_request.participant_id,
         )
     except HTTPException:
         raise
