@@ -94,7 +94,7 @@ class PromptLoader:
 
     @classmethod
     def _normalize_language_code(cls, language: str) -> str:
-        return language.split("-")[0] if "-" in language else language
+        return language.split("-")[0].lower() if "-" in language else language.lower()
 
     @classmethod
     def _get_language_name(cls, lang_code: str) -> str:

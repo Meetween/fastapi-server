@@ -15,6 +15,11 @@ def test_prompt_loader_returns_task_prompt_for_language():
     assert prompt == "Can you transcribe this audio?"
 
 
+def test_prompt_loader_normalizes_mixed_case_language_code():
+    prompt = PromptLoader.get_task_prompt("ASR", "En-US")
+    assert prompt == "Can you transcribe this audio?"
+
+
 def test_prompt_loader_falls_back_to_english_task_prompt():
     # ASR has no "pl" entry; loader should use English fallback.
     prompt = PromptLoader.get_task_prompt("ASR", "pl-PL")
