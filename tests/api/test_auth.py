@@ -122,8 +122,8 @@ class TestAuthEndpoints:
         assert ctx.status_code == 200
         assert ctx.json()["meeting_id"] is None
 
-    def test_context_requires_bearer(self, client):
-        response = client.get("/api/auth/context/some-room")
+    def test_context_requires_bearer(self, test_client):
+        response = test_client.get("/api/auth/context/some-room")
         assert response.status_code == 401
 
     def test_jitsi_issue_requires_room_name(self, client):

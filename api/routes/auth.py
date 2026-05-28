@@ -1,9 +1,9 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
 
+from api.deps.auth import get_current_subject
 from config import settings
 from src.schemas.auth import (
     UserCreateRequest,
@@ -21,39 +21,19 @@ from utils.auth import (
     create_access_token,
     create_refresh_token,
     create_jitsi_token,
-    verify_jwt_token,
     verify_jitsi_token,
     store_user_meeting_context,
     get_user_meeting_context,
     build_meet_join_url,
 )
 
-router = APIRouter(prefix="/api/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
-bearer_security = HTTPBearer(auto_error=False)
+
+public_router = APIRouter(prefix="/api/auth", tags=["auth"])
+protected_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-def _get_current_subject(
-    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_security),
-) -> str:
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
-
-    try:
-        claims = verify_jwt_token(
-            token=credentials.credentials,
-            audience=settings.app_jwt.audience_access,
-        )
-    except JWTError as exc:
-        raise HTTPException(status_code=401, detail="Invalid access token") from exc
-
-    subject = str(claims.get("sub") or "").strip()
-    if not subject:
-        raise HTTPException(status_code=401, detail="Token subject missing")
-    return subject
-
-
-@router.post("/users", response_model=UserCreateResponse)
+@public_router.post("/users", response_model=UserCreateResponse)
 async def register_user(request: UserCreateRequest):
     try:
         user = await create_user(
@@ -67,7 +47,7 @@ async def register_user(request: UserCreateRequest):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
-@router.post("/login", response_model=TokenPairResponse)
+@public_router.post("/login", response_model=TokenPairResponse)
 async def login(request: LoginRequest):
     is_valid = await verify_user(request.email, request.password)
     if not is_valid:
@@ -78,7 +58,7 @@ async def login(request: LoginRequest):
     )
 
 
-@router.post("/jitsi/validate", response_model=JitsiValidationResponse)
+@public_router.post("/jitsi/validate", response_model=JitsiValidationResponse)
 async def validate_jitsi(request: TokenValidationRequest):
     try:
         claims = verify_jitsi_token(request.token)
@@ -87,10 +67,10 @@ async def validate_jitsi(request: TokenValidationRequest):
     return JitsiValidationResponse(claims=claims)
 
 
-@router.post("/jitsi/issue", response_model=JitsiTokenResponse)
+@protected_router.post("/jitsi/issue", response_model=JitsiTokenResponse)
 async def issue_jitsi_token(
     request: JitsiIssueRequest,
-    current_subject: str = Depends(_get_current_subject),
+    current_subject: str = Depends(get_current_subject),
 ):
     room = request.room_name
     meeting_id = request.meeting_id
@@ -123,10 +103,10 @@ async def issue_jitsi_token(
     )
 
 
-@router.get("/context/{room_name}")
+@protected_router.get("/context/{room_name}")
 async def get_context(
     room_name: str,
-    current_subject: str = Depends(_get_current_subject),
+    current_subject: str = Depends(get_current_subject),
 ):
     """Return stored join context for this user and Jitsi room (same key as /jitsi/issue)."""
     record = await get_user_meeting_context(current_subject, room_name)

@@ -3,7 +3,9 @@ Test helper functions
 """
 import base64
 import uuid
-from typing import Dict, Any
+from typing import Any, Dict
+
+from fastapi.testclient import TestClient
 
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
 from utils.uuid_helper import new_meeting_id
@@ -110,6 +112,36 @@ def create_generic_payload(
         payload["participant_id"] = participant_id
     payload.update(kwargs)
     return payload
+
+
+def obtain_bearer_headers(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+    first_name: str = "Test",
+    last_name: str = "User",
+) -> dict[str, str]:
+    """Register (if needed), log in, and return Authorization headers."""
+    register_response = client.post(
+        "/api/auth/users",
+        json={
+            "email": email,
+            "password": password,
+            "first_name": first_name,
+            "last_name": last_name,
+        },
+    )
+    if register_response.status_code not in (200, 409):
+        register_response.raise_for_status()
+
+    login_response = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert login_response.status_code == 200
+    token = login_response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
 def generate_test_meeting_id() -> str:
