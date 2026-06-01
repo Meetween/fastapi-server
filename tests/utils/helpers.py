@@ -1,6 +1,7 @@
 """
 Test helper functions
 """
+import asyncio
 import base64
 import uuid
 from typing import Any, Dict
@@ -8,7 +9,12 @@ from typing import Any, Dict
 from fastapi.testclient import TestClient
 
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
+from src.database.models.user import User, UserRole
+from utils.auth import hash_password
 from utils.uuid_helper import new_meeting_id
+
+TEST_ADMIN_EMAIL = "pytest-admin@meetween.test"
+TEST_ADMIN_PASSWORD = "pytest-admin-secret-123"
 
 
 def create_audio_payload(
@@ -114,6 +120,90 @@ def create_generic_payload(
     return payload
 
 
+def ensure_user_in_db(
+    *,
+    email: str,
+    password: str,
+    first_name: str | None = "Test",
+    last_name: str | None = "User",
+    role: UserRole = "user",
+) -> None:
+    """Insert a user when missing (tests bypass admin-only registration API)."""
+    if asyncio.run(User.find_by_email(email)) is not None:
+        return
+    asyncio.run(
+        User.create(
+            email=email.lower(),
+            password_hash=hash_password(password),
+            first_name=first_name,
+            last_name=last_name,
+            role=role,
+            is_active=True,
+        )
+    )
+
+
+def ensure_admin_user() -> None:
+    """Seed bootstrap admin (required before POST /api/auth/users in tests)."""
+    ensure_user_in_db(
+        email=TEST_ADMIN_EMAIL,
+        password=TEST_ADMIN_PASSWORD,
+        first_name="Pytest",
+        last_name="Admin",
+        role="admin",
+    )
+
+
+def login_headers(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+) -> dict[str, str]:
+    response = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def obtain_admin_headers(client: TestClient) -> dict[str, str]:
+    """Bearer token for the bootstrap admin user."""
+    ensure_admin_user()
+    return login_headers(
+        client, email=TEST_ADMIN_EMAIL, password=TEST_ADMIN_PASSWORD
+    )
+
+
+def register_user_via_api(
+    client: TestClient,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    return client.post("/api/auth/users", json=payload, headers=headers)
+
+
+def create_user_via_api_and_login(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+    admin_headers: dict[str, str],
+    **extra_fields: Any,
+) -> dict[str, str]:
+    """Admin creates a user via API, then returns that user's bearer headers."""
+    response = register_user_via_api(
+        client,
+        {"email": email, "password": password, **extra_fields},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    return login_headers(client, email=email, password=password)
+
+
 def obtain_bearer_headers(
     client: TestClient,
     *,
@@ -122,26 +212,14 @@ def obtain_bearer_headers(
     first_name: str = "Test",
     last_name: str = "User",
 ) -> dict[str, str]:
-    """Register (if needed), log in, and return Authorization headers."""
-    register_response = client.post(
-        "/api/auth/users",
-        json={
-            "email": email,
-            "password": password,
-            "first_name": first_name,
-            "last_name": last_name,
-        },
+    """Ensure user exists, log in, and return Authorization headers."""
+    ensure_user_in_db(
+        email=email,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
     )
-    if register_response.status_code not in (200, 409):
-        register_response.raise_for_status()
-
-    login_response = client.post(
-        "/api/auth/login",
-        json={"email": email, "password": password},
-    )
-    assert login_response.status_code == 200
-    token = login_response.json()["access_token"]
-    return {"Authorization": f"Bearer {token}"}
+    return login_headers(client, email=email, password=password)
 
 
 def generate_test_meeting_id() -> str:

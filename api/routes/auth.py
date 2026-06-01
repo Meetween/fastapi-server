@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from jose import JWTError
 
-from api.deps.auth import get_current_subject
+from api.deps.auth import REQUIRE_ADMIN, get_current_subject
 from config import settings
 from src.schemas.auth import (
     UserCreateRequest,
@@ -33,7 +33,11 @@ public_router = APIRouter(prefix="/api/auth", tags=["auth"])
 protected_router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-@public_router.post("/users", response_model=UserCreateResponse)
+@protected_router.post(
+    "/users",
+    response_model=UserCreateResponse,
+    dependencies=REQUIRE_ADMIN,
+)
 async def register_user(request: UserCreateRequest):
     try:
         user = await create_user(

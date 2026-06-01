@@ -255,6 +255,14 @@ _TEST_AUTH_PASSWORD = "pytest-secret-123"
 
 
 @pytest.fixture
+def admin_headers(test_client: TestClient) -> dict[str, str]:
+    """Bearer token for the bootstrap admin user."""
+    from tests.utils.helpers import obtain_admin_headers
+
+    return obtain_admin_headers(test_client)
+
+
+@pytest.fixture
 def auth_headers(test_client: TestClient) -> dict[str, str]:
     """Bearer token for a dedicated test user (re-created each test after Mongo reset)."""
     from tests.utils.helpers import obtain_bearer_headers

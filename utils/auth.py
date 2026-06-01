@@ -22,7 +22,7 @@ def hash_password(password: str) -> str:
 
 
 async def verify_user(email: str, password: str) -> bool:
-    user = await User.find_one({"email": email.lower()})
+    user = await User.find_by_email(email)
     if not user:
         return False
     return hmac.compare_digest(user.password_hash, hash_password(password))
