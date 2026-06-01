@@ -23,7 +23,6 @@ from api.routes import (
     chat,
     agenda,
     auth,
-    recording,
 )
 
 from fastapi import FastAPI
@@ -104,7 +103,6 @@ app.include_router(summary.router)
 app.include_router(config.router)
 app.include_router(chat.router)
 app.include_router(agenda.router)
-app.include_router(recording.router)
 app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
 
