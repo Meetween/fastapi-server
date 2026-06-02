@@ -119,5 +119,5 @@ def generate_test_meeting_id() -> str:
 
 def generate_test_room_name() -> str:
     """Generate a unique test room name."""
-    return f"test-room-{new_meeting_id().hex[:12]}"
+    return f"test-room-{new_meeting_id()}"
 

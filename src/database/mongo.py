@@ -62,10 +62,13 @@ class AsyncMongoDBManager:
     async def close(self) -> None:
         if self.client is None:
             return
-        self.client.close()
-        self.client = None
-        self.database = None
-        logger.info("MongoDB connection closed")
+
+        try:
+            self.client.close()
+        finally:
+            self.client = None
+            self.database = None
+            logger.info("MongoDB connection closed")
 
 
 async_mongo_manager = AsyncMongoDBManager()
