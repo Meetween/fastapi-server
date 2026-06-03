@@ -7,7 +7,8 @@ database through `get_database()` / `get_collection()` so they never reference
 the underlying Motor client directly.
 """
 import logging
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, Optional
 
 from motor.motor_asyncio import (
     AsyncIOMotorClient,
@@ -79,6 +80,18 @@ async def get_database() -> AsyncIOMotorDatabase:
 
 def get_collection(collection_name: str) -> AsyncIOMotorCollection:
     return async_mongo_manager.get_collection(collection_name)
+
+
+@asynccontextmanager
+async def cli_connection() -> AsyncIterator[None]:
+    """Connect for one-off CLI commands; close only if this call opened the connection."""
+    own_connection = async_mongo_manager.database is None
+    await async_mongo_manager.connect()
+    try:
+        yield
+    finally:
+        if own_connection:
+            await async_mongo_manager.close()
 
 
 async def _setup_indexes() -> None:

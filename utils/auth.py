@@ -11,7 +11,7 @@ from pymongo.errors import DuplicateKeyError
 
 from config import settings
 from src.database.models.meeting_context import MeetingContext
-from src.database.models.user import User
+from src.database.models.user import User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -33,13 +33,17 @@ async def create_user(
     password: str,
     first_name: str | None = None,
     last_name: str | None = None,
+    *,
+    is_admin: bool = False,
 ) -> User:
+    role: UserRole = "admin" if is_admin else "user"
     try:
         return await User.create(
             email=email.lower(),
             password_hash=hash_password(password),
             first_name=first_name,
             last_name=last_name,
+            role=role,
             is_active=True,
         )
     except DuplicateKeyError as exc:

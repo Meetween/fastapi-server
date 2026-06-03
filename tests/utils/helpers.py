@@ -9,8 +9,8 @@ from typing import Any, Dict
 from fastapi.testclient import TestClient
 
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
-from src.database.models.user import User, UserRole
-from utils.auth import hash_password
+from src.database.models.user import User
+from utils.auth import create_user
 from utils.uuid_helper import new_meeting_id
 
 TEST_ADMIN_EMAIL = "pytest-admin@meetween.test"
@@ -126,33 +126,32 @@ def ensure_user_in_db(
     password: str,
     first_name: str | None = "Test",
     last_name: str | None = "User",
-    role: UserRole = "user",
+    is_admin: bool = False,
 ) -> None:
     """Insert a user when missing (tests bypass admin-only registration API)."""
 
     async def _ensure() -> None:
         if await User.find_by_email(email) is not None:
             return
-        await User.create(
-            email=email.lower(),
-            password_hash=hash_password(password),
+        await create_user(
+            email=email,
+            password=password,
             first_name=first_name,
             last_name=last_name,
-            role=role,
-            is_active=True,
+            is_admin=is_admin,
         )
 
     asyncio.run(_ensure())
 
 
 def ensure_admin_user() -> None:
-    """Seed bootstrap admin (required before POST /api/auth/users in tests)."""
+    """Seed bootstrap admin via the same path as `python cli.py create-admin`."""
     ensure_user_in_db(
         email=TEST_ADMIN_EMAIL,
         password=TEST_ADMIN_PASSWORD,
         first_name="Pytest",
         last_name="Admin",
-        role="admin",
+        is_admin=True,
     )
 
 
