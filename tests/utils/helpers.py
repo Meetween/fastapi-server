@@ -129,10 +129,11 @@ def ensure_user_in_db(
     role: UserRole = "user",
 ) -> None:
     """Insert a user when missing (tests bypass admin-only registration API)."""
-    if asyncio.run(User.find_by_email(email)) is not None:
-        return
-    asyncio.run(
-        User.create(
+
+    async def _ensure() -> None:
+        if await User.find_by_email(email) is not None:
+            return
+        await User.create(
             email=email.lower(),
             password_hash=hash_password(password),
             first_name=first_name,
@@ -140,7 +141,8 @@ def ensure_user_in_db(
             role=role,
             is_active=True,
         )
-    )
+
+    asyncio.run(_ensure())
 
 
 def ensure_admin_user() -> None:
