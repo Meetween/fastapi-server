@@ -5,10 +5,12 @@ from jose import JWTError
 
 from api.deps.auth import REQUIRE_ADMIN, get_current_subject
 from config import settings
+from src.database.models.user import User
 from src.schemas.auth import (
     UserCreateRequest,
     UserCreateResponse,
     LoginRequest,
+    RefreshTokenRequest,
     TokenPairResponse,
     JitsiTokenResponse,
     JitsiIssueRequest,
@@ -20,6 +22,8 @@ from utils.auth import (
     verify_user,
     create_access_token,
     create_refresh_token,
+    RefreshTokenError,
+    resolve_refresh_subject,
     create_jitsi_token,
     verify_jitsi_token,
     store_user_meeting_context,
@@ -59,6 +63,23 @@ async def login(request: LoginRequest):
     return TokenPairResponse(
         access_token=create_access_token(sub=request.email.lower()),
         refresh_token=create_refresh_token(sub=request.email.lower()),
+    )
+
+
+@public_router.post("/refresh", response_model=TokenPairResponse)
+async def refresh_tokens(request: RefreshTokenRequest):
+    try:
+        subject = resolve_refresh_subject(request.refresh_token)
+    except RefreshTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    user = await User.find_by_email(subject)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
+
+    return TokenPairResponse(
+        access_token=create_access_token(sub=subject),
+        refresh_token=create_refresh_token(sub=subject),
     )
 
 

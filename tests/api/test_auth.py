@@ -69,6 +69,59 @@ class TestAuthEndpoints:
         assert "refresh_token" in login_data
         assert login_data["token_type"] == "bearer"
 
+    def test_refresh_issues_new_access_token(self, test_client, admin_headers):
+        register_user_via_api(
+            test_client,
+            {
+                "email": "refresh-user@example.com",
+                "password": "secret123",
+            },
+            headers=admin_headers,
+        )
+        login_response = test_client.post(
+            "/api/auth/login",
+            json={"email": "refresh-user@example.com", "password": "secret123"},
+        )
+        assert login_response.status_code == 200
+        login_data = login_response.json()
+
+        refresh_response = test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": login_data["refresh_token"]},
+        )
+        assert refresh_response.status_code == 200
+        refresh_data = refresh_response.json()
+        assert refresh_data["token_type"] == "bearer"
+        assert "access_token" in refresh_data
+        assert refresh_data["refresh_token"] != login_data["refresh_token"]
+
+        protected = test_client.get(
+            "/api/auth/context/some-room",
+            headers={"Authorization": f"Bearer {refresh_data['access_token']}"},
+        )
+        assert protected.status_code == 404
+
+    def test_refresh_rejects_invalid_token(self, test_client):
+        response = test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": "not-a-valid-token"},
+        )
+        assert response.status_code == 401
+
+    def test_refresh_rejects_access_token(self, test_client, admin_headers):
+        headers = create_user_via_api_and_login(
+            test_client,
+            email="refresh-access@example.com",
+            password="secret123",
+            admin_headers=admin_headers,
+        )
+        access_token = headers["Authorization"].removeprefix("Bearer ")
+        response = test_client.post(
+            "/api/auth/refresh",
+            json={"refresh_token": access_token},
+        )
+        assert response.status_code == 401
+
     def test_jitsi_issue_and_context_with_access_token(
         self, test_client, admin_headers, monkeypatch
     ):

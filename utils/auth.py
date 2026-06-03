@@ -109,6 +109,10 @@ class AccessTokenError(ValueError):
     """Access JWT is missing, invalid, or has no subject."""
 
 
+class RefreshTokenError(ValueError):
+    """Refresh JWT is missing, invalid, or has no subject."""
+
+
 def resolve_access_subject(token: str) -> str:
     """Return the email subject from a valid access token."""
     try:
@@ -122,6 +126,22 @@ def resolve_access_subject(token: str) -> str:
     subject = str(claims.get("sub") or "").strip()
     if not subject:
         raise AccessTokenError("Token subject missing")
+    return subject
+
+
+def resolve_refresh_subject(token: str) -> str:
+    """Return the email subject from a valid refresh token."""
+    try:
+        claims = verify_jwt_token(
+            token.strip(),
+            audience=settings.app_jwt.audience_refresh,
+        )
+    except JWTError as exc:
+        raise RefreshTokenError("Invalid refresh token") from exc
+
+    subject = str(claims.get("sub") or "").strip()
+    if not subject:
+        raise RefreshTokenError("Token subject missing")
     return subject
 
 
