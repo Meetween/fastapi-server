@@ -30,6 +30,7 @@ class MongoModel(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     collection_name: ClassVar[str] = "documents"
+    default_find_limit: ClassVar[int] = 100
 
     logger: ClassVar[logging.Logger] = logging.getLogger(__name__)
 
@@ -67,14 +68,14 @@ class MongoModel(BaseModel):
         sort: Optional[List[tuple]] = None,
         filter_dict: Optional[Dict[str, Any]] = None,
     ) -> List[T]:
+        effective_limit = cls.default_find_limit if limit is None else limit
         cursor = cls.get_collection().find(filter_dict or {})
         if sort:
             cursor = cursor.sort(sort)
         if skip:
             cursor = cursor.skip(skip)
-        if limit:
-            cursor = cursor.limit(limit)
-        documents = await cursor.to_list(length=limit if limit is not None else None)
+        cursor = cursor.limit(effective_limit)
+        documents = await cursor.to_list(length=effective_limit)
         return [cls.from_dict(doc) for doc in documents]
 
     @classmethod

@@ -170,6 +170,9 @@ class Settings(BaseSettings):
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
 
     _triton: TritonSettings = PrivateAttr()
+    _app_jwt: AppJwtSettings = PrivateAttr()
+    _meeting_jwt: MeetingJwtSettings = PrivateAttr()
+    _mongo: MongoSettings = PrivateAttr()
 
     def model_post_init(self, __context) -> None:
         profile = _load_triton_profile_overrides(
@@ -184,10 +187,7 @@ class Settings(BaseSettings):
             max_history_chars=self.triton_max_history_chars,
             caption_chars_default=self.triton_caption_chars,
         )
-
-    @property
-    def app_jwt(self) -> AppJwtSettings:
-        return AppJwtSettings(
+        self._app_jwt = AppJwtSettings(
             secret_key=self.jwt_secret_key,
             algorithm=self.jwt_algorithm,
             access_expire_minutes=self.jwt_access_token_expire_minutes,
@@ -195,14 +195,25 @@ class Settings(BaseSettings):
             audience_access=self.jwt_audience_access,
             audience_refresh=self.jwt_audience_refresh,
         )
-
-    @property
-    def meeting_jwt(self) -> MeetingJwtSettings:
-        return MeetingJwtSettings(
+        self._meeting_jwt = MeetingJwtSettings(
             issuer=self.jwt_jitsi_issuer,
             expire_minutes=self.jwt_jitsi_expire_minutes,
             meet_base_url=self.jitsi_meet_base_url,
         )
+        self._mongo = MongoSettings(
+            uri=self.mongo_uri,
+            db_name=self.mongo_db_name,
+            users_collection=self.mongo_users_collection,
+            meeting_context_collection=self.mongo_meeting_context_collection,
+        )
+
+    @property
+    def app_jwt(self) -> AppJwtSettings:
+        return self._app_jwt
+
+    @property
+    def meeting_jwt(self) -> MeetingJwtSettings:
+        return self._meeting_jwt
 
     @property
     def triton(self) -> TritonSettings:
@@ -210,12 +221,7 @@ class Settings(BaseSettings):
 
     @property
     def mongo(self) -> MongoSettings:
-        return MongoSettings(
-            uri=self.mongo_uri,
-            db_name=self.mongo_db_name,
-            users_collection=self.mongo_users_collection,
-            meeting_context_collection=self.mongo_meeting_context_collection,
-        )
+        return self._mongo
 
 
 settings = Settings()

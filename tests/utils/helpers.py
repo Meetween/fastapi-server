@@ -1,12 +1,20 @@
 """
 Test helper functions
 """
+import asyncio
 import base64
 import uuid
-from typing import Dict, Any
+from typing import Any, Dict
+
+from fastapi.testclient import TestClient
 
 from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
+from src.database.models.user import User
+from utils.auth import create_user
 from utils.uuid_helper import new_meeting_id
+
+TEST_ADMIN_EMAIL = "pytest-admin@meetween.test"
+TEST_ADMIN_PASSWORD = "pytest-admin-secret-123"
 
 
 def create_audio_payload(
@@ -110,6 +118,109 @@ def create_generic_payload(
         payload["participant_id"] = participant_id
     payload.update(kwargs)
     return payload
+
+
+def ensure_user_in_db(
+    *,
+    email: str,
+    password: str,
+    first_name: str | None = "Test",
+    last_name: str | None = "User",
+    is_admin: bool = False,
+) -> None:
+    """Insert a user when missing (tests bypass admin-only registration API)."""
+
+    async def _ensure() -> None:
+        if await User.find_by_email(email) is not None:
+            return
+        await create_user(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            is_admin=is_admin,
+        )
+
+    asyncio.run(_ensure())
+
+
+def ensure_admin_user() -> None:
+    """Seed bootstrap admin via the same path as `python cli.py create-admin`."""
+    ensure_user_in_db(
+        email=TEST_ADMIN_EMAIL,
+        password=TEST_ADMIN_PASSWORD,
+        first_name="Pytest",
+        last_name="Admin",
+        is_admin=True,
+    )
+
+
+def login_headers(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+) -> dict[str, str]:
+    response = client.post(
+        "/api/auth/login",
+        json={"email": email, "password": password},
+    )
+    assert response.status_code == 200
+    token = response.json()["access_token"]
+    return {"Authorization": f"Bearer {token}"}
+
+
+def obtain_admin_headers(client: TestClient) -> dict[str, str]:
+    """Bearer token for the bootstrap admin user."""
+    ensure_admin_user()
+    return login_headers(
+        client, email=TEST_ADMIN_EMAIL, password=TEST_ADMIN_PASSWORD
+    )
+
+
+def register_user_via_api(
+    client: TestClient,
+    payload: dict[str, Any],
+    *,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    return client.post("/api/auth/users", json=payload, headers=headers)
+
+
+def create_user_via_api_and_login(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+    admin_headers: dict[str, str],
+    **extra_fields: Any,
+) -> dict[str, str]:
+    """Admin creates a user via API, then returns that user's bearer headers."""
+    response = register_user_via_api(
+        client,
+        {"email": email, "password": password, **extra_fields},
+        headers=admin_headers,
+    )
+    assert response.status_code == 200
+    return login_headers(client, email=email, password=password)
+
+
+def obtain_bearer_headers(
+    client: TestClient,
+    *,
+    email: str,
+    password: str,
+    first_name: str = "Test",
+    last_name: str = "User",
+) -> dict[str, str]:
+    """Ensure user exists, log in, and return Authorization headers."""
+    ensure_user_in_db(
+        email=email,
+        password=password,
+        first_name=first_name,
+        last_name=last_name,
+    )
+    return login_headers(client, email=email, password=password)
 
 
 def generate_test_meeting_id() -> str:

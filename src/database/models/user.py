@@ -14,8 +14,13 @@ class User(MongoModel):
     first_name: Optional[str] = Field(default=None, description="User's first name")
     last_name: Optional[str] = Field(default=None, description="User's last name")
     is_active: bool = Field(default=True, description="Whether the user is active")
+    is_admin: bool = Field(default=False, description="Whether the user has admin privileges")
 
     collection_name: ClassVar[str] = settings.mongo.users_collection
+
+    @classmethod
+    async def find_by_email(cls, email: str) -> Optional["User"]:
+        return await cls.find_one({"email": email.lower()})
 
     @classmethod
     async def setup_indexes(cls) -> None:

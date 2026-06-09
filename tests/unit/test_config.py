@@ -97,3 +97,12 @@ def test_settings_triton_resolves_speechlmm_profile() -> None:
     assert s.triton.url == "http://localhost:9100"
     assert s.triton.model_name == "speechlmm"
     assert s.triton.prompt_protocol == "speechlmm_plain"
+
+
+def test_settings_nested_views_are_cached() -> None:
+    s = Settings(model_profile="speechlmm")
+
+    assert s.app_jwt is s.app_jwt
+    assert s.meeting_jwt is s.meeting_jwt
+    assert s.mongo is s.mongo
+    assert s.triton is s.triton

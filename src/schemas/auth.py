@@ -28,6 +28,10 @@ class TokenPairResponse(BaseModel):
     token_type: Literal["bearer"] = "bearer"
 
 
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
+
+
 class JitsiTokenResponse(BaseModel):
     jitsi_token: str
     room: str

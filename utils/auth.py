@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from jose import jwt
+from jose import JWTError, jwt
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -22,7 +22,7 @@ def hash_password(password: str) -> str:
 
 
 async def verify_user(email: str, password: str) -> bool:
-    user = await User.find_one({"email": email.lower()})
+    user = await User.find_by_email(email)
     if not user:
         return False
     return hmac.compare_digest(user.password_hash, hash_password(password))
@@ -33,6 +33,8 @@ async def create_user(
     password: str,
     first_name: str | None = None,
     last_name: str | None = None,
+    *,
+    is_admin: bool = False,
 ) -> User:
     try:
         return await User.create(
@@ -40,6 +42,7 @@ async def create_user(
             password_hash=hash_password(password),
             first_name=first_name,
             last_name=last_name,
+            is_admin=is_admin,
             is_active=True,
         )
     except DuplicateKeyError as exc:
@@ -99,6 +102,46 @@ def verify_jwt_token(token: str, audience: str) -> dict:
         algorithms=[aj.algorithm],
         audience=audience,
     )
+
+
+class AccessTokenError(ValueError):
+    """Access JWT is missing, invalid, or has no subject."""
+
+
+class RefreshTokenError(ValueError):
+    """Refresh JWT is missing, invalid, or has no subject."""
+
+
+def resolve_access_subject(token: str) -> str:
+    """Return the email subject from a valid access token."""
+    try:
+        claims = verify_jwt_token(
+            token.strip(),
+            audience=settings.app_jwt.audience_access,
+        )
+    except JWTError as exc:
+        raise AccessTokenError("Invalid access token") from exc
+
+    subject = str(claims.get("sub") or "").strip()
+    if not subject:
+        raise AccessTokenError("Token subject missing")
+    return subject
+
+
+def resolve_refresh_subject(token: str) -> str:
+    """Return the email subject from a valid refresh token."""
+    try:
+        claims = verify_jwt_token(
+            token.strip(),
+            audience=settings.app_jwt.audience_refresh,
+        )
+    except JWTError as exc:
+        raise RefreshTokenError("Invalid refresh token") from exc
+
+    subject = str(claims.get("sub") or "").strip()
+    if not subject:
+        raise RefreshTokenError("Token subject missing")
+    return subject
 
 
 def verify_jitsi_token(token: str) -> dict:

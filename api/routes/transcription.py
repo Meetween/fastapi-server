@@ -8,6 +8,8 @@ import numpy as np
 from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, Body
 
+from api.deps.auth import REQUIRE_AUTH
+
 from core import EngineManager
 from utils import StorageManager, UUIDHelper, pydub_to_pcm16
 from config import settings
@@ -20,7 +22,11 @@ from models import (
 )
 from butler import transcribe_audio
 
-router = APIRouter(prefix="/api", tags=["transcription"])
+router = APIRouter(
+    prefix="/api",
+    tags=["transcription"],
+    dependencies=REQUIRE_AUTH,
+)
 logger = logging.getLogger(__name__)
 
 

@@ -250,6 +250,32 @@ def mock_engine_manager():
     transcribe_patcher.stop()
 
 
+_TEST_AUTH_EMAIL = "pytest-guard@meetween.test"
+_TEST_AUTH_PASSWORD = "pytest-secret-123"
+
+
+@pytest.fixture
+def admin_headers(test_client: TestClient) -> dict[str, str]:
+    """Bearer token for the bootstrap admin user."""
+    from tests.utils.helpers import obtain_admin_headers
+
+    return obtain_admin_headers(test_client)
+
+
+@pytest.fixture
+def auth_headers(test_client: TestClient) -> dict[str, str]:
+    """Bearer token for a dedicated test user (re-created each test after Mongo reset)."""
+    from tests.utils.helpers import obtain_bearer_headers
+
+    return obtain_bearer_headers(
+        test_client,
+        email=_TEST_AUTH_EMAIL,
+        password=_TEST_AUTH_PASSWORD,
+        first_name="Pytest",
+        last_name="Guard",
+    )
+
+
 @pytest.fixture(scope="session")
 def test_client(mock_engine_manager) -> TestClient:
     """
@@ -265,11 +291,10 @@ def test_client(mock_engine_manager) -> TestClient:
 
 
 @pytest.fixture
-def client(test_client: TestClient) -> TestClient:
+def client(test_client: TestClient, auth_headers: dict[str, str]) -> TestClient:
     """
-    FastAPI TestClient fixture (function-scoped wrapper).
-    
-    Returns the session-scoped test client for use in individual tests.
+    Test client with a valid JWT for protected API routes.
+    Use ``test_client`` when calling endpoints without authentication.
     """
-    return test_client
+    return TestClient(app, headers=auth_headers)
 

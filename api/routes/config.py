@@ -1,7 +1,13 @@
 from fastapi import APIRouter
+
+from api.deps.auth import REQUIRE_AUTH
 from config import settings
 
-router = APIRouter(prefix="/api", tags=["config"])
+router = APIRouter(
+    prefix="/api",
+    tags=["config"],
+    dependencies=REQUIRE_AUTH,
+)
 
 
 @router.get("/config/recording-retention-days")
