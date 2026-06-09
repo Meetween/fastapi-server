@@ -11,7 +11,6 @@ class TestCreateUser:
         user = await create_user("user@example.com", "secret123")
 
         assert user.email == "user@example.com"
-        assert user.role == "user"
         assert not user.is_admin
 
     @pytest.mark.asyncio
@@ -19,7 +18,6 @@ class TestCreateUser:
         user = await create_user("admin@example.com", "secret123", is_admin=True)
 
         assert user.email == "admin@example.com"
-        assert user.role == "admin"
         assert user.is_admin
 
     @pytest.mark.asyncio

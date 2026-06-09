@@ -1,11 +1,9 @@
-from typing import ClassVar, Literal, Optional
+from typing import ClassVar, Optional
 
 from pydantic import Field
 
 from config import settings
 from src.database.mongo_model import MongoModel
-
-UserRole = Literal["user", "admin"]
 
 
 class User(MongoModel):
@@ -16,13 +14,9 @@ class User(MongoModel):
     first_name: Optional[str] = Field(default=None, description="User's first name")
     last_name: Optional[str] = Field(default=None, description="User's last name")
     is_active: bool = Field(default=True, description="Whether the user is active")
-    role: UserRole = Field(default="user", description="Application role")
+    is_admin: bool = Field(default=False, description="Whether the user has admin privileges")
 
     collection_name: ClassVar[str] = settings.mongo.users_collection
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == "admin"
 
     @classmethod
     async def find_by_email(cls, email: str) -> Optional["User"]:
