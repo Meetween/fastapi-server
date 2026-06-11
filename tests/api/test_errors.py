@@ -23,7 +23,7 @@ class TestErrorHandling:
         """Protected routes reject requests without a JWT."""
         response = test_client.post(
             "/api/summarize",
-            json={"type": TASK_TYPE_TEXT_SUMMARY, "text": "hello"},
+            json={"type": TaskType.TEXT_SUMMARY, "text": "hello"},
         )
         assert response.status_code == 401
 

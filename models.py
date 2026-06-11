@@ -95,6 +95,8 @@ class AgendaItem(BaseModel):
 
 
 class MeetweenTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: taskTypes
     room_name: str
     meeting_id: str
