@@ -19,7 +19,7 @@ from api.routes import (
     caption,
     transcription,
     summary,
-    config,
+    app_config,
     chat,
     agenda,
     auth,
@@ -100,7 +100,7 @@ app.include_router(health.router)
 app.include_router(caption.ws_router)
 app.include_router(transcription.router)
 app.include_router(summary.router)
-app.include_router(config.router)
+app.include_router(app_config.router)
 app.include_router(chat.router)
 app.include_router(agenda.router)
 app.include_router(auth.public_router)
