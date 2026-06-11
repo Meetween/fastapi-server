@@ -1,6 +1,6 @@
 import pytest
 
-from config import settings
+from config import MeetingJwtSettings, settings
 from tests.utils.helpers import (
     create_user_via_api_and_login,
     generate_test_meeting_id,
@@ -125,7 +125,15 @@ class TestAuthEndpoints:
     def test_jitsi_issue_and_context_with_access_token(
         self, test_client, admin_headers, monkeypatch
     ):
-        monkeypatch.setattr(settings, "jitsi_meet_base_url", None)
+        monkeypatch.setattr(
+            settings,
+            "_meeting_jwt",
+            MeetingJwtSettings(
+                issuer=settings.meeting_jwt.issuer,
+                expire_minutes=settings.meeting_jwt.expire_minutes,
+                meet_base_url=None,
+            ),
+        )
         auth_headers = create_user_via_api_and_login(
             test_client,
             email="jwt-user@example.com",
@@ -221,7 +229,15 @@ class TestAuthEndpoints:
     def test_jitsi_meet_join_url_when_base_configured(
         self, test_client, admin_headers, monkeypatch
     ):
-        monkeypatch.setattr(settings, "jitsi_meet_base_url", "https://meet.example.com")
+        monkeypatch.setattr(
+            settings,
+            "_meeting_jwt",
+            MeetingJwtSettings(
+                issuer=settings.meeting_jwt.issuer,
+                expire_minutes=settings.meeting_jwt.expire_minutes,
+                meet_base_url="https://meet.example.com",
+            ),
+        )
         headers = create_user_via_api_and_login(
             test_client,
             email="joinurl@example.com",
