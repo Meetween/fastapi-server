@@ -131,7 +131,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
-    recordings_base_path: Path = Path("/mnt/recordings")
+    recordings_base_path: Path = Path("/mnt/recordings", env="RECORDINGS_BASE_PATH")
     recording_format: Optional[str] = "wav"
 
     min_catchup_duration_seconds: int = 60
