@@ -6,6 +6,8 @@ import os
 import numpy as np
 from pydub import AudioSegment
 from fastapi import APIRouter, HTTPException, Body
+
+from api.deps.auth import REQUIRE_AUTH
 from fastapi.responses import StreamingResponse
 
 from core import EngineManager
@@ -24,7 +26,11 @@ from models import (
 from butler import summarize_audio, summarize_text
 from core import SessionManager
 
-router = APIRouter(prefix="/api", tags=["summary"])
+router = APIRouter(
+    prefix="/api",
+    tags=["summary"],
+    dependencies=REQUIRE_AUTH,
+)
 
 logger = logging.getLogger(__name__)
 

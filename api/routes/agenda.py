@@ -8,6 +8,8 @@ import re
 from typing import Dict, List, get_args
 
 from fastapi import APIRouter, Body, HTTPException, Response
+
+from api.deps.auth import REQUIRE_AUTH
 from pydantic import ValidationError
 
 from core import EngineManager, SessionManager
@@ -20,7 +22,11 @@ from models import (
 )
 from utils.prompt_template import format_template
 
-router = APIRouter(prefix="/api", tags=["agenda-tracking"])
+router = APIRouter(
+    prefix="/api",
+    tags=["agenda-tracking"],
+    dependencies=REQUIRE_AUTH,
+)
 logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = set(get_args(agendaStatusTypes))

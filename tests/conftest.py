@@ -3,6 +3,7 @@ Pytest configuration and shared fixtures
 
 This module provides shared fixtures for all tests.
 """
+import asyncio
 import json
 import pytest
 import base64
@@ -15,6 +16,7 @@ from fastapi.testclient import TestClient
 from pydub import AudioSegment
 from main import app
 from core import EngineManager
+from src.database import mongo as mongo_module
 
 
 # ============================================================================
@@ -155,6 +157,36 @@ def create_test_recording(temp_recordings_dir):
 # ============================================================================
 
 @pytest.fixture(scope="session", autouse=True)
+def mock_mongo_client():
+    """
+    Replace the Motor client factory with an in-memory mongomock client so
+    tests run without a live MongoDB instance. The mock is connected here
+    because the TestClient fixture below does not enter the FastAPI lifespan
+    context, so app startup events do not fire.
+    """
+    from mongomock_motor import AsyncMongoMockClient
+
+    patcher = patch.object(
+        mongo_module, "_create_client", lambda uri: AsyncMongoMockClient()
+    )
+    patcher.start()
+    asyncio.run(mongo_module.async_mongo_manager.connect())
+    yield
+    asyncio.run(mongo_module.async_mongo_manager.close())
+    patcher.stop()
+
+
+@pytest.fixture(autouse=True)
+def _clear_mongo_collections(mock_mongo_client):
+    """Reset Mongo state between tests to keep them independent."""
+    yield
+    from src.database.models import MeetingContext, User
+
+    for model in (User, MeetingContext):
+        asyncio.run(model.get_collection().delete_many({}))
+
+
+@pytest.fixture(scope="session", autouse=True)
 def mock_engine_manager():
     """
     Mock EngineManager and audio processing to avoid loading actual models during tests.
@@ -218,6 +250,32 @@ def mock_engine_manager():
     transcribe_patcher.stop()
 
 
+_TEST_AUTH_EMAIL = "pytest-guard@meetween.test"
+_TEST_AUTH_PASSWORD = "pytest-secret-123"
+
+
+@pytest.fixture
+def admin_headers(test_client: TestClient) -> dict[str, str]:
+    """Bearer token for the bootstrap admin user."""
+    from tests.utils.helpers import obtain_admin_headers
+
+    return obtain_admin_headers(test_client)
+
+
+@pytest.fixture
+def auth_headers(test_client: TestClient) -> dict[str, str]:
+    """Bearer token for a dedicated test user (re-created each test after Mongo reset)."""
+    from tests.utils.helpers import obtain_bearer_headers
+
+    return obtain_bearer_headers(
+        test_client,
+        email=_TEST_AUTH_EMAIL,
+        password=_TEST_AUTH_PASSWORD,
+        first_name="Pytest",
+        last_name="Guard",
+    )
+
+
 @pytest.fixture(scope="session")
 def test_client(mock_engine_manager) -> TestClient:
     """
@@ -233,11 +291,10 @@ def test_client(mock_engine_manager) -> TestClient:
 
 
 @pytest.fixture
-def client(test_client: TestClient) -> TestClient:
+def client(test_client: TestClient, auth_headers: dict[str, str]) -> TestClient:
     """
-    FastAPI TestClient fixture (function-scoped wrapper).
-    
-    Returns the session-scoped test client for use in individual tests.
+    Test client with a valid JWT for protected API routes.
+    Use ``test_client`` when calling endpoints without authentication.
     """
-    return test_client
+    return TestClient(app, headers=auth_headers)
 

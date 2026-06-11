@@ -1,6 +1,6 @@
 from .storage import StorageManager
 from .audio_recorder import AudioRecorder
-from .uuid_helper import UUIDHelper
+from .uuid_helper import UUIDHelper, new_meeting_id
 from .prompt_template import format_template
 from .prompt_template import get_task_prompt
 from .prompt_template import PromptLoader
@@ -10,6 +10,7 @@ __all__ = [
     "StorageManager",
     "AudioRecorder",
     "UUIDHelper",
+    "new_meeting_id",
     "format_template",
     "get_task_prompt",
     "PromptLoader",

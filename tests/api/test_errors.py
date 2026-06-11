@@ -19,6 +19,14 @@ class TestErrorHandling:
         
         assert response.status_code == 404
 
+    def test_protected_endpoint_requires_bearer(self, test_client: TestClient):
+        """Protected routes reject requests without a JWT."""
+        response = test_client.post(
+            "/api/summarize",
+            json={"type": TASK_TYPE_TEXT_SUMMARY, "text": "hello"},
+        )
+        assert response.status_code == 401
+
     def test_invalid_json(self, client: TestClient):
         """Test that invalid JSON returns 422"""
         response = client.post(

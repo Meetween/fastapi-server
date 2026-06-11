@@ -8,11 +8,17 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Body
 
+from api.deps.auth import REQUIRE_AUTH
+
 from core import EngineManager, SessionManager
 from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry
 from utils.prompt_template import format_template
 
-router = APIRouter(prefix="/api", tags=["chat"])
+router = APIRouter(
+    prefix="/api",
+    tags=["chat"],
+    dependencies=REQUIRE_AUTH,
+)
 logger = logging.getLogger(__name__)
 
 
