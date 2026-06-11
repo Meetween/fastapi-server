@@ -139,6 +139,8 @@ class Settings(BaseSettings):
 
     recording_retention_days: int = 7
 
+    enable_auth: bool = Field(default=False, env="ENABLE_AUTH")
+
     jwt_secret_key: str = Field(default="change-me-in-production", env="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
     jwt_access_token_expire_minutes: int = Field(

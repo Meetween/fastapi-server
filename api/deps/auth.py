@@ -3,6 +3,7 @@
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from config import settings
 from src.database.models.user import User
 from utils.auth import AccessTokenError, resolve_access_subject
 
@@ -35,5 +36,5 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
-REQUIRE_AUTH = [Depends(get_current_subject)]
-REQUIRE_ADMIN = [Depends(require_admin)]
+REQUIRE_AUTH = [Depends(get_current_subject)] if settings.enable_auth else []
+REQUIRE_ADMIN = [Depends(require_admin)] if settings.enable_auth else []
