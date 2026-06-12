@@ -369,7 +369,7 @@ async def summarize_text(
     Returns:
         Summary text
     """
-    prompt = PromptLoader.get_prompt(TaskType.TEXT_SUMMARY, language)
+    prompt = get_task_prompt(TaskType.TEXT_SUMMARY, language)
     prompt_with_text = f"{prompt}\n\n{text}"
     summary = await engine._generate_text(
         prompt=prompt_with_text,
@@ -415,7 +415,7 @@ async def translate_audio(
     """
 
     # Get language-specific MT promp
-    prompt = PromptLoader.get_prompt(TaskType.SPEECH_TRANSLATION, language, target_language=target_lang)
+    prompt = get_task_prompt(TaskType.SPEECH_TRANSLATION, language, target_language=target_lang)
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
         gen_kwargs["max_new_tokens"] = max_new_tokens
@@ -466,7 +466,7 @@ async def translate_text(
         Translation of input text
     """
     # Get language-specific MT prompt
-    prompt = PromptLoader.get_prompt(TaskType.TEXT_TRANSLATION, language, target_language=target_lang)
+    prompt = get_task_prompt(TaskType.TEXT_TRANSLATION, language, target_language=target_lang)
     prompt += f"\n{input_text}"
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
