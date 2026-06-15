@@ -8,7 +8,7 @@ from typing import Any, Dict
 
 from fastapi.testclient import TestClient
 
-from models import TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY
+from models import TaskType
 from src.database.models.user import User
 from utils.auth import create_user
 from utils.uuid_helper import new_meeting_id
@@ -23,19 +23,19 @@ def create_audio_payload(
     audio_data: bytes,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = TASK_TYPE_SPEECH_SUMMARY
+    task_type: str = TaskType.SPEECH_SUMMARY
 ) -> Dict[str, Any]:
     """
     Create a payload with base64-encoded audio.
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
         audio_data: Raw audio bytes
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: TASK_TYPE_SPEECH_SUMMARY)
-        
+        task_type: Task type (default: TaskType.SPEECH_SUMMARY)
+
     Returns:
         Payload dictionary
     """
@@ -58,18 +58,18 @@ def create_text_payload(
     text: str,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = TASK_TYPE_TEXT_SUMMARY
+    task_type: str = TaskType.TEXT_SUMMARY
 ) -> Dict[str, Any]:
     """
     Create a payload with text input.
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
         text: Text content
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: TASK_TYPE_TEXT_SUMMARY)
+        task_type: Task type (default: TaskType.TEXT_SUMMARY)
         
     Returns:
         Payload dictionary
@@ -91,20 +91,20 @@ def create_generic_payload(
     meeting_id: str,
     participant_id: str = None,
     language: str = "en-US",
-    task_type: str = TASK_TYPE_TEXT_SUMMARY,
+    task_type: str = TaskType.TEXT_SUMMARY,
     **kwargs
 ) -> Dict[str, Any]:
     """
     Create a generic payload (no audio or text, loads from recordings).
-    
+
     Args:
         room_name: Room name
         meeting_id: Meeting ID
         participant_id: Optional participant ID
         language: Language code (default: "en-US")
-        task_type: Task type (default: TASK_TYPE_TEXT_SUMMARY)
+        task_type: Task type (default: TaskType.TEXT_SUMMARY)
         **kwargs: Additional fields to include
-        
+
     Returns:
         Payload dictionary
     """
@@ -221,6 +221,50 @@ def obtain_bearer_headers(
         last_name=last_name,
     )
     return login_headers(client, email=email, password=password)
+
+
+def create_mt_payload(
+    room_name: str,
+    meeting_id: str,
+    text: str,
+    target_language: str = "de",
+    language: str = "en",
+    participant_id: str = None,
+) -> Dict[str, Any]:
+    """Create a MeetweenMTRequest payload for text translation."""
+    payload = {
+        "type": TaskType.TEXT_TRANSLATION,
+        "room_name": room_name,
+        "meeting_id": meeting_id,
+        "text": text,
+        "language": language,
+        "target_language": target_language,
+    }
+    if participant_id:
+        payload["participant_id"] = participant_id
+    return payload
+
+
+def create_st_payload(
+    room_name: str,
+    meeting_id: str,
+    audio_data: bytes,
+    target_language: str = "de",
+    language: str = "en",
+    participant_id: str = None,
+) -> Dict[str, Any]:
+    """Create a MeetweenSTRequest payload for speech translation."""
+    payload = {
+        "type": TaskType.SPEECH_TRANSLATION,
+        "room_name": room_name,
+        "meeting_id": meeting_id,
+        "audio": base64.b64encode(audio_data).decode("utf-8"),
+        "language": language,
+        "target_language": target_language,
+    }
+    if participant_id:
+        payload["participant_id"] = participant_id
+    return payload
 
 
 def generate_test_meeting_id() -> str:

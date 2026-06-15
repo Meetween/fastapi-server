@@ -16,13 +16,14 @@ from utils.storage import StorageManager
 
 from api.routes import (
     health,
-    caption,
+    websocket,
     transcription,
     summary,
     app_config,
     chat,
     agenda,
     auth,
+    translation,
 )
 
 from fastapi import FastAPI
@@ -97,7 +98,7 @@ async def shutdown_event():
 
 
 app.include_router(health.router)
-app.include_router(caption.ws_router)
+app.include_router(websocket.ws_router)
 app.include_router(transcription.router)
 app.include_router(summary.router)
 app.include_router(app_config.router)
@@ -105,6 +106,7 @@ app.include_router(chat.router)
 app.include_router(agenda.router)
 app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
+app.include_router(translation.router)
 
 
 if __name__ == "__main__":

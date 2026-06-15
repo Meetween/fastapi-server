@@ -20,8 +20,7 @@ from models import (
     MeetweenTaskRequest,
     MeetweenCatchupRequest,
     LMMRequest,
-    TASK_TYPE_TEXT_SUMMARY,
-    TASK_TYPE_SPEECH_SUMMARY,
+    TaskType,
 )
 from butler import summarize_audio, summarize_text
 from core import SessionManager
@@ -57,12 +56,12 @@ def _validate_summary_task_type(
     request: LMMRequest,
     expected_type: str | None = None,
 ) -> str:
-    if request.type not in [TASK_TYPE_TEXT_SUMMARY, TASK_TYPE_SPEECH_SUMMARY]:
+    if request.type not in [TaskType.TEXT_SUMMARY, TaskType.SPEECH_SUMMARY]:
         raise HTTPException(
             status_code=422,
             detail=(
                 f"Invalid summary task type '{request.type}' for this payload. "
-                f"Expected '{TASK_TYPE_TEXT_SUMMARY}' or '{TASK_TYPE_SPEECH_SUMMARY}'."
+                f"Expected '{TaskType.TEXT_SUMMARY}' or '{TaskType.SPEECH_SUMMARY}'."
             ),
         )
     if expected_type is not None and request.type != expected_type:
@@ -96,7 +95,7 @@ async def get_summary_text(request: LMMRequest) -> str:
 
     # Handle audio input payload.
     if isinstance(request, MeetweenAudioRequest):
-        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
+        _validate_summary_task_type(request, expected_type=TaskType.SPEECH_SUMMARY)
         audio_bytes = request.get_audio_bytes()
 
         if len(audio_bytes) == 0:
@@ -136,7 +135,7 @@ async def get_summary_text(request: LMMRequest) -> str:
 
     # Handle text input
     if isinstance(request, MeetweenTextRequest):
-        _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
+        _validate_summary_task_type(request, expected_type=TaskType.TEXT_SUMMARY)
         if not request.text.strip():
             raise HTTPException(status_code=400, detail="Empty text data")
         return await summarize_text(
@@ -151,10 +150,10 @@ async def get_summary_text(request: LMMRequest) -> str:
 
 
     if isinstance(request, MeetweenTaskRequest):
-        if request.type == TASK_TYPE_TEXT_SUMMARY:
-            _validate_summary_task_type(request, expected_type=TASK_TYPE_TEXT_SUMMARY)
+        if request.type == TaskType.TEXT_SUMMARY:
+            _validate_summary_task_type(request, expected_type=TaskType.TEXT_SUMMARY)
             return await get_summary_text_from_transcript(request)
-        _validate_summary_task_type(request, expected_type=TASK_TYPE_SPEECH_SUMMARY)
+        _validate_summary_task_type(request, expected_type=TaskType.SPEECH_SUMMARY)
 
         meeting_id = request.meeting_id
         room_name = request.room_name

@@ -1,17 +1,23 @@
 """
 Pydantic models for Meetween API
 """
-from typing import Optional, Literal, Union, List
+from typing import Optional, Literal, Union, List, Final
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from enum import Enum
 import base64
 
-TASK_TYPE_TEXT_SUMMARY = "TSUM"
-TASK_TYPE_SPEECH_SUMMARY = "SSUM"
+class TaskType(str, Enum):
+    TEXT_TRANSLATION = "MT"
+    SPEECH_TRANSLATION = "ST"
+    TEXT_SUMMARY = "TSUM"
+    SPEECH_SUMMARY = "SSUM"
 
 taskTypes = Literal[
     "transcription",
-    TASK_TYPE_TEXT_SUMMARY,
-    TASK_TYPE_SPEECH_SUMMARY,
+    TaskType.TEXT_TRANSLATION,
+    TaskType.SPEECH_TRANSLATION,
+    TaskType.TEXT_SUMMARY,
+    TaskType.SPEECH_SUMMARY,
     "catch_me_up",
     "chat",
     "agendaTracking",
@@ -23,16 +29,29 @@ agendaStatusTypes = Literal[
     "skipped",
 ]
 
+
+class MeetweenTranslationItem(BaseModel):
+    target_language: str
+    text: str
+
 """
 Used with jigasi websocket connection
 """
-class MeetweenTranscriptionRequest(BaseModel):
+class MeetweenWebsocketRequest(BaseModel):
     type: Literal["audio"] = "audio"
-    participant_id: Optional[str]
+    participant_id: Optional[str] = None
     language: Optional[str] = "en-US"
     audio: str = Field(..., description="Base64 encoded audio data")
     meeting_id: str
     room_name: str
+    target_languages: Optional[List[str]] = None
+
+    @field_validator('target_languages', mode='before')
+    @classmethod
+    def normalize_target_languages(cls, v):
+        if isinstance(v, str):
+            return [v]
+        return v
 
     @field_validator('audio')
     @classmethod
@@ -61,6 +80,9 @@ class MeetweenTranscriptionResponse(BaseModel):
     language: Optional[str] = None
     stability: Optional[float] = Field(None, ge=0.0, le=1.0)
 
+class MeetweenWebsocketResponse(MeetweenTranscriptionResponse):
+    translations: Optional[List[MeetweenTranslationItem]] = None
+
 class HistoryEntry(BaseModel):
     role: Literal["user", "assistant"]
     content: str
@@ -73,11 +95,13 @@ class AgendaItem(BaseModel):
 
 
 class MeetweenTaskRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: taskTypes
     room_name: str
     meeting_id: str
-    participant_id: Optional[str]
-    language: Optional[str]
+    participant_id: Optional[str] = None
+    language: Optional[str] = None
     prompt: Optional[str] = Field(None, description="Optional free-form prompt to pass to the LLM", max_length=2048)
     context: Optional[str] = Field(None, description="Optional context string to provide additional information to the model")
     history: Optional[List[HistoryEntry]] = Field(None, description="Optional conversation history.")
@@ -125,6 +149,13 @@ class MeetweenAgendaTrackingResponse(BaseModel):
     room_id: str
     items: List[AgendaItem]
 
+class MeetweenMTRequest(MeetweenTextRequest):
+    type: Literal[TaskType.TEXT_TRANSLATION] = TaskType.TEXT_TRANSLATION
+    target_language: str
+
+class MeetweenSTRequest(MeetweenAudioRequest):
+    type: Literal[TaskType.SPEECH_TRANSLATION] = TaskType.SPEECH_TRANSLATION
+    target_language: str
 
 class AgendaTrackingModelOutput(BaseModel):
     """JSON body from the LLM: {\"items\": [AgendaItem, ...]}."""
@@ -139,10 +170,13 @@ class MeetweenTaskResponse(BaseModel):
     room_name: str
     meeting_id: str
     result: str
-    language: Optional[str]
-    participant_id: Optional[str]
+    language: Optional[str] = "en"
+    participant_id: Optional[str] = None
     error: Optional[str] = None
 
+class MeetweenTranslationResponse(MeetweenTaskResponse):
+    type: Literal[TaskType.TEXT_TRANSLATION, TaskType.SPEECH_TRANSLATION]
+    target_language: str
 
 class MeetweenSummarizationResponse(BaseModel):
     """Response model for summarization endpoint"""
@@ -164,3 +198,4 @@ LMMRequest = Union[
     MeetweenTextRequest,
     MeetweenTaskRequest
 ]
+
