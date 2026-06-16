@@ -76,20 +76,21 @@ class PromptLoader:
         return cls.get_template(template_name, filename=filename).format(**kwargs)
 
     @classmethod
-    def get_task_prompt(cls, task: str, language: str, filename: str | None = None) -> str:
+    def get_task_prompt(cls, task: str, language: str, target_language: str = None,  filename: str | None = None) -> str:
         data = cls.load(filename)
         prompts = data.get("task_prompts", {})
         if not isinstance(prompts, dict):
             raise ValueError("Prompt YAML 'task_prompts' must be a mapping")
 
         lang_code = cls._normalize_language_code(language)
+        target_lang_code = cls._normalize_language_code(target_language) if target_language is not None else None
         task_prompts = prompts.get(task) or prompts.get("ASR") or {}
         if not isinstance(task_prompts, dict) or not task_prompts:
             return cls.DEFAULT_TASK_PROMPT
 
         lang_prompts = cls._select_language_prompts(task_prompts, lang_code)
         selected = cls._select_prompt_variant(lang_prompts)
-        target_lang_name = cls._get_language_name(lang_code)
+        target_lang_name = cls._get_language_name(target_lang_code) if target_lang_code is not None else cls._get_language_name(lang_code)
         return selected.replace("<target-language>", target_lang_name)
 
     @classmethod
@@ -124,5 +125,5 @@ def format_template(template_name: str, filename: str | None = None, **kwargs: A
     return PromptLoader.format_template(template_name, filename=filename, **kwargs)
 
 
-def get_task_prompt(task: str, language: str, filename: str | None = None) -> str:
-    return PromptLoader.get_task_prompt(task, language, filename=filename)
+def get_task_prompt(task: str, language: str, target_language: str = None, filename: str | None = None) -> str:
+    return PromptLoader.get_task_prompt(task, language, target_language=target_language, filename=filename)
