@@ -55,12 +55,23 @@ def _agenda_items_output_schema() -> dict:
     }
 
 
+def _strip_markdown_json_fence(text: str) -> str:
+    """Remove optional ```json ... ``` wrappers some models add around JSON."""
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s*```$", "", stripped)
+    return stripped.strip()
+
+
 def _decode_json(raw_text: str) -> object:
-    """Strictly decode JSON from the entire LLM response."""
+    """Decode JSON from the LLM response, tolerating markdown code fences."""
     if not raw_text:
         raise ValueError("Model output is empty")
+    candidate = _strip_markdown_json_fence(raw_text)
     try:
-        return json.loads(raw_text)
+        return json.loads(candidate)
     except json.JSONDecodeError:
         raise ValueError(f"Invalid JSON in model output: {raw_text}")
 

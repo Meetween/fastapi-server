@@ -603,7 +603,7 @@ agenda_prompt: |
   - Each element must have `index`, `text` (same text as in Agenda Items for that index), and `status`.
   - Do not output JSON Schema vocabulary as your answer (no top-level `type`, `properties`, `required`, or `additionalProperties`).
 
-  No explanation, markdown, or code fences. Only the JSON object.
+  Output must be raw JSON only: no explanation, no markdown, no ```json code fences, no backticks.
 
   ---
 
