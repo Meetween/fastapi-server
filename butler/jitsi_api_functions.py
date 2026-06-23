@@ -486,6 +486,7 @@ async def translate_text(
         audio=None,
         sample_rate=16000,
         task=TaskType.TEXT_TRANSLATION,
+        language=language,
         **gen_kwargs,
     )
 
