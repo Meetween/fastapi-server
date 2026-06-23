@@ -90,8 +90,13 @@ class PromptLoader:
 
         lang_prompts = cls._select_language_prompts(task_prompts, lang_code)
         selected = cls._select_prompt_variant(lang_prompts)
+        source_lang_name = cls._get_language_name(lang_code)
         target_lang_name = cls._get_language_name(target_lang_code) if target_lang_code is not None else cls._get_language_name(lang_code)
-        return selected.replace("<target-language>", target_lang_name)
+        return (
+            selected
+            .replace("<target-language>", target_lang_name)
+            .replace("<source-language>", source_lang_name)
+        )
 
     @classmethod
     def _normalize_language_code(cls, language: str) -> str:
@@ -113,11 +118,10 @@ class PromptLoader:
     @classmethod
     def _select_prompt_variant(cls, lang_prompts: Any) -> str:
         if isinstance(lang_prompts, list):
-            filtered = [p for p in lang_prompts if "<source-language>" not in p]
-            selected = filtered[0] if filtered else (
-                lang_prompts[0] if lang_prompts else cls.DEFAULT_TASK_PROMPT
-            )
-            return selected
+            if not lang_prompts:
+                return cls.DEFAULT_TASK_PROMPT
+            with_source = [p for p in lang_prompts if "<source-language>" in p]
+            return (with_source or lang_prompts)[0]
         return str(lang_prompts)
 
 

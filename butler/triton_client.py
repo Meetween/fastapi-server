@@ -128,8 +128,8 @@ class TritonClient:
             payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
             if mode == "caption":
                 payload_obj["caption_chars"] = self.caption_chars
-            # Voxtral/Qwen: language in JSON avoids auto-detect ASR (which can emit timestamps).
-            if language and mode in {"caption", "transcribe"}:
+            # Voxtral/Qwen: source language in JSON (caption/transcribe/ST).
+            if language and mode in {"caption", "transcribe", "st"}:
                 lang_code = language.split("-")[0].strip().lower()
                 if lang_code:
                     payload_obj["language"] = lang_code

@@ -435,6 +435,7 @@ async def translate_audio(
         audio=audio_tensor,
         sample_rate=target_sr,
         task=TaskType.SPEECH_TRANSLATION,
+        language=language,
         **gen_kwargs,
     )
 
