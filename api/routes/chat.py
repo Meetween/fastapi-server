@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Body
 from api.deps.auth import REQUIRE_AUTH
 
 from core import EngineManager, SessionManager
-from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry
+from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry, TaskType
 from utils.prompt_template import format_template
 
 router = APIRouter(
@@ -64,6 +64,14 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             detail="SpeechLMM model not loaded",
         )
     try:
+        if request.type != TaskType.SPOKEN_QUESTION_ANSWERING:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Invalid chat task type '{request.type}'. "
+                    f"Expected '{TaskType.SPOKEN_QUESTION_ANSWERING}'."
+                ),
+            )
         if not request.prompt:
             raise HTTPException(
                 status_code=400,
@@ -99,7 +107,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             prompt=combined_prompt,
             audio=None,
             sample_rate=16000,
-            task="chat",
+            task=TaskType.SPOKEN_QUESTION_ANSWERING,
             max_new_tokens=request.max_new_tokens,
             do_sample=request.do_sample,
             temperature=request.temperature,

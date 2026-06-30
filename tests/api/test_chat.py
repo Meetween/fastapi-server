@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from core import SessionManager
+from models import TaskType
 from tests.utils.assertions import assert_successful_response
 
 
@@ -21,7 +22,7 @@ class TestChatEndpoint:
     ):
         """Chat with minimal required fields"""
         payload = {
-            "type": "chat",
+            "type": TaskType.SPOKEN_QUESTION_ANSWERING,
             "meeting_id": test_meeting_id,
             "room_name": test_room_name,
             "participant_id": "user-123",
@@ -45,7 +46,7 @@ class TestChatEndpoint:
     ):
         """Chat with full history and context payload"""
         payload = {
-            "type": "chat",
+            "type": TaskType.SPOKEN_QUESTION_ANSWERING,
             "meeting_id": test_meeting_id,
             "room_name": test_room_name,
             "participant_id": "user-456",
@@ -67,7 +68,7 @@ class TestChatEndpoint:
     def test_chat_missing_required_fields(self, client: TestClient):
         """Missing prompt should trigger bad request"""
         payload = {
-            "type": "chat",
+            "type": TaskType.SPOKEN_QUESTION_ANSWERING,
             "meeting_id": "meeting-1",
             "room_name": "room-1",
             "participant_id": "user-789",
@@ -92,7 +93,7 @@ def test_chat_uses_session_manager_context_and_history_only(
     )
 
     payload = {
-        "type": "chat",
+        "type": TaskType.SPOKEN_QUESTION_ANSWERING,
         "meeting_id": test_meeting_id,
         "room_name": test_room_name,
         "participant_id": "user-1",

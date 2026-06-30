@@ -7,19 +7,21 @@ from enum import Enum
 import base64
 
 class TaskType(str, Enum):
+    TRANSCRIPTION = "ASR"
     TEXT_TRANSLATION = "MT"
     SPEECH_TRANSLATION = "ST"
     TEXT_SUMMARY = "TSUM"
     SPEECH_SUMMARY = "SSUM"
+    SPOKEN_QUESTION_ANSWERING = "SQA"
 
 taskTypes = Literal[
-    "transcription",
+    TaskType.TRANSCRIPTION,
     TaskType.TEXT_TRANSLATION,
     TaskType.SPEECH_TRANSLATION,
     TaskType.TEXT_SUMMARY,
     TaskType.SPEECH_SUMMARY,
+    TaskType.SPOKEN_QUESTION_ANSWERING,
     "catch_me_up",
-    "chat",
     "agendaTracking",
 ]
 
@@ -70,7 +72,7 @@ class MeetweenWebsocketRequest(BaseModel):
 
 class MeetweenTranscriptionResponse(BaseModel):
     """Response model for transcription endpoints"""
-    type: Literal["transcription"] = "transcription"
+    type: Literal[TaskType.TRANSCRIPTION] = TaskType.TRANSCRIPTION
     meeting_id: str
     participant_id: Optional[str] = None
     transcript: str

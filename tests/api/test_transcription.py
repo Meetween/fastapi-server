@@ -3,6 +3,7 @@ Tests for transcription endpoints (/api/transcribe)
 """
 import pytest
 from fastapi.testclient import TestClient
+from models import TaskType
 from tests.utils.assertions import (
     assert_successful_response,
     assert_error_response,
@@ -31,7 +32,7 @@ class TestTranscribeEndpoint:
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
-            task_type="transcription",
+            task_type=TaskType.TRANSCRIPTION,
             participant_id="test-participant-1"
         )
         
@@ -55,7 +56,7 @@ class TestTranscribeEndpoint:
             room_name=test_room_name,
             meeting_id=test_meeting_id,
             audio_data=dummy_audio_bytes,
-            task_type="transcription",
+            task_type=TaskType.TRANSCRIPTION,
             participant_id="test-participant-2"
         )
         
@@ -78,7 +79,7 @@ class TestTranscribeEndpoint:
             room_name=test_room_name,
             meeting_id=test_meeting_id,
             text=sample_text,
-            task_type="transcription",
+            task_type=TaskType.TRANSCRIPTION,
             participant_id="test-participant-3"
         )
         
@@ -90,7 +91,7 @@ class TestTranscribeEndpoint:
     def test_transcribe_missing_required_fields(self, client: TestClient):
         """Test transcription endpoint with missing required fields"""
         # Arrange
-        payload = {"type": "transcription"}  # Missing required fields
+        payload = {"type": TaskType.TRANSCRIPTION}  # Missing required fields
         
         # Act
         response = client.post("/api/transcribe", json=payload)

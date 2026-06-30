@@ -100,6 +100,11 @@ def assert_transcription_response(data: Dict[str, Any]) -> None:
         AssertionError: If response doesn't match expected structure
     """
     assert "type" in data or "transcript" in data, "Response should contain type or transcript field"
+
+    if "type" in data:
+        assert data["type"] == TaskType.TRANSCRIPTION, (
+            f"Expected type '{TaskType.TRANSCRIPTION}', got '{data['type']}'"
+        )
     
     if "transcript" in data:
         assert isinstance(data["transcript"], str), "Transcript should be a string"

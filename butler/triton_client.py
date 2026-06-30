@@ -124,6 +124,11 @@ class TritonClient:
             if not mode:
                 # Infer best-effort from whether audio is present.
                 mode = "chat" if audio_b64 is None else "transcribe"
+            # Map downstream task acronyms to legacy general_json modes.
+            mode = {
+                "asr": "transcribe",
+                "sqa": "chat",
+            }.get(mode, mode)
             payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
             if mode == "caption":
                 payload_obj["caption_chars"] = self.caption_chars

@@ -18,7 +18,8 @@ from models import (
     MeetweenAudioRequest,
     MeetweenTextRequest,
     MeetweenTaskRequest,
-    LMMRequest
+    LMMRequest,
+    TaskType,
 )
 from butler import transcribe_audio
 
@@ -102,7 +103,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
                     os.unlink(temp_path)
 
             return MeetweenTranscriptionResponse(
-                type="transcription",
+                type=TaskType.TRANSCRIPTION,
                 meeting_id=request.meeting_id,
                 participant_id=request.participant_id,
                 transcript=result.text,
@@ -218,7 +219,7 @@ async def api_transcribe(request: LMMRequest = Body(...)):
             )
 
             return MeetweenTranscriptionResponse(
-                type="transcription",
+                type=TaskType.TRANSCRIPTION,
                 meeting_id=meeting_id,
                 participant_id=request.participant_id,
                 transcript=result.text,

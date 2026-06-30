@@ -19,6 +19,7 @@ from models import (
     agendaStatusTypes,
     MeetweenAgendaTrackingRequest,
     MeetweenAgendaTrackingResponse,
+    TaskType,
 )
 from utils.prompt_template import format_template
 
@@ -187,7 +188,7 @@ async def agenda_tracking(
             prompt=agenda_prompt,
             audio=None,
             sample_rate=16000,
-            task="chat",
+            task=TaskType.SPOKEN_QUESTION_ANSWERING,
             do_sample=False,
         )
         parsed = _parse_inference_payload(result, request.items)
