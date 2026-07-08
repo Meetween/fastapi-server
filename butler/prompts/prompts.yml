@@ -52,110 +52,108 @@ task_prompts:
     - Crea una transcripción para este audio.
   MT:
     en:
-    - Can you translate this text into <target-language>?
-    - How would this text look in <target-language>?
-    - Could you convert this text from <source-language> to <target-language>?
-    - What is the <target-language> equivalent of this sentence?
-    - How do you express this in <target-language>?
-    - Translate this text into <target-language>.
-    - Please rewrite this text in <target-language>.
-    - Convert this text from <source-language> to <target-language>.
-    - Provide a <target-language> translation for this text.
+    - Can you translate this text into <target-language>? Only return the translated sentence.
+    - How would this text look in <target-language>? Only return the translated sentence.
+    - Could you convert this text from <source-language> to <target-language>? Only return the translated sentence.
+    - What is the <target-language> equivalent of this sentence? Only return the translated sentence.
+    - How do you express this in <target-language>? Only return the translated sentence.
+    - Translate this text into <target-language>. Only return the translated sentence.
+    - Please rewrite this text in <target-language>. Only return the translated sentence.
+    - Convert this text from <source-language> to <target-language>. Only return the translated sentence.
+    - Provide a <target-language> translation for this text. Only return the translated sentence.
     fr:
-    - Pouvez-vous traduire ce texte en <target-language> ?
-    - À quoi ressemblerait ce texte en <target-language> ?
-    - Pourriez-vous convertir ce texte de <source-language> en <target-language> ?
-    - Quel est l'équivalent en <target-language> de cette phrase ?
-    - Comment exprimez-vous cela en <target-language> ?
-    - Traduisez ce texte en <target-language>.
-    - Veuillez réécrire ce texte en <target-language>.
-    - Convertissez ce texte de <source-language> en <target-language>.
-    - Fournissez une traduction en <target-language> pour ce texte.
-    - Translate this text into <target-language>.
+    - Pouvez-vous traduire ce texte en <target-language> ? Ne retournez que la phrase traduite.
+    - À quoi ressemblerait ce texte en <target-language> ? Ne retournez que la phrase traduite.
+    - Pourriez-vous convertir ce texte de <source-language> en <target-language> ? Ne retournez que la phrase traduite.
+    - Quel est l'équivalent en <target-language> de cette phrase ? Ne retournez que la phrase traduite.
+    - Comment exprimez-vous cela en <target-language> ? Ne retournez que la phrase traduite.
+    - Traduisez ce texte en <target-language>. Ne retournez que la phrase traduite.
+    - Veuillez réécrire ce texte en <target-language>. Ne retournez que la phrase traduite.
+    - Convertissez ce texte de <source-language> en <target-language>. Ne retournez que la phrase traduite.
+    - Fournissez une traduction en <target-language> pour ce texte. Ne retournez que la phrase traduite.
+    - Translate this text into <target-language>. Ne retournez que la phrase traduite.
     de:
-    - Könnten Sie diesen Text bitte in <target-language> übersetzen?
-    - Wie würde dieser Text in <target-language> aussehen?
-    - Könnten Sie diesen Text von <source-language> in <target-language> übersetzen?
-    - Wie lautet die <target-language>-Entsprechung dieses Satzes?
-    - Wie drückt man das in <target-language> aus?
-    - Übersetzen Sie diesen Text ins <target-language>.
-    - Bitte übersetzen Sie diesen Text in <target-language>.
-    - Übersetzen Sie diesen Text aus dem <source-language> in das <target-language>.
+    - Könnten Sie diesen Text bitte in <target-language> übersetzen? Gib nur den übersetzten Satz zurück.
+    - Wie würde dieser Text in <target-language> aussehen? Gib nur den übersetzten Satz zurück.
+    - Könnten Sie diesen Text von <source-language> in <target-language> übersetzen? Gib nur den übersetzten Satz zurück.
+    - Wie lautet die <target-language>-Entsprechung dieses Satzes? Gib nur den übersetzten Satz zurück.
+    - Wie drückt man das in <target-language> aus? Gib nur den übersetzten Satz zurück.
+    - Übersetzen Sie diesen Text ins <target-language>. Gib nur den übersetzten Satz zurück.
+    - Bitte übersetzen Sie diesen Text in <target-language>. Gib nur den übersetzten Satz zurück.
+    - Übersetzen Sie diesen Text aus dem <source-language> in das <target-language>. Gib nur den übersetzten Satz zurück.
     it:
-    - Puoi tradurre questo testo in <target-language>?
-    - Come sarebbe questo testo in <target-language>?
-    - Potresti tradurre questo testo da <source-language> a <target-language>?
-    - Qual è la traduzione in <target-language> di questa frase?
-    - Come si esprime questo concetto in <target-language>?
-    - Traduci questo testo in <target-language>.
-    - Per favore, riscrivi questo testo in <target-language>.
-    - Traduci questo testo da <source-language> a <target-language>.
-    - Fornisci una traduzione in <target-language> per questo testo.
-    - Traduci questo testo in <target-language>.
+    - Puoi tradurre questo testo in <target-language>? Restituisci solo la frase tradotta.
+    - Come sarebbe questo testo in <target-language>? Restituisci solo la frase tradotta.
+    - Potresti tradurre questo testo da <source-language> a <target-language>? Restituisci solo la frase tradotta.
+    - Qual è la traduzione in <target-language> di questa frase? Restituisci solo la frase tradotta.
+    - Come si esprime questo concetto in <target-language>? Restituisci solo la frase tradotta.
+    - Traduci questo testo in <target-language>. Restituisci solo la frase tradotta.
+    - Per favore, riscrivi questo testo in <target-language>. Restituisci solo la frase tradotta.
+    - Traduci questo testo da <source-language> a <target-language>. Restituisci solo la frase tradotta.
+    - Fornisci una traduzione in <target-language> per questo testo. Restituisci solo la frase tradotta.
+    - Traduci questo testo in <target-language>. Restituisci solo la frase tradotta.
     es:
-    - ¿Podrías traducir este texto al <target-language>?
-    - ¿Cómo se vería este texto en <target-language>?
-    - ¿Podrías traducir este texto del <source-language> al <target-language>?
-    - ¿Cuál es la traducción en <target-language> de esta frase?
-    - ¿Cómo se expresa este concepto en <target-language>?
-    - Traduce este texto al <target-language>.
-    - Por favor, vuelve a escribir este texto en <target-language>.
-    - Traduce este texto del <source-language> al <target-language>.
-    - Proporciona una traducción en <target-language> para este texto.
-    - Traduce este texto al <target-language>.
+    - ¿Podrías traducir este texto al <target-language>? Devuelve solo la frase traducida.
+    - ¿Cómo se vería este texto en <target-language>? Devuelve solo la frase traducida.
+    - ¿Podrías traducir este texto del <source-language> al <target-language>? Devuelve solo la frase traducida.
+    - ¿Cuál es la traducción en <target-language> de esta frase? Devuelve solo la frase traducida.
+    - ¿Cómo se expresa este concepto en <target-language>? Devuelve solo la frase traducida.
+    - Traduce este texto al <target-language>. Devuelve solo la frase traducida.
+    - Por favor, vuelve a escribir este texto en <target-language>. Devuelve solo la frase traducida.
+    - Traduce este texto del <source-language> al <target-language>. Devuelve solo la frase traducida.
+    - Proporciona una traducción en <target-language> para este texto. Devuelve solo la frase traducida.
+    - Traduce este texto al <target-language>. Devuelve solo la frase traducida.
   ST:
     en:
-    - Can you translate this audio from <source-language> to <target-language>?
-    - What is being said in this audio? Can you provide a translation into <target-language>?
-    - Could you transcribe and translate this audio into <target-language>?
-    - How would you translate this audio into <target-language>?
-    - Can you convert the speech in this audio to <target-language>?
-    - Translate the speech from <source-language> to <target-language>.
-    - Please provide a translation of this audio into <target-language>.
-    - Transcribe and translate this audio into <target-language>.
-    - Provide a translation of this audio recording into <target-language>.
+    - Can you translate this audio from <source-language> to <target-language>? Only return the translated sentence.
+    - What is being said in this audio? Can you provide a translation into <target-language>? Only return the translated sentence.
+    - Could you transcribe and translate this audio into <target-language>? Only return the translated sentence.
+    - How would you translate this audio into <target-language>? Only return the translated sentence.
+    - Can you convert the speech in this audio to <target-language>? Only return the translated sentence.
+    - Translate the speech from <source-language> to <target-language>. Only return the translated sentence.
+    - Please provide a translation of this audio into <target-language>. Only return the translated sentence.
+    - Transcribe and translate this audio into <target-language>. Only return the translated sentence.
+    - Provide a translation of this audio recording into <target-language>. Only return the translated sentence.
     fr:
-    - Pouvez-vous traduire cet audio de <source-language> vers <target-language> ?
-    - Qu'est-ce qui est dit dans cet audio ? Pouvez-vous fournir une traduction en
-      <target-language> ?
-    - Pourriez-vous transcrire et traduire cet audio en <target-language> ?
-    - Comment traduiriez-vous cet audio en <target-language> ?
-    - Pouvez-vous convertir la parole dans cet audio en <target-language> ?
-    - Traduisez le discours de <source-language> vers <target-language>.
-    - Veuillez fournir une traduction de cet audio en <target-language>.
-    - Transcrivez et traduisez cet audio en <target-language>.
-    - Fournissez une traduction de cet enregistrement audio en <target-language>.
+    - Pouvez-vous traduire cet audio de <source-language> vers <target-language> ? Ne retournez que la phrase traduite.
+    - Qu'est-ce qui est dit dans cet audio ? Pouvez-vous fournir une traduction en <target-language> ? Ne retournez que la phrase traduite.
+    - Pourriez-vous transcrire et traduire cet audio en <target-language> ? Ne retournez que la phrase traduite.
+    - Comment traduiriez-vous cet audio en <target-language> ? Ne retournez que la phrase traduite.
+    - Pouvez-vous convertir la parole dans cet audio en <target-language> ? Ne retournez que la phrase traduite.
+    - Traduisez le discours de <source-language> vers <target-language>. Ne retournez que la phrase traduite.
+    - Veuillez fournir une traduction de cet audio en <target-language>. Ne retournez que la phrase traduite.
+    - Transcrivez et traduisez cet audio en <target-language>. Ne retournez que la phrase traduite.
+    - Fournissez une traduction de cet enregistrement audio en <target-language>. Ne retournez que la phrase traduite.
     de:
-    - Können Sie dieses Audio von <source-language> in <target-language> übersetzen?
-    - Was wird in diesem Audio gesagt? Könnten Sie eine Übersetzung ins <target-language>
-      liefern?
-    - Könnten Sie dieses Audio transkribieren und in <target-language> übersetzen?
-    - Wie würden Sie dieses Audio in <target-language> übersetzen?
-    - Könnten Sie die Sprache in diesem Audio in <target-language> umwandeln?
-    - Übersetzen Sie die Rede von <source-language> in <target-language>.
-    - Bitte übersetzen Sie dieses Audio in <target-language>.
-    - Transkribiere und übersetze dieses Audio in <target-language>.
-    - Bitte übersetzen Sie diese Audioaufnahme in <target-language>.
+    - Können Sie dieses Audio von <source-language> in <target-language> übersetzen? Gib nur den übersetzten Satz zurück.
+    - Was wird in diesem Audio gesagt? Könnten Sie eine Übersetzung ins <target-language> liefern? Gib nur den übersetzten Satz zurück.
+    - Könnten Sie dieses Audio transkribieren und in <target-language> übersetzen? Gib nur den übersetzten Satz zurück.
+    - Wie würden Sie dieses Audio in <target-language> übersetzen? Gib nur den übersetzten Satz zurück.
+    - Könnten Sie die Sprache in diesem Audio in <target-language> umwandeln? Gib nur den übersetzten Satz zurück.
+    - Übersetzen Sie die Rede von <source-language> in <target-language>. Gib nur den übersetzten Satz zurück.
+    - Bitte übersetzen Sie dieses Audio in <target-language>. Gib nur den übersetzten Satz zurück.
+    - Transkribiere und übersetze dieses Audio in <target-language>. Gib nur den übersetzten Satz zurück.
+    - Bitte übersetzen Sie diese Audioaufnahme in <target-language>. Gib nur den übersetzten Satz zurück.
     it:
-    - Puoi tradurre questo audio da <source-language> a <target-language>?
-    - Cosa viene detto in questo audio? Puoi tradurre questo testo in <target-language>?
-    - Potresti trascrivere e tradurre questo audio in <target-language>?
-    - Come tradurresti questo audio in <target-language>?
-    - Puoi tradurre il discorso in questo audio in <target-language>?
-    - Traduci il discorso da <source-language> a <target-language>.
-    - Si prega di fornire una traduzione di questo audio in <target-language>.
-    - Trascrivere e tradurre questo audio in <target-language>.
-    - Fornisci una traduzione di questa registrazione audio in <target-language>.
+    - Puoi tradurre questo audio da <source-language> a <target-language>? Restituisci solo la frase tradotta.
+    - Cosa viene detto in questo audio? Puoi tradurre questo testo in <target-language>? Restituisci solo la frase tradotta.
+    - Potresti trascrivere e tradurre questo audio in <target-language>? Restituisci solo la frase tradotta.
+    - Come tradurresti questo audio in <target-language>? Restituisci solo la frase tradotta.
+    - Puoi tradurre il discorso in questo audio in <target-language>? Restituisci solo la frase tradotta.
+    - Traduci il discorso da <source-language> a <target-language>. Restituisci solo la frase tradotta.
+    - Si prega di fornire una traduzione di questo audio in <target-language>. Restituisci solo la frase tradotta.
+    - Trascrivere e tradurre questo audio in <target-language>. Restituisci solo la frase tradotta.
+    - Fornisci una traduzione di questa registrazione audio in <target-language>. Restituisci solo la frase tradotta.
     es:
-    - ¿Podrías traducir este audio del <source-language> al <target-language>?
-    - ¿Qué se dice en este audio? ¿Podrías traducir este texto al <target-language>?
-    - ¿Podrías transcribir y traducir este audio al <target-language>?
-    - ¿Cómo traducirías este audio al <target-language>?
-    - ¿Podrías traducir el discurso de este audio al <target-language>?
-    - Traduce el discurso del <source-language> al <target-language>.
-    - Por favor, proporcione una traducción de este audio al <target-language>.
-    - Transcribe y traduce este audio al <target-language>.
-    - Proporciona una traducción de esta grabación de audio al <target-language>.
+    - ¿Podrías traducir este audio del <source-language> al <target-language>? Devuelve solo la frase traducida.
+    - ¿Qué se dice en este audio? ¿Podrías traducir este texto al <target-language>? Devuelve solo la frase traducida.
+    - ¿Podrías transcribir y traducir este audio al <target-language>? Devuelve solo la frase traducida.
+    - ¿Cómo traducirías este audio al <target-language>? Devuelve solo la frase traducida.
+    - ¿Podrías traducir el discurso de este audio al <target-language>? Devuelve solo la frase traducida.
+    - Traduce el discurso del <source-language> al <target-language>. Devuelve solo la frase traducida.
+    - Por favor, proporcione una traducción de este audio al <target-language>. Devuelve solo la frase traducida.
+    - Transcribe y traduce este audio al <target-language>. Devuelve solo la frase traducida.
+    - Proporciona una traducción de esta grabación de audio al <target-language>. Devuelve solo la frase traducida.
   NEGATIVE:
     en:
     - What's the capital of France?
