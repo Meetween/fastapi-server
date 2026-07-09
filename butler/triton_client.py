@@ -82,6 +82,7 @@ class TritonClient:
         audio: torch.Tensor,
         sample_rate: int,
         task: Optional[str] = None,
+        language: Optional[str] = None,
         max_new_tokens: Optional[int] = None,
         do_sample: Optional[bool] = None,
         temperature: Optional[float] = None,
@@ -127,6 +128,11 @@ class TritonClient:
             payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
             if mode == "caption":
                 payload_obj["caption_chars"] = self.caption_chars
+            # Voxtral/Qwen: source language in JSON (caption/transcribe/ST/MT).
+            if language and mode in {"caption", "transcribe", "st", "mt"}:
+                lang_code = language.split("-")[0].strip().lower()
+                if lang_code:
+                    payload_obj["language"] = lang_code
             prompt_to_send = json.dumps(payload_obj, ensure_ascii=False)
 
         # Always send all inputs; use defaults when caller doesn't specify (Triton expects all)

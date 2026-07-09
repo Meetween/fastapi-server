@@ -212,6 +212,7 @@ async def transcribe_audio(
         audio=audio_tensor,
         sample_rate=target_sr,
         task="transcribe",
+        language=language,
         **gen_kwargs,
     )
 
@@ -272,6 +273,7 @@ async def caption_audio(
         audio=audio_tensor,
         sample_rate=target_sr,
         task="caption",
+        language=language,
         max_new_tokens=max_tokens,
         do_sample=False,
         repetition_penalty=1.2,
@@ -433,6 +435,7 @@ async def translate_audio(
         audio=audio_tensor,
         sample_rate=target_sr,
         task=TaskType.SPEECH_TRANSLATION,
+        language=language,
         **gen_kwargs,
     )
 
@@ -483,6 +486,7 @@ async def translate_text(
         audio=None,
         sample_rate=16000,
         task=TaskType.TEXT_TRANSLATION,
+        language=language,
         **gen_kwargs,
     )
 
