@@ -13,6 +13,9 @@ class TaskType(str, Enum):
     TEXT_SUMMARY = "TSUM"
     SPEECH_SUMMARY = "SSUM"
     SPOKEN_QUESTION_ANSWERING = "SQA"
+    CATCH_ME_UP = "CATCH_ME_UP"
+    AGENDA_TRACKING = "AGENDA_TRACKING"
+    CAPTION = "CAPTION"
 
 taskTypes = Literal[
     TaskType.TRANSCRIPTION,
@@ -21,8 +24,9 @@ taskTypes = Literal[
     TaskType.TEXT_SUMMARY,
     TaskType.SPEECH_SUMMARY,
     TaskType.SPOKEN_QUESTION_ANSWERING,
-    "catch_me_up",
-    "agendaTracking",
+    TaskType.CATCH_ME_UP,
+    TaskType.AGENDA_TRACKING,
+    TaskType.CAPTION,
 ]
 
 agendaStatusTypes = Literal[
@@ -138,7 +142,7 @@ class MeetweenCatchupRequest(MeetweenTaskRequest):
 
 
 class MeetweenAgendaTrackingRequest(BaseModel):
-    type: Literal["agendaTracking"] = "agendaTracking"
+    type: Literal[TaskType.AGENDA_TRACKING] = TaskType.AGENDA_TRACKING
     meeting_id: str
     room_id: str
     items: List[AgendaItem]
@@ -146,7 +150,7 @@ class MeetweenAgendaTrackingRequest(BaseModel):
 
 
 class MeetweenAgendaTrackingResponse(BaseModel):
-    taskType: Literal["agendaTracking"] = "agendaTracking"
+    taskType: Literal[TaskType.AGENDA_TRACKING] = TaskType.AGENDA_TRACKING
     meeting_id: str
     room_id: str
     items: List[AgendaItem]

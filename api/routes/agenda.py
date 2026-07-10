@@ -175,6 +175,15 @@ async def agenda_tracking(
     if not engine:
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
 
+    if request.type != TaskType.AGENDA_TRACKING:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Invalid agenda tracking task type '{request.type}'. "
+                f"Expected '{TaskType.AGENDA_TRACKING}'."
+            ),
+        )
+
     transcript = SessionManager.get_transcript(
         meeting_id=request.meeting_id,
         room_name=request.room_id,
@@ -188,7 +197,7 @@ async def agenda_tracking(
             prompt=agenda_prompt,
             audio=None,
             sample_rate=16000,
-            task=TaskType.SPOKEN_QUESTION_ANSWERING,
+            task=TaskType.AGENDA_TRACKING,
             do_sample=False,
         )
         parsed = _parse_inference_payload(result, request.items)
