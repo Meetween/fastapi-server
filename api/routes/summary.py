@@ -418,7 +418,7 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
         )
 
         return MeetweenTaskResponse(
-            type="catch_me_up",
+            type=TaskType.CATCH_ME_UP,
             resultType="text",
             room_name=request.room_name,
             meeting_id=meeting_id,

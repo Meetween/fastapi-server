@@ -6,11 +6,12 @@ from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
 from core import SessionManager
+from models import TaskType
 
 
 def _payload(meeting_id: str, room_id: str):
     return {
-        "type": "agendaTracking",
+        "type": TaskType.AGENDA_TRACKING,
         "meeting_id": meeting_id,
         "room_id": room_id,
         "requested_by": "moderator",
@@ -126,10 +127,11 @@ def test_agenda_tracking_uses_text_generation_method(
         )
 
         mock_engine = Mock()
-        called = {"text": False}
+        called = {"text": False, "task": None}
 
         async def mock_generate_text(*args, **kwargs):
             called["text"] = True
+            called["task"] = kwargs.get("task")
             return (
                 '{"items":['
                 '{"index":0,"text":"Budget discussion","status":"completed"},'
@@ -145,6 +147,7 @@ def test_agenda_tracking_uses_text_generation_method(
 
         assert response.status_code == 200
         assert called["text"] is True
+        assert called["task"] == TaskType.AGENDA_TRACKING
 
         data = response.json()
         assert [item["status"] for item in data["items"]] == [
@@ -242,3 +245,15 @@ def test_agenda_tracking_accepts_punctuation_only_item_text_differences(
         SessionManager.clear_session(
             meeting_id=test_meeting_id, room_name=room_id, force=True
         )
+
+
+def test_agenda_tracking_invalid_task_type_returns_422(
+    client: TestClient,
+    test_meeting_id: str,
+):
+    payload = _payload(meeting_id=test_meeting_id, room_id="agenda-room-invalid")
+    payload["type"] = TaskType.SPOKEN_QUESTION_ANSWERING
+
+    response = client.post("/api/agenda-tracking", json=payload)
+
+    assert response.status_code == 422

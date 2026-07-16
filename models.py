@@ -7,20 +7,26 @@ from enum import Enum
 import base64
 
 class TaskType(str, Enum):
+    TRANSCRIPTION = "ASR"
     TEXT_TRANSLATION = "MT"
     SPEECH_TRANSLATION = "ST"
     TEXT_SUMMARY = "TSUM"
     SPEECH_SUMMARY = "SSUM"
+    SPOKEN_QUESTION_ANSWERING = "SQA"
+    CATCH_ME_UP = "CATCH_ME_UP"
+    AGENDA_TRACKING = "AGENDA_TRACKING"
+    CAPTION = "CAPTION"
 
 taskTypes = Literal[
-    "transcription",
+    TaskType.TRANSCRIPTION,
     TaskType.TEXT_TRANSLATION,
     TaskType.SPEECH_TRANSLATION,
     TaskType.TEXT_SUMMARY,
     TaskType.SPEECH_SUMMARY,
-    "catch_me_up",
-    "chat",
-    "agendaTracking",
+    TaskType.SPOKEN_QUESTION_ANSWERING,
+    TaskType.CATCH_ME_UP,
+    TaskType.AGENDA_TRACKING,
+    TaskType.CAPTION,
 ]
 
 agendaStatusTypes = Literal[
@@ -70,7 +76,7 @@ class MeetweenWebsocketRequest(BaseModel):
 
 class MeetweenTranscriptionResponse(BaseModel):
     """Response model for transcription endpoints"""
-    type: Literal["transcription"] = "transcription"
+    type: Literal[TaskType.TRANSCRIPTION] = TaskType.TRANSCRIPTION
     meeting_id: str
     participant_id: Optional[str] = None
     transcript: str
@@ -136,7 +142,7 @@ class MeetweenCatchupRequest(MeetweenTaskRequest):
 
 
 class MeetweenAgendaTrackingRequest(BaseModel):
-    type: Literal["agendaTracking"] = "agendaTracking"
+    type: Literal[TaskType.AGENDA_TRACKING] = TaskType.AGENDA_TRACKING
     meeting_id: str
     room_id: str
     items: List[AgendaItem]
@@ -144,7 +150,7 @@ class MeetweenAgendaTrackingRequest(BaseModel):
 
 
 class MeetweenAgendaTrackingResponse(BaseModel):
-    taskType: Literal["agendaTracking"] = "agendaTracking"
+    taskType: Literal[TaskType.AGENDA_TRACKING] = TaskType.AGENDA_TRACKING
     meeting_id: str
     room_id: str
     items: List[AgendaItem]

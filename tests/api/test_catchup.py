@@ -9,6 +9,7 @@ from tests.utils.assertions import (
     assert_task_response
 )
 from tests.utils.helpers import create_generic_payload
+from models import TaskType
 
 
 @pytest.mark.integration
@@ -32,14 +33,14 @@ class TestCatchupEndpoint:
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
-            task_type="catch_me_up",
+            task_type=TaskType.CATCH_ME_UP,
             participant_id="test-participant-1"
         )
         
         response = client.post("/api/catchup", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="catch_me_up")
+        assert_task_response(data, expected_type=TaskType.CATCH_ME_UP)
 
     @pytest.mark.parametrize("max_duration", [30.0, 60.0, 120.0, 300.0])
     def test_catchup_with_max_duration(
@@ -59,7 +60,7 @@ class TestCatchupEndpoint:
         payload = create_generic_payload(
             room_name=test_room_name,
             meeting_id=test_meeting_id,
-            task_type="catch_me_up",
+            task_type=TaskType.CATCH_ME_UP,
             participant_id="test-participant-2",
             max_duration=max_duration
         )
@@ -67,11 +68,11 @@ class TestCatchupEndpoint:
         response = client.post("/api/catchup", json=payload)
         
         data = assert_successful_response(response)
-        assert_task_response(data, expected_type="catch_me_up")
+        assert_task_response(data, expected_type=TaskType.CATCH_ME_UP)
 
     def test_catchup_missing_required_fields(self, client: TestClient):
         """Test catchup endpoint with missing required fields"""
-        payload = {"type": "catch_me_up"}
+        payload = {"type": TaskType.CATCH_ME_UP}
         
         response = client.post("/api/catchup", json=payload)
         

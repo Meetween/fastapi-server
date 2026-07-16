@@ -195,7 +195,7 @@ async def transcribe_audio(
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = get_task_prompt("ASR", language)
+    prompt = get_task_prompt(TaskType.TRANSCRIPTION, language)
 
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
@@ -266,7 +266,7 @@ async def caption_audio(
 
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = get_task_prompt("ASR", language)
+    prompt = get_task_prompt(TaskType.TRANSCRIPTION, language)
 
     transcription = await engine._generate_text(
         prompt=prompt,
