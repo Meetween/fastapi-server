@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 _VALID_STATUSES = set(get_args(agendaStatusTypes))
 
+_COMPLETED_STATUS = "completed"
+
 
 def _normalize_agenda_text(text: str) -> str:
     """
@@ -77,6 +79,11 @@ def _decode_json(raw_text: str) -> object:
         raise ValueError(f"Invalid JSON in model output: {raw_text}")
 
 
+def _processable_items(items: List[AgendaItem]) -> List[AgendaItem]:
+    """Items eligible for LLM status inference. Completed items are locked."""
+    return [item for item in items if item.status != _COMPLETED_STATUS]
+
+
 def _build_items_from_inference(
     inferred_items: List[AgendaItem],
     original_items: List[AgendaItem],
@@ -84,6 +91,7 @@ def _build_items_from_inference(
     """
     Normalize model output and preserve original ordering.
     Uses index-based status updates while preserving original ordering and text.
+    Completed items keep their status (only a moderator can un-complete them).
     """
     by_index: Dict[int, str] = {}
     for item in inferred_items:
@@ -91,7 +99,10 @@ def _build_items_from_inference(
 
     normalized_items: List[AgendaItem] = []
     for item in original_items:
-        status = by_index.get(item.index, item.status)
+        if item.status == _COMPLETED_STATUS:
+            status = _COMPLETED_STATUS
+        else:
+            status = by_index.get(item.index, item.status)
         normalized_items.append(
             AgendaItem(index=item.index, text=item.text, status=status)
         )
@@ -191,8 +202,14 @@ async def agenda_tracking(
 
     if not transcript.strip():
         return Response(status_code=204)
+
+    # Completed items are locked; only non-completed items are sent to the LLM.
+    processable = _processable_items(request.items)
+    if not processable:
+        return Response(status_code=204)
+
     try:
-        agenda_prompt = _build_agenda_prompt(request.items, transcript)
+        agenda_prompt = _build_agenda_prompt(processable, transcript)
         result = await engine._generate_text(
             prompt=agenda_prompt,
             audio=None,
@@ -200,7 +217,7 @@ async def agenda_tracking(
             task=TaskType.AGENDA_TRACKING,
             do_sample=False,
         )
-        parsed = _parse_inference_payload(result, request.items)
+        parsed = _parse_inference_payload(result, processable)
         if parsed is None:
             logger.warning(
                 "Agenda tracking output invalid (parse/schema or mismatch with request items); "

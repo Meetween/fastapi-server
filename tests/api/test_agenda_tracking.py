@@ -257,3 +257,92 @@ def test_agenda_tracking_invalid_task_type_returns_422(
     response = client.post("/api/agenda-tracking", json=payload)
 
     assert response.status_code == 422
+
+
+def test_agenda_tracking_preserves_completed_status_against_llm_uncomplete(
+    client: TestClient,
+    test_meeting_id: str,
+):
+    """Completed items must not be reverted by Butler/LLM sync."""
+    room_id = "agenda-room-completed-lock"
+    payload = _payload(meeting_id=test_meeting_id, room_id=room_id)
+    payload["items"][0]["status"] = "completed"
+    try:
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=room_id,
+            transcript="Budget was somehow not finished. Hiring is done.",
+        )
+
+        mock_engine = Mock()
+        captured_prompt = {"value": None}
+
+        async def mock_generate_text(*args, **kwargs):
+            captured_prompt["value"] = kwargs.get("prompt") or (
+                args[0] if args else None
+            )
+            # LLM incorrectly tries to un-complete index 0 and only returns
+            # processable items (1 and 2) — but even if it returns index 0,
+            # completed must stay locked.
+            return (
+                '{"items":['
+                '{"index":1,"text":"Hiring plan","status":"completed"},'
+                '{"index":2,"text":"Marketing strategy","status":"pending"}'
+                "]}"
+            )
+
+        mock_engine._generate_text = mock_generate_text
+
+        with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
+            response = client.post("/api/agenda-tracking", json=payload)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert [item["status"] for item in data["items"]] == [
+            "completed",
+            "completed",
+            "pending",
+        ]
+        # Completed item must not be included in the LLM prompt.
+        assert captured_prompt["value"] is not None
+        assert "Budget discussion" not in captured_prompt["value"]
+        assert "Hiring plan" in captured_prompt["value"]
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id, room_name=room_id, force=True
+        )
+
+
+def test_agenda_tracking_all_completed_skips_inference(
+    client: TestClient,
+    test_meeting_id: str,
+):
+    room_id = "agenda-room-all-completed"
+    payload = _payload(meeting_id=test_meeting_id, room_id=room_id)
+    for item in payload["items"]:
+        item["status"] = "completed"
+    try:
+        SessionManager.update_transcript(
+            meeting_id=test_meeting_id,
+            room_name=room_id,
+            transcript="Everything is done.",
+        )
+
+        mock_engine = Mock()
+        called = {"text": False}
+
+        async def mock_generate_text(*args, **kwargs):
+            called["text"] = True
+            return '{"items":[]}'
+
+        mock_engine._generate_text = mock_generate_text
+
+        with patch("api.routes.agenda.EngineManager.get_lmm", return_value=mock_engine):
+            response = client.post("/api/agenda-tracking", json=payload)
+
+        assert response.status_code == 204
+        assert called["text"] is False
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id, room_name=room_id, force=True
+        )
