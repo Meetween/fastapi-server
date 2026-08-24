@@ -268,6 +268,50 @@ class SessionManager:
         )
 
     @classmethod
+    def add_participants(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        participants: List[Dict[str, str]],
+    ) -> None:
+        """
+        Add or update participants in usermap.
+        Format: [{"participant_id": "xxx", "username": "John Doe"}, ...]
+        Participants are not removed.
+        """
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+
+        for p in participants:
+            participant_id = p.get("participant_id")
+            username = p.get("username")
+            if participant_id and username:
+                session.usermap[participant_id] = username
+
+        logger.info(
+            f"Updated usermap for meeting_id={meeting_id}: {len(session.usermap)} participants"
+        )
+
+    @classmethod
+    def get_username_by_id(cls, meeting_id: str, participant_id: str) -> Optional[str]:
+        """Map participant_id -> username"""
+        session = cls._sessions.get(meeting_id)
+        if not session:
+            return None
+        return session.usermap.get(participant_id)
+
+    @classmethod
+    def get_id_by_username(cls, meeting_id: str, username: str) -> Optional[str]:
+        """Map username -> participant_id (returns first match)"""
+        session = cls._sessions.get(meeting_id)
+        if not session:
+            return None
+
+        for pid, uname in session.usermap.items():
+            if uname == username:
+                return pid
+        return None
+
+    @classmethod
     def clear_session(cls, meeting_id: str, room_name: Optional[str], force: bool = False) -> None:
         """
         Remove all in-memory state for a meeting.
