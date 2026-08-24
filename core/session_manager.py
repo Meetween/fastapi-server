@@ -15,19 +15,30 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class TranscriptEntry:
+    """Single transcript entry with speaker and timestamp"""
+    participant_id: str
+    username: str
+    text: str
+    timestamp: Optional[float] = None
+
+
+@dataclass
 class Session:
     """
     In-memory session state for a meeting.
 
     - `meeting_id` / `room_name`: identify the active meeting.
-    - `transcript`: running transcript used as context for Q&A.
+    - `transcript`: structured transcript with speaker + timestamp (List[TranscriptEntry]).
     - `participant_histories`: per-participant chat history (HistoryEntry list).
+    - `usermap`: mapping of participant_id <-> username (persistent across join/leave).
     """
 
     meeting_id: str
     room_name: Optional[str] = None
-    transcript: Optional[str] = None
+    transcript: List[TranscriptEntry] = field(default_factory=list)
     participant_histories: Dict[str, List[HistoryEntry]] = field(default_factory=dict)
+    usermap: Dict[str, str] = field(default_factory=dict)  # participant_id -> username
 
 
 class SessionManager:

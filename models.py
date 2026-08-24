@@ -94,6 +94,17 @@ class HistoryEntry(BaseModel):
     content: str
 
 
+class ParticipantInfo(BaseModel):
+    """Single participant information"""
+    participant_id: str
+    username: str
+
+
+class ParticipantUpdateRequest(BaseModel):
+    """Request to update participant list for a meeting"""
+    participants: List[ParticipantInfo]
+
+
 class AgendaItem(BaseModel):
     index: int = Field(..., ge=0)
     text: str = Field(..., min_length=1, description="Agenda item text")
