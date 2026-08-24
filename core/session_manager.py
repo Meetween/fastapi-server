@@ -206,23 +206,59 @@ class SessionManager:
         return session
 
     @classmethod
-    def update_transcript(cls, meeting_id: str, room_name: Optional[str], transcript: Optional[str]) -> None:
-        """Append transcript text for a meeting"""
+    def update_transcript(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        transcript: Optional[str],
+        participant_id: Optional[str] = None,
+        timestamp: Optional[float] = None,
+    ) -> None:
+        """
+        Append transcript entry for a meeting.
+
+        Requires participant_id and timestamp to store entry.
+        """
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
         if not transcript:
             return
+        if participant_id is None and timestamp is None:
+            logger.warning("participant_id and timestamp returned from model is None")
+        username = session.usermap.get(participant_id, "Unknown")
+        entry = TranscriptEntry(
+            participant_id=participant_id,
+            username=username,
+            text=transcript,
+            timestamp=timestamp,
+        )
+        session.transcript.append(entry)
 
-        session.transcript = f"{session.transcript or ''} {transcript}".strip()
-
-        if len(session.transcript) > cls.TRANSCRIPT_CHARS_LIMIT:
-            logger.info(f"Truncating transcript for meeting_id={meeting_id} from {len(session.transcript)} to {cls.TRANSCRIPT_CHARS_LIMIT}")
-            session.transcript = session.transcript[-cls.TRANSCRIPT_CHARS_LIMIT :]
+        # Truncate by entry count if needed
+        max_entries = cls.TRANSCRIPT_CHARS_LIMIT // 100  # rough estimate: ~100 chars per entry
+        if len(session.transcript) > max_entries:
+            logger.info(
+                f"Truncating transcript for meeting_id={meeting_id} from {len(session.transcript)} to {max_entries} entries"
+            )
+            session.transcript = session.transcript[-max_entries:]
 
     @classmethod
     def get_transcript(cls, meeting_id: str, room_name: Optional[str]) -> Optional[str]:
-        """Return the current transcript for a meeting, if any."""
+        """
+        Return transcript formatted as dialogue for LLM context.
+
+        Format: "John Doe: Hello everyone\nJane Smith: Hi John\n..."
+        Returns None if no transcript entries exist.
+        """
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
-        return session.transcript
+
+        if not session.transcript:
+            return None
+
+        dialogue_lines = []
+        for entry in session.transcript:
+            dialogue_lines.append(f"{entry.username}: {entry.text}")
+
+        return "\n".join(dialogue_lines)
 
     @classmethod
     def get_participant_history(cls, meeting_id: str, room_name: Optional[str], participant_id: str) -> List[HistoryEntry]:
