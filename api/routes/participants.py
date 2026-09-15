@@ -1,9 +1,12 @@
 import logging
 from fastapi import APIRouter, HTTPException
+
+from api.deps.auth import REQUIRE_AUTH
+
 from core import SessionManager
 from models import ParticipantUpdateRequest
 
-router = APIRouter()
+router = APIRouter(tags=["participants"], dependencies=REQUIRE_AUTH)
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +45,6 @@ async def update_participants(
             "participants_updated": len(participants),
         }
 
-    except Exception as e:
-        logger.error(f"Error updating participants: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        logger.error("Error updating participants", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to update participants")

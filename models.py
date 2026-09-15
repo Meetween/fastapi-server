@@ -102,7 +102,14 @@ class ParticipantInfo(BaseModel):
 
 class ParticipantUpdateRequest(BaseModel):
     """Request to update participant list for a meeting"""
-    participants: List[ParticipantInfo]
+    participants: List[ParticipantInfo] = Field(..., max_length=500)
+
+
+class ParticipantUpdateResponse(BaseModel):
+    """Response for a participant update"""
+    status: str
+    meeting_id: str
+    participants_updated: int
 
 
 class AgendaItem(BaseModel):

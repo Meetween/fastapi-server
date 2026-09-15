@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class TranscriptEntry:
     """Single transcript entry with speaker and timestamp"""
-    participant_id: str
+    participant_id: Optional[str]
     username: str
     text: str
     timestamp: Optional[float] = None
@@ -222,8 +222,11 @@ class SessionManager:
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
         if not transcript:
             return
-        if participant_id is None and timestamp is None:
-            logger.warning("participant_id and timestamp returned from model is None")
+        if participant_id is None or timestamp is None:
+            logger.warning(
+                "Missing attribution for meeting_id=%s: participant_id=%s timestamp=%s",
+                meeting_id, participant_id, timestamp,
+            )
         username = session.usermap.get(participant_id, "Unknown")
         entry = TranscriptEntry(
             participant_id=participant_id,
@@ -327,25 +330,6 @@ class SessionManager:
             f"Updated usermap for meeting_id={meeting_id}: {len(session.usermap)} participants"
         )
 
-    @classmethod
-    def get_username_by_id(cls, meeting_id: str, participant_id: str) -> Optional[str]:
-        """Map participant_id -> username"""
-        session = cls._sessions.get(meeting_id)
-        if not session:
-            return None
-        return session.usermap.get(participant_id)
-
-    @classmethod
-    def get_id_by_username(cls, meeting_id: str, username: str) -> Optional[str]:
-        """Map username -> participant_id (returns first match)"""
-        session = cls._sessions.get(meeting_id)
-        if not session:
-            return None
-
-        for pid, uname in session.usermap.items():
-            if uname == username:
-                return pid
-        return None
 
     @classmethod
     def clear_session(cls, meeting_id: str, room_name: Optional[str], force: bool = False) -> None:
