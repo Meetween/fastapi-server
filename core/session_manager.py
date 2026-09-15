@@ -236,13 +236,19 @@ class SessionManager:
         )
         session.transcript.append(entry)
 
-        # Truncate by entry count if needed
-        max_entries = cls.TRANSCRIPT_CHARS_LIMIT // 100  # rough estimate: ~100 chars per entry
-        if len(session.transcript) > max_entries:
+        total = 0
+        keep_idx = 0
+        for i in range(len(session.transcript) - 1, -1, -1):
+            e = session.transcript[i]
+            total += len(e.username) + len(e.text) + 2
+            if total > cls.TRANSCRIPT_CHARS_LIMIT:
+                keep_idx = i + 1
+                break
+        if keep_idx > 0:
             logger.info(
-                f"Truncating transcript for meeting_id={meeting_id} from {len(session.transcript)} to {max_entries} entries"
+                f"Truncating transcript for meeting_id={meeting_id}: dropping {keep_idx} oldest entries to fit {cls.TRANSCRIPT_CHARS_LIMIT} char budget"
             )
-            session.transcript = session.transcript[-max_entries:]
+            session.transcript = session.transcript[keep_idx:]
 
     @classmethod
     def get_transcript(cls, meeting_id: str, room_name: Optional[str]) -> Optional[str]:
@@ -260,7 +266,6 @@ class SessionManager:
         dialogue_lines = []
         for entry in session.transcript:
             dialogue_lines.append(f"{entry.username}: {entry.text}")
-
         return "\n".join(dialogue_lines)
 
     @classmethod
