@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -108,6 +108,10 @@ class AccessTokenError(ValueError):
     """Access JWT is missing, invalid, or has no subject."""
 
 
+class AccessTokenExpiredError(AccessTokenError):
+    """Access JWT was valid but its exp claim has passed. Clients should refresh."""
+
+
 class RefreshTokenError(ValueError):
     """Refresh JWT is missing, invalid, or has no subject."""
 
@@ -119,6 +123,8 @@ def resolve_access_subject(token: str) -> str:
             token.strip(),
             audience=settings.app_jwt.audience_access,
         )
+    except ExpiredSignatureError as exc:
+        raise AccessTokenExpiredError("Access token expired") from exc
     except JWTError as exc:
         raise AccessTokenError("Invalid access token") from exc
 
@@ -135,6 +141,8 @@ def resolve_refresh_subject(token: str) -> str:
             token.strip(),
             audience=settings.app_jwt.audience_refresh,
         )
+    except ExpiredSignatureError as exc:
+        raise RefreshTokenError("Refresh token expired") from exc
     except JWTError as exc:
         raise RefreshTokenError("Invalid refresh token") from exc
 
