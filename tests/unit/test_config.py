@@ -106,3 +106,47 @@ def test_settings_nested_views_are_cached() -> None:
     assert s.meeting_jwt is s.meeting_jwt
     assert s.mongo is s.mongo
     assert s.triton is s.triton
+    assert s.virtual_participants is s.virtual_participants
+
+
+def test_settings_virtual_participants_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("VP_WORKER_URL", "http://worker.internal:8000")
+    monkeypatch.setenv("VP_WORKER_SECRET", "secret-from-env-0123456789")
+    monkeypatch.setenv("VP_REQUIRE_HUMAN", "false")
+    monkeypatch.setenv("VP_MAX_BOTS_PER_ROOM", "4")
+    monkeypatch.setenv("VP_PROSODY_HTTP_URL", "http://prosody.internal:5280")
+    monkeypatch.setenv("VP_XMPP_DOMAIN", "meet.example")
+    monkeypatch.setenv("VP_REQUEST_TIMEOUT_S", "2.5")
+
+    vp = Settings(model_profile="speechlmm").virtual_participants
+
+    assert vp.worker_url == "http://worker.internal:8000"
+    assert vp.worker_secret == "secret-from-env-0123456789"
+    assert vp.require_human is False
+    assert vp.max_bots_per_room == 4
+    assert vp.prosody_http_url == "http://prosody.internal:5280"
+    assert vp.xmpp_domain == "meet.example"
+    assert vp.request_timeout_s == 2.5
+
+
+def test_settings_virtual_participants_defaults(monkeypatch) -> None:
+    for name in (
+        "VP_WORKER_URL",
+        "VP_WORKER_SECRET",
+        "VP_REQUIRE_HUMAN",
+        "VP_MAX_BOTS_PER_ROOM",
+        "VP_PROSODY_HTTP_URL",
+        "VP_XMPP_DOMAIN",
+        "VP_REQUEST_TIMEOUT_S",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    vp = Settings(model_profile="speechlmm", _env_file=None).virtual_participants
+
+    assert vp.worker_url == "http://vp-worker:8000"
+    assert vp.worker_secret == ""
+    assert vp.require_human is True
+    assert vp.max_bots_per_room == 2
+    assert vp.prosody_http_url == "http://xmpp.meet.jitsi:5280"
+    assert vp.xmpp_domain == "meet.jitsi"
+    assert vp.request_timeout_s == 10.0

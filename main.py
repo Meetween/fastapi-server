@@ -26,6 +26,7 @@ from api.routes import (
     auth,
     translation,
     participants,
+    virtual_participants,
 )
 
 from fastapi import FastAPI
@@ -111,6 +112,7 @@ async def shutdown_event():
 
     await SessionManager.cleanup()
     await EngineManager.cleanup()
+    await virtual_participants.close_http_client()
     await async_mongo_manager.close()
 
     logger.info("Server shutdown complete")
@@ -127,6 +129,7 @@ app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
 app.include_router(translation.router)
 app.include_router(participants.router)
+app.include_router(virtual_participants.router)
 
 
 if __name__ == "__main__":

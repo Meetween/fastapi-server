@@ -61,6 +61,19 @@ class MongoSettings(BaseModel):
     meeting_context_collection: str
 
 
+class VirtualParticipantSettings(BaseModel):
+    """Virtual participant control route: vp-worker and Prosody HTTP endpoints."""
+
+    model_config = ConfigDict(frozen=True)
+    worker_url: str
+    worker_secret: str
+    require_human: bool
+    max_bots_per_room: int
+    prosody_http_url: str
+    xmpp_domain: str
+    request_timeout_s: float
+
+
 def _resolve_profiles_path(path: Path) -> Path:
     if path.is_absolute():
         return path
@@ -180,10 +193,20 @@ class Settings(BaseSettings):
     triton_max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
 
+    # Virtual participant control route. Environment names are the upper case field names.
+    vp_worker_url: str = "http://vp-worker:8000"
+    vp_worker_secret: str = ""
+    vp_require_human: bool = True
+    vp_max_bots_per_room: int = 2
+    vp_prosody_http_url: str = "http://xmpp.meet.jitsi:5280"
+    vp_xmpp_domain: str = "meet.jitsi"
+    vp_request_timeout_s: float = 10.0
+
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
     _meeting_jwt: MeetingJwtSettings = PrivateAttr()
     _mongo: MongoSettings = PrivateAttr()
+    _virtual_participants: VirtualParticipantSettings = PrivateAttr()
 
     def model_post_init(self, __context) -> None:
         profile = _load_triton_profile_overrides(
@@ -217,6 +240,15 @@ class Settings(BaseSettings):
             users_collection=self.mongo_users_collection,
             meeting_context_collection=self.mongo_meeting_context_collection,
         )
+        self._virtual_participants = VirtualParticipantSettings(
+            worker_url=self.vp_worker_url,
+            worker_secret=self.vp_worker_secret,
+            require_human=self.vp_require_human,
+            max_bots_per_room=self.vp_max_bots_per_room,
+            prosody_http_url=self.vp_prosody_http_url,
+            xmpp_domain=self.vp_xmpp_domain,
+            request_timeout_s=self.vp_request_timeout_s,
+        )
 
     @property
     def app_jwt(self) -> AppJwtSettings:
@@ -233,6 +265,10 @@ class Settings(BaseSettings):
     @property
     def mongo(self) -> MongoSettings:
         return self._mongo
+
+    @property
+    def virtual_participants(self) -> VirtualParticipantSettings:
+        return self._virtual_participants
 
 
 settings = Settings()
