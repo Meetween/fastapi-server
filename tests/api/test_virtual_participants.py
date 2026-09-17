@@ -49,9 +49,18 @@ def bot_view(
     }
 
 
-def occupant(display_name: str, *, jid: str | None = None) -> dict[str, str]:
+def occupant(display_name: str, *, nick: str = "a1b2c3d4") -> dict[str, str]:
+    """One occupant exactly as ``mod_muc_size`` reports it.
+
+    The ``jid`` field is ``tostring(occupant.nick)``, that is the room JID with the MUC
+    nickname as its resource. It is never the occupant's real JID, so it carries no
+    information about who or what the occupant is. Verified against the running Prosody:
+    ``{"jid": "room@muc.meet.jitsi/4d5f34aa", "display_name": "Probe (bot)", "email": ""}``.
+    Do not add a parameter that lets a test supply a real JID here; that is what hid the
+    transcriber from the human check.
+    """
     return {
-        "jid": jid or f"{ROOM}@muc.{XMPP_DOMAIN}/a1b2c3d4",
+        "jid": f"{ROOM}@muc.{XMPP_DOMAIN}/{nick}",
         "email": "",
         "display_name": display_name,
     }
@@ -213,15 +222,39 @@ class TestCreateVirtualParticipant:
     def test_room_with_only_bots_is_refused(self, client: TestClient, upstream: FakeUpstream):
         upstream.occupants = [
             occupant("Agentar (bot)"),
-            occupant("Helper (bot)", jid=f"{ROOM}@muc.{XMPP_DOMAIN}/e5f6a7b8"),
-            occupant("Transcriber", jid=f"transcriber@hidden.{XMPP_DOMAIN}/jigasi"),
-            occupant("", jid=f"recorder@recorder.{XMPP_DOMAIN}/jibri"),
+            occupant("Helper (bot)", nick="e5f6a7b8"),
         ]
 
         response = client.post(BASE, json={"room_name": ROOM})
 
         assert response.status_code == 409
         assert response.json()["detail"] == "no human participant in the room"
+        assert upstream.worker_requests() == []
+
+    def test_room_with_only_a_transcriber_is_refused(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        """A meeting whose last human left while transcription runs has no human in it.
+
+        Jigasi joins as "Transcriber" (TranscriptionGatewaySession.DISPLAY_NAME) and its
+        occupant record is indistinguishable from a human's except by that name.
+        """
+        upstream.occupants = [occupant("Transcriber", nick="jigasi01")]
+
+        response = client.post(BASE, json={"room_name": ROOM})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "no human participant in the room"
+        assert upstream.worker_requests() == []
+
+    def test_service_name_match_ignores_case_and_padding(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        upstream.occupants = [occupant("  transcriber  "), occupant("RECORDER", nick="jibri001")]
+
+        response = client.post(BASE, json={"room_name": ROOM})
+
+        assert response.status_code == 409
         assert upstream.worker_requests() == []
 
     def test_refused_at_max_bots_per_room(self, client: TestClient, upstream: FakeUpstream):
@@ -348,6 +381,11 @@ class TestCreateVirtualParticipant:
     def test_occupant_without_name_counts_as_human(
         self, client: TestClient, upstream: FakeUpstream
     ):
+        """A participant who never set a display name is a person, not a service.
+
+        Nothing in the mod_muc_size payload separates them from a service participant, and
+        refusing the request would be the worse error.
+        """
         upstream.occupants = ["garbage", occupant("Agentar (bot)"), occupant("")]
 
         response = client.post(BASE, json={"room_name": ROOM})

@@ -164,15 +164,27 @@ def _relay(response: httpx.Response) -> JSONResponse:
     return JSONResponse(status_code=status, content=_json_body(response), headers=headers)
 
 
-def _is_human(occupant: Any, xmpp_domain: str) -> bool:
+def _is_human(occupant: Any, service_names: frozenset[str]) -> bool:
+    """Whether one ``mod_muc_size`` occupant counts as a human in the room.
+
+    The test is the display name, and only the display name. ``mod_muc_size`` reports
+    ``jid = tostring(occupant.nick)``, which in Prosody MUC is the room JID with the nickname
+    as its resource (``room@muc.<domain>/nick``) and never the occupant's real JID, so the
+    domain of that field is always the MUC domain and can tell nobody apart. Service
+    participants are therefore excluded by name: the worker's bot suffix, plus the configured
+    service names (Jigasi joins a transcription as "Transcriber").
+
+    The limitation this leaves is that a human free to set their display name can take a
+    service name and stop counting as a human, which costs them the bot they were asking for
+    and nothing else. Recognising service participants properly needs Prosody to publish the
+    real JID; see docs/AGENTAR-MVP.md.
+    """
     if not isinstance(occupant, dict):
         return False
-    display_name = str(occupant.get("display_name") or "")
+    display_name = str(occupant.get("display_name") or "").strip()
     if display_name.endswith(BOT_NAME_SUFFIX):
         return False
-    bare_jid = str(occupant.get("jid") or "").split("/", 1)[0]
-    jid_domain = bare_jid.rsplit("@", 1)[-1].lower()
-    return jid_domain not in {f"hidden.{xmpp_domain}", f"recorder.{xmpp_domain}"}
+    return display_name.casefold() not in service_names
 
 
 async def _count_humans(
@@ -199,7 +211,7 @@ async def _count_humans(
     if not isinstance(occupants, list):
         logger.error(f"prosody room lookup returned an unexpected payload for {room}")
         raise HTTPException(status_code=503, detail="room presence lookup unavailable")
-    return sum(1 for occupant in occupants if _is_human(occupant, vp.xmpp_domain))
+    return sum(1 for occupant in occupants if _is_human(occupant, vp.service_names))
 
 
 async def _active_bots(client: httpx.AsyncClient, room: str) -> list[dict[str, Any]]:

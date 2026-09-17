@@ -61,6 +61,17 @@ class MongoSettings(BaseModel):
     meeting_context_collection: str
 
 
+# Display names that belong to a service, not a person. Jigasi joins a transcription as
+# "Transcriber" (TranscriptionGatewaySession.DISPLAY_NAME); Jibri records as "Recorder".
+# Matched case insensitively. The default is not empty on purpose: a room presence check that
+# fails open is what let a transcriber count as a human.
+DEFAULT_VP_SERVICE_NAMES = "Transcriber,Recorder,Jibri,Jigasi"
+
+
+def _service_name_set(raw: str) -> frozenset[str]:
+    return frozenset(name.strip().casefold() for name in raw.split(",") if name.strip())
+
+
 class VirtualParticipantSettings(BaseModel):
     """Virtual participant control route: vp-worker and Prosody HTTP endpoints."""
 
@@ -72,6 +83,9 @@ class VirtualParticipantSettings(BaseModel):
     prosody_http_url: str
     xmpp_domain: str
     request_timeout_s: float
+    service_names: frozenset[str] = Field(
+        default_factory=lambda: _service_name_set(DEFAULT_VP_SERVICE_NAMES)
+    )
 
 
 def _resolve_profiles_path(path: Path) -> Path:
@@ -201,6 +215,8 @@ class Settings(BaseSettings):
     vp_prosody_http_url: str = "http://xmpp.meet.jitsi:5280"
     vp_xmpp_domain: str = "meet.jitsi"
     vp_request_timeout_s: float = 10.0
+    # Comma separated display names that must not count as a human in the room.
+    vp_service_names: str = DEFAULT_VP_SERVICE_NAMES
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
@@ -248,6 +264,7 @@ class Settings(BaseSettings):
             prosody_http_url=self.vp_prosody_http_url,
             xmpp_domain=self.vp_xmpp_domain,
             request_timeout_s=self.vp_request_timeout_s,
+            service_names=_service_name_set(self.vp_service_names),
         )
 
     @property
