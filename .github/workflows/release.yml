@@ -1,0 +1,65 @@
+# release-please keeps one pull request open, "chore(main): release x.y.z", and rewrites it on
+# every merge to main. Its diff is the CHANGELOG entry plus the version in pyproject.toml and
+# config.py. Merging that pull request is what cuts a release: it commits the version, creates
+# the tag, publishes the GitHub Release, and from here deploys the tag to the VM.
+name: "release: draft or cut"
+# GitHub titles a run with the commit subject, so this workflow and CI, which both fire on a
+# push to main, would otherwise appear as two identical rows.
+run-name: release on ${{ github.ref_name }}
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    name: Draft or cut the release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      # The default GITHUB_TOKEN, deliberately. GitHub does not start workflow runs from events
+      # raised with it, which is its guard against a workflow triggering itself forever. The
+      # consequence to know about: no CI runs on the release pull request, so CI cannot be a
+      # required check on it. Accepted, in exchange for having no App or long-lived token to own.
+      - name: Run release-please
+        id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Dispatched rather than called, so the deployment gets its own run named after the tag.
+  # workflow_dispatch is one of the two events that still fire when raised with GITHUB_TOKEN.
+  deploy:
+    name: Deploy the release to the VM
+    needs: release-please
+    if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch the deployment at the tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh workflow run deploy.yml --ref "$TAG" -f ref="$TAG"
+          echo "Dispatched deploy: vm for $TAG"

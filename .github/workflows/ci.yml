@@ -1,0 +1,46 @@
+# Runs the test suite on every pull request and on every push to main. Until this file
+# existed no check had ever run in this repository: 46 pull requests merged with 117 tests
+# nobody was obliged to run, and a pull request with a broken import still looked mergeable.
+name: "check: ci"
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# A new push to the same pull request cancels the run in flight. Runs on main are never
+# cancelled, so the history of the trunk stays complete.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    # The GitHub default is 360 minutes, which turns a hung step into six hours of runner.
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same uv version as the VM, so the lock file is read by the tool that wrote it.
+      # uv reads .python-version and provisions the interpreter itself.
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.9.13"
+
+      # pydub decodes audio through the ffmpeg binary. Ten tests error without it.
+      - name: Install ffmpeg
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg
+
+      # The lock pins torch to the CPU wheel index on Linux, so this downloads a few hundred
+      # megabytes and not the CUDA build. No services are started: MongoDB is replaced by
+      # mongomock-motor and Triton is mocked in tests/conftest.py.
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Run tests
+        run: uv run pytest

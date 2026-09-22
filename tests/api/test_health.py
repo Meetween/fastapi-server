@@ -3,6 +3,7 @@ Tests for health check endpoints
 """
 import pytest
 from fastapi.testclient import TestClient
+from config import settings
 from tests.utils.assertions import assert_successful_response
 
 
@@ -32,4 +33,5 @@ class TestHealthEndpoints:
         data = assert_successful_response(response)
         assert "status" in data
         assert data["status"] == "healthy"
+        assert data["version"] == settings.app_version
         assert "engine" in data

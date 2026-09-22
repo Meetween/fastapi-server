@@ -26,6 +26,7 @@ async def health_check():
     engine_loaded = EngineManager.get_lmm() is not None
     return {
         "status": "healthy",
+        "version": settings.app_version,
         "engine": "loaded" if engine_loaded else "not loaded",
         "model_profile": settings.model_profile,
         "triton_url": settings.triton.url,

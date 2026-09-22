@@ -1,0 +1,59 @@
+# Deploys one git ref to the shared VM over SSH. release.yml dispatches it at every release
+# tag; anyone with write access can dispatch it by hand with a branch, a tag or a commit.
+#
+# The gate is write access plus the tag. The organisation is on GitHub Free with a private
+# repository, so there is no environment approval to put in front of this. The SSH key in
+# VM_SSH_KEY is bound on the VM to a forced command that accepts only "deploy <ref>" and
+# "status", see deploy/ssh-gate.sh, so the key cannot open a shell.
+#
+# Nothing is checked out on the runner. The VM fetches the ref, installs the locked
+# dependencies, restarts the service, polls /health and rolls back on its own if the reported
+# version is not the one expected. Its exit code is the result of this job.
+name: "deploy: vm"
+run-name: deploy ${{ inputs.ref }} to the VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag, branch or commit to deploy (vX.Y.Z for a release)"
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+# Two deployments never run at the same time and none is cancelled: a cancelled deploy could
+# leave the VM between two versions.
+concurrency:
+  group: deploy-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy over SSH
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Prepare the SSH client
+        env:
+          VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
+          VM_KNOWN_HOSTS: ${{ vars.VM_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$VM_SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
+
+      # REF goes through env:, never through ${{ }} inside run:, and the gate on the VM
+      # validates it again before it reaches git.
+      - name: Run the remote deploy
+        env:
+          VM_HOST: ${{ vars.VM_HOST }}
+          VM_USER: ${{ vars.VM_USER }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+            "$VM_USER@$VM_HOST" "deploy $REF"
