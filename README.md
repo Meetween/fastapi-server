@@ -1,6 +1,6 @@
 # Meetween FastAPI Server
 
-[![Python](https://img.shields.io/badge/Python-3.14%2B-green)](https://www.python.org/)
+[![Python](https://img.shields.io/badge/Python-3.12-green)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async%20API-009688)](https://fastapi.tiangolo.com/)
 [![Triton](https://img.shields.io/badge/Triton-Inference%20Server-blue)](https://github.com/triton-inference-server/server)
 
@@ -80,7 +80,7 @@ fastapi-server/
 
 ## Requirements
 
-- Python 3.14+ (as declared in `pyproject.toml`)
+- Python 3.12 (see `.python-version`) and [uv](https://docs.astral.sh/uv/)
 - FFmpeg (required by `pydub` for audio decoding)
 - Access to a running Triton inference server
 - A compatible model served through Triton (for example SpeechLMM, Qwen Omni 2.5, Voxtral)
@@ -92,9 +92,7 @@ fastapi-server/
 ```bash
 git clone <your-repo-url>
 cd fastapi-server
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 If FFmpeg is not already installed:
@@ -117,13 +115,13 @@ export TRITON_TIMEOUT="1800"
 ### 3) Start the server
 
 ```bash
-python main.py
+uv run main.py
 ```
 
 Or run with Uvicorn directly:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ### 4) Verify service health
@@ -210,15 +208,15 @@ Jigasi is the primary real-time integration path for transcript streaming in thi
 ### Run tests
 
 ```bash
-pytest
+uv run pytest
 ```
 
 Useful options:
 
 ```bash
-pytest -m "not slow"
-pytest tests/api/test_summary.py
-pytest -k "chat"
+uv run pytest -m "not slow"
+uv run pytest tests/api/test_summary.py
+uv run pytest -k "chat"
 ```
 
 Coverage reports are configured in `pyproject.toml` and include:
@@ -243,9 +241,10 @@ Coverage reports are configured in `pyproject.toml` and include:
 
 Contributions are welcome. Please keep PRs focused, include tests for behavior changes, and preserve API/schema compatibility unless a breaking change is explicitly discussed.
 
-Before opening a PR:
+See `CONTRIBUTING.md` for branches, pull request titles and releases, and `deploy/README.md`
+for the deployment. Before opening a PR:
 
-- Run `pytest`
+- Run `uv run pytest`
 - Update docs when behavior or configuration changes
 - Avoid committing generated files such as coverage output
 - Keep endpoint contracts backward compatible unless the change is intentional

@@ -13,10 +13,6 @@ Audio format: PCM LINEAR16, 48kHz, mono/stereo
 from models import TaskType, HistoryEntry
 import numpy as np
 import torch
-try:
-    import torchaudio  # optional; may be missing or binary-incompatible
-except Exception:  # pragma: no cover
-    torchaudio = None
 import librosa
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
@@ -43,13 +39,7 @@ def monify_and_resample_audio(
         Tuple of (mono_audio_tensor, target_sr)
     """
     target_sr = target_sr or orig_sr
-    # Prefer torchaudio when available; otherwise fallback to librosa.
-    if torchaudio is not None:
-        resampler = torchaudio.transforms.Resample(orig_sr, target_sr)
-        audio = resampler(audio)
-        return audio.mean(dim=0, keepdim=True), target_sr
-
-    # Fallback: CPU resample via librosa.
+    # CPU resample via librosa.
     # audio: [channels, samples] or [1, channels, samples]
     if audio.dim() == 3:
         audio = audio.squeeze(0)

@@ -127,11 +127,11 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Meetween FastAPI Server"
-    app_version: str = "1.0.0"
+    app_version: str = "0.1.0"  # x-release-please-version
     host: str = "0.0.0.0"
     port: int = 8000
 
-    recordings_base_path: Path = Path("/mnt/recordings", env="RECORDINGS_BASE_PATH")
+    recordings_base_path: Path = Path("/mnt/recordings")
     recording_format: Optional[str] = "wav"
 
     min_catchup_duration_seconds: int = 60

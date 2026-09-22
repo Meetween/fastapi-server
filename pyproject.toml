@@ -1,16 +1,46 @@
 [project]
 name = "fastapi-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "Meeting intelligence API for Meetween, backed by Triton"
 readme = "README.md"
-requires-python = ">=3.14"
+# The upper bound follows torch 2.3.1, which ships wheels up to CPython 3.12.
+# Remove it when torch leaves the dependency list.
+requires-python = ">=3.12,<3.13"
 dependencies = [
+    "apscheduler>=3.10.0",
     "fastapi>=0.104.1",
+    "httpx>=0.25.0",
+    "librosa",
+    "motor>=3.3.0",
     "numpy>=1.24.3",
     "pydantic>=2.0.0",
+    "pydantic-settings",
+    "pydub",
+    "python-jose>=3.3.0",
+    "pyyaml>=6.0.0",
+    "soundfile",
+    "torch==2.3.1",
     "uvicorn[standard]>=0.24.0",
-    "websockets>=12.0",
 ]
+
+[dependency-groups]
+dev = [
+    "mongomock-motor>=0.0.21",
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.11.0",
+]
+
+# torch is an array container here, inference runs on Triton. On Linux the CPU wheel is a
+# few hundred megabytes instead of the CUDA build. macOS wheels on PyPI are CPU already.
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -23,7 +53,6 @@ addopts = [
     "--cov=butler",
     "--cov=core",
     "--cov-report=term-missing",
-    "--cov-report=html",
 ]
 markers = [
     "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",

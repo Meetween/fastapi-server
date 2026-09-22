@@ -1,3 +1,0 @@
-[submodule "speechlmm"]
-	path = speechlmm
-	url = https://github.com/Meetween/speechlmm.git

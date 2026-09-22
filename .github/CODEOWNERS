@@ -1,0 +1,12 @@
+# CI and release surface.
+# Anything under here decides what runs in CI, which secrets that run can read, and what
+# reaches the VM. A change to it deserves a review from whoever owns the pipeline, not only
+# from whoever owns the application code.
+# Deliberately scoped: no global owner, so ordinary code changes do not put the pipeline
+# owner on every pull request. On the current GitHub plan this file requests a review and
+# does not block a merge.
+
+/.github/                      @mime-pi
+/deploy/                       @mime-pi
+/release-please-config.json    @mime-pi
+/.release-please-manifest.json @mime-pi
