@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Meetween FastAPI Server"
-    app_version: str = "0.1.0"  # x-release-please-version
+    app_version: str = "0.2.0"  # x-release-please-version
     host: str = "0.0.0.0"
     port: int = 8000
 
