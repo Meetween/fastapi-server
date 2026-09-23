@@ -23,6 +23,12 @@ and the description becomes its body, so both are worth writing carefully. Only 
 `fix`, `perf`, `refactor` and `revert` reach the changelog; `chore`, `ci`, `docs`, `test`,
 `build` and `style` are silent.
 
+The scope is the module the change lives in: one of the routes, `agenda`, `auth`, `chat`,
+`participants`, `summary`, `transcription`, `translation`, `websocket`, or `butler`, `deps`,
+`deploy`, `ci`, `docs`. Leave it out when the change spans several. The check only asks for
+lowercase, it does not enforce this list; the changelog groups by type and prints the scope in
+bold, so a shared vocabulary keeps it readable.
+
 Two checks run on every pull request: the title check and the test suite. Neither is
 enforced by GitHub on the current plan, so a red check is a reason not to merge, not a lock.
 
