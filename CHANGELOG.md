@@ -10,6 +10,13 @@ from the pull request titles merged into `main`. Entries are not added by hand. 
 visible in the open `chore(main): release ...` pull request; merging it commits the version, creates
 the `vX.Y.Z` tag, publishes the GitHub Release and deploys it to the VM.
 
+## [0.2.0](https://github.com/Meetween/fastapi-server/compare/v0.1.0...v0.2.0) (2026-09-23)
+
+
+### Fixed
+
+* **deps:** declare pymongo and drop the unused pytest-mock ([#97](https://github.com/Meetween/fastapi-server/issues/97)) ([4fc9c07](https://github.com/Meetween/fastapi-server/commit/4fc9c0720c5874341b7fdddc625197f90330184c))
+
 ## [0.1.0] (2026-09-22)
 
 The service as it stood when release automation started: live captions, transcription, translation,

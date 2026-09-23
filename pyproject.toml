@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-server"
-version = "0.1.0"
+version = "0.2.0"
 description = "Meeting intelligence API for Meetween, backed by Triton"
 readme = "README.md"
 # The upper bound follows torch 2.3.1, which ships wheels up to CPython 3.12.
