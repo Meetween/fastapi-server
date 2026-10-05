@@ -24,6 +24,7 @@ from api.routes import (
     agenda,
     auth,
     translation,
+    participants,
 )
 
 from fastapi import FastAPI
@@ -107,6 +108,7 @@ app.include_router(agenda.router)
 app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
 app.include_router(translation.router)
+app.include_router(participants.router)
 
 
 if __name__ == "__main__":

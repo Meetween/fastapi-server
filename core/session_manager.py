@@ -15,19 +15,30 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class TranscriptEntry:
+    """Single transcript entry with speaker and timestamp"""
+    participant_id: Optional[str]
+    username: str
+    text: str
+    timestamp: Optional[float] = None
+
+
+@dataclass
 class Session:
     """
     In-memory session state for a meeting.
 
     - `meeting_id` / `room_name`: identify the active meeting.
-    - `transcript`: running transcript used as context for Q&A.
+    - `transcript`: structured transcript with speaker + timestamp (List[TranscriptEntry]).
     - `participant_histories`: per-participant chat history (HistoryEntry list).
+    - `usermap`: mapping of participant_id <-> username (persistent across join/leave).
     """
 
     meeting_id: str
     room_name: Optional[str] = None
-    transcript: Optional[str] = None
+    transcript: List[TranscriptEntry] = field(default_factory=list)
     participant_histories: Dict[str, List[HistoryEntry]] = field(default_factory=dict)
+    usermap: Dict[str, str] = field(default_factory=dict)  # participant_id -> username
 
 
 class SessionManager:
@@ -195,23 +206,67 @@ class SessionManager:
         return session
 
     @classmethod
-    def update_transcript(cls, meeting_id: str, room_name: Optional[str], transcript: Optional[str]) -> None:
-        """Append transcript text for a meeting"""
+    def update_transcript(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        transcript: Optional[str],
+        participant_id: Optional[str] = None,
+        timestamp: Optional[float] = None,
+    ) -> None:
+        """
+        Append transcript entry for a meeting.
+
+        Requires participant_id and timestamp to store entry.
+        """
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
         if not transcript:
             return
+        if participant_id is None or timestamp is None:
+            logger.warning(
+                "Missing attribution for meeting_id=%s: participant_id=%s timestamp=%s",
+                meeting_id, participant_id, timestamp,
+            )
+        username = session.usermap.get(participant_id, "Unknown")
+        entry = TranscriptEntry(
+            participant_id=participant_id,
+            username=username,
+            text=transcript,
+            timestamp=timestamp,
+        )
+        session.transcript.append(entry)
 
-        session.transcript = f"{session.transcript or ''} {transcript}".strip()
-
-        if len(session.transcript) > cls.TRANSCRIPT_CHARS_LIMIT:
-            logger.info(f"Truncating transcript for meeting_id={meeting_id} from {len(session.transcript)} to {cls.TRANSCRIPT_CHARS_LIMIT}")
-            session.transcript = session.transcript[-cls.TRANSCRIPT_CHARS_LIMIT :]
+        total = 0
+        keep_idx = 0
+        for i in range(len(session.transcript) - 1, -1, -1):
+            e = session.transcript[i]
+            total += len(e.username) + len(e.text) + 2
+            if total > cls.TRANSCRIPT_CHARS_LIMIT:
+                keep_idx = i + 1
+                break
+        if keep_idx > 0:
+            logger.info(
+                f"Truncating transcript for meeting_id={meeting_id}: dropping {keep_idx} oldest entries to fit {cls.TRANSCRIPT_CHARS_LIMIT} char budget"
+            )
+            session.transcript = session.transcript[keep_idx:]
 
     @classmethod
     def get_transcript(cls, meeting_id: str, room_name: Optional[str]) -> Optional[str]:
-        """Return the current transcript for a meeting, if any."""
+        """
+        Return transcript formatted as dialogue for LLM context.
+
+        Format: "John Doe: Hello everyone\nJane Smith: Hi John\n..."
+        Returns None if no transcript entries exist.
+        """
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
-        return session.transcript
+
+        if not session.transcript:
+            return None
+
+        dialogue_lines = []
+        for entry in session.transcript:
+            dialogue_lines.append(f"{entry.username}: {entry.text}")
+        return "\n".join(dialogue_lines)
 
     @classmethod
     def get_participant_history(cls, meeting_id: str, room_name: Optional[str], participant_id: str) -> List[HistoryEntry]:
@@ -255,6 +310,31 @@ class SessionManager:
             participant_id,
             len(session.participant_histories[participant_id]),
         )
+
+    @classmethod
+    def add_participants(
+        cls,
+        meeting_id: str,
+        room_name: Optional[str],
+        participants: List[Dict[str, str]],
+    ) -> None:
+        """
+        Add or update participants in usermap.
+        Format: [{"participant_id": "xxx", "username": "John Doe"}, ...]
+        Participants are not removed.
+        """
+        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+
+        for p in participants:
+            participant_id = p.get("participant_id")
+            username = p.get("username")
+            if participant_id and username:
+                session.usermap[participant_id] = username
+
+        logger.info(
+            f"Updated usermap for meeting_id={meeting_id}: {len(session.usermap)} participants"
+        )
+
 
     @classmethod
     def clear_session(cls, meeting_id: str, room_name: Optional[str], force: bool = False) -> None:
