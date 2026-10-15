@@ -10,6 +10,21 @@ from the pull request titles merged into `main`. Entries are not added by hand. 
 visible in the open `chore(main): release ...` pull request; merging it commits the version, creates
 the `vX.Y.Z` tag, publishes the GitHub Release and deploys it to the VM.
 
+## [0.3.0](https://github.com/Meetween/fastapi-server/compare/v0.2.0...v0.3.0) (2026-10-15)
+
+
+### Added
+
+* **deploy:** ship the service as a container to dev and prod ([#105](https://github.com/Meetween/fastapi-server/issues/105)) ([56e7e74](https://github.com/Meetween/fastapi-server/commit/56e7e749c817c486ca65a8f40b283f1023c08be5))
+* **participants:** Receive and store participant name  ([#92](https://github.com/Meetween/fastapi-server/issues/92)) ([f8199f7](https://github.com/Meetween/fastapi-server/commit/f8199f7a7da13e8c186adb291141b6bf3ab3e29f))
+
+
+### Fixed
+
+* **deploy:** accept registry tokens longer than 255 characters ([#108](https://github.com/Meetween/fastapi-server/issues/108)) ([b8563ee](https://github.com/Meetween/fastapi-server/commit/b8563ee7675718f4ac997a2453b240447b64df06))
+* **deploy:** keep the SSH session alive during a long pull ([#109](https://github.com/Meetween/fastapi-server/issues/109)) ([e05b158](https://github.com/Meetween/fastapi-server/commit/e05b158f440277d513dc53b74b1f1cd5c0999aa2))
+* **deploy:** pull the image with the deploy job token ([#107](https://github.com/Meetween/fastapi-server/issues/107)) ([eabbfa1](https://github.com/Meetween/fastapi-server/commit/eabbfa1f58c3d28a1c65d9ff3a0aa19664274ecc))
+
 ## [0.2.0](https://github.com/Meetween/fastapi-server/compare/v0.1.0...v0.2.0) (2026-09-23)
 
 
