@@ -72,6 +72,23 @@ Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WA
 `qwen25_omni` and `voxtral_mini_3b_2507` (JSON envelope). A profile overrides only the Triton
 fields it lists.
 
+## Container
+
+```sh
+docker build \
+  --build-arg VERSION=$(grep -m1 '^version' pyproject.toml | cut -d'"' -f2) \
+  --build-arg REVISION=$(git rev-parse HEAD) \
+  -t fastapi-server .
+docker run --rm -p 8000:8000 -e MONGO_URI=mongodb://<host>:27017 -e JWT_SECRET_KEY=<secret> \
+  -v /path/to/recordings:/mnt/recordings fastapi-server
+```
+
+The image runs as uid and gid 1000, listens on `HOST` and `PORT` (`0.0.0.0:8000`) and reads
+every setting above from the environment; no `.env` file is copied in. `VERSION` and
+`REVISION` only set the OCI labels, `/health` reports the version from `config.py`. The
+default `RECORDINGS_BASE_PATH`, `/mnt/recordings`, exists in the image and belongs to uid 1000;
+a directory mounted there or anywhere else must be writable by that uid.
+
 ## API
 
 | Method | Path | Purpose |
