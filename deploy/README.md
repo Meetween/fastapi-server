@@ -84,14 +84,14 @@ ssh-keygen -t ed25519 -f meetween-ci-deploy -N "" -C meetween-ci-deploy
 # Append to ~ubuntu/.ssh/authorized_keys on the VM, on one line:
 #   command="/usr/local/bin/meetween-deploy-gate",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding <contents of meetween-ci-deploy.pub>
 gh secret set VM_SSH_KEY -R Meetween/fastapi-server < meetween-ci-deploy
-gh variable set VM_HOST -R Meetween/fastapi-server -b 149.156.182.197
+gh variable set VM_HOST -R Meetween/fastapi-server -b "<vm-host>"
 gh variable set VM_USER -R Meetween/fastapi-server -b ubuntu
-gh variable set VM_KNOWN_HOSTS -R Meetween/fastapi-server -b "$(ssh-keyscan -t ed25519 149.156.182.197 2>/dev/null)"
+gh variable set VM_KNOWN_HOSTS -R Meetween/fastapi-server -b "$(ssh-keyscan -t ed25519 "<vm-host>" 2>/dev/null)"
 rm meetween-ci-deploy meetween-ci-deploy.pub
 
 # The gate answers status and refuses everything else.
-ssh -i meetween-ci-deploy ubuntu@149.156.182.197 status
-ssh -i meetween-ci-deploy ubuntu@149.156.182.197 ls
+ssh -i meetween-ci-deploy ubuntu@"<vm-host>" status
+ssh -i meetween-ci-deploy ubuntu@"<vm-host>" ls
 ```
 
 ## Cutover from a process started by hand
