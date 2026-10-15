@@ -29,8 +29,8 @@ The scope is the module the change lives in: one of the routes, `agenda`, `auth`
 lowercase, it does not enforce this list; the changelog groups by type and prints the scope in
 bold, so a shared vocabulary keeps it readable.
 
-Two checks run on every pull request: the title check and the test suite. Neither is
-enforced by GitHub on the current plan, so a red check is a reason not to merge, not a lock.
+Two checks run on every pull request: the title check and the test suite. Both are required
+by the ruleset on `main`, so a red check blocks the merge. Only the maintainers team can merge.
 
 Do not edit `CHANGELOG.md`. It is generated.
 

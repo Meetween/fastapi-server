@@ -98,6 +98,21 @@ jobs:
         with:
           ref: ${{ inputs.ref }}
 
+      # Tags cut before the Dockerfile existed (v0.1.0, v0.2.0) carry none. The dispatch runs on
+      # main, so the Dockerfile of main builds the old code: the image then holds that release's
+      # code and lock with today's packaging. A tag with its own Dockerfile keeps it.
+      - name: Take the Dockerfile from main when the ref has none
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          MAIN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f Dockerfile ]]; then
+            git fetch --quiet --depth=1 origin "$MAIN_SHA"
+            git checkout FETCH_HEAD -- Dockerfile .dockerignore
+            echo "Dockerfile and .dockerignore taken from $MAIN_SHA"
+          fi
+
       # The commit is read from the checkout, not from the event, so a backfill of an old tag
       # is labelled with the commit of that tag and not with the head of main.
       - name: Resolve the version and the tags
