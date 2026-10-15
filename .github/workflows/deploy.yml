@@ -1,44 +1,137 @@
-# Deploys one git ref to the shared VM over SSH. release.yml dispatches it at every release
-# tag; anyone with write access can dispatch it by hand with a branch, a tag or a commit.
+# Deploys one image tag to one environment on the shared VM over SSH.
 #
-# The gate is write access plus the tag. The organisation is on GitHub Free with a private
-# repository, so there is no environment approval to put in front of this. The SSH key in
-# VM_SSH_KEY is bound on the VM to a forced command that accepts only "deploy <ref>" and
-# "status", see deploy/ssh-gate.sh, so the key cannot open a shell.
+# dev follows main: every image that build: image pushes from main is deployed to dev, as long
+# as the repository variable DEPLOY_DEV_ENABLED is "true". prod is deployed at a release:
+# release.yml promotes the image to vX.Y.Z and dispatches this workflow with that tag. Anyone
+# with write access can also dispatch it by hand, pick the environment and name the tag.
 #
-# Nothing is checked out on the runner. The VM fetches the ref, installs the locked
-# dependencies, restarts the service, polls /health and rolls back on its own if the reported
-# version is not the one expected. Its exit code is the result of this job.
+# Always dispatched on main, with the image tag as an input. A dispatch runs the copy of this
+# file stored at the ref it is dispatched on, and tags cut before this file changed carry an
+# older copy, so dispatching at an old tag would run an old deploy against today's VM.
+# Dispatching on main keeps one deploy procedure, and a rollback to any earlier release is the
+# same dispatch with an older tag.
+#
+# The gates are GitHub environments, both restricted to branch main; prod also waits for a
+# reviewer. Each holds its own VM_SSH_KEY, and on the VM each key is bound to a forced command,
+# meetween-deploy-gate, that accepts only "status" and "deploy <tag>", and for prod only a
+# vX.Y.Z tag. The key cannot open a shell.
+#
+# Nothing is checked out on the runner. The VM pulls the image, restarts the service, checks
+# /health against the version label of the image and rolls back on its own if they disagree.
+# Its exit code is the result of this job.
 name: "deploy: vm"
-run-name: deploy ${{ inputs.ref }} to the VM
+run-name: >-
+  deploy
+  ${{ github.event_name == 'workflow_run' && format('sha-{0}', github.event.workflow_run.head_sha)
+  || inputs.tag || format('sha-{0}', github.sha) }}
+  to ${{ inputs.environment || 'dev' }}
 
 on:
+  workflow_run:
+    workflows: ["build: image"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Tag, branch or commit to deploy (vX.Y.Z for a release)"
+      environment:
+        description: "Environment to deploy to"
         required: true
-        default: main
+        type: choice
+        options: [dev, prod]
+      tag:
+        description: "Image tag. prod: vX.Y.Z, required. dev: vX.Y.Z, main or sha-<commit>, empty for the head of main"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
-# Two deployments never run at the same time and none is cancelled: a cancelled deploy could
-# leave the VM between two versions.
-concurrency:
-  group: deploy-vm
-  cancel-in-progress: false
-
 jobs:
   deploy:
     name: Deploy over SSH
+    # workflow_run runs in the context of this repository, with its secrets, whatever started
+    # the build. The branches filter alone is not enough: it compares the branch name only, and
+    # a pull request from a fork whose branch is called main would pass it. So the build must
+    # have succeeded, must come from a push, and its commit must live in this repository.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && vars.DEPLOY_DEV_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # On workflow_run there are no inputs, which selects dev.
+    environment: ${{ inputs.environment || 'dev' }}
+    # One deployment per environment at a time and none is cancelled: a cancelled deploy could
+    # leave the VM between two versions. Set on the job, so a run whose condition is false never
+    # takes the slot of a real deployment waiting in the queue.
+    concurrency:
+      group: deploy-${{ inputs.environment || 'dev' }}
+      cancel-in-progress: false
     steps:
+      # Everything is checked before the SSH key is written, so a mistyped dispatch fails in
+      # seconds. The gate on the VM checks the tag again; this is the early, readable refusal.
+      - name: Resolve the image tag
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+          BUILT_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          release='^v[0-9]+\.[0-9]+\.[0-9]+$'
+
+          if [[ "$EVENT" == "workflow_run" ]]; then
+            tag="sha-$BUILT_SHA"
+          else
+            if [[ "$REF" != "refs/heads/main" ]]; then
+              echo "::error::Dispatch this workflow on main and name the tag in the tag input, got ref $REF."
+              exit 1
+            fi
+            tag="${INPUT_TAG:-}"
+            if [[ "$ENVIRONMENT" == "prod" ]]; then
+              if [[ ! "$tag" =~ $release ]]; then
+                echo "::error::prod deploys a release tag vX.Y.Z only, got '$tag'."
+                exit 1
+              fi
+            else
+              tag="${tag:-sha-$SHA}"
+            fi
+          fi
+
+          if [[ ! "$tag" =~ $release && ! "$tag" =~ ^sha-[0-9a-f]{40}$ && "$tag" != "main" ]]; then
+            echo "::error::Not an image tag: '$tag'. Use vX.Y.Z, main or sha-<40 hex commit>."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Deploying $tag to $ENVIRONMENT"
+
+      # A release tag must name a release. The image registry would also accept a tag pushed by
+      # hand, so the git tag is the reference. git/ref matches the full name exactly, not a prefix.
+      - name: Check the release tag exists
+        if: startsWith(steps.target.outputs.tag, 'v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.target.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/$GH_REPO/git/ref/tags/$TAG" --silent; then
+            echo "::error::$TAG is not a tag in $GH_REPO."
+            exit 1
+          fi
+
+      # The host and its key are secrets, not variables, so the address of the VM is masked in
+      # the logs of a public repository.
       - name: Prepare the SSH client
         env:
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
-          VM_KNOWN_HOSTS: ${{ vars.VM_KNOWN_HOSTS }}
+          VM_KNOWN_HOSTS: ${{ secrets.VM_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
           install -d -m 700 ~/.ssh
@@ -46,14 +139,15 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      # REF goes through env:, never through ${{ }} inside run:, and the gate on the VM
-      # validates it again before it reaches git.
+      # TAG goes through env:, never through ${{ }} inside run:, and the gate on the VM
+      # validates it again before it reaches docker. The key decides the environment on the VM,
+      # so the command carries the tag only.
       - name: Run the remote deploy
         env:
-          VM_HOST: ${{ vars.VM_HOST }}
+          VM_HOST: ${{ secrets.VM_HOST }}
           VM_USER: ${{ vars.VM_USER }}
-          REF: ${{ inputs.ref }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
-            "$VM_USER@$VM_HOST" "deploy $REF"
+            "$VM_USER@$VM_HOST" "deploy $TAG"

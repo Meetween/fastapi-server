@@ -1,0 +1,39 @@
+# Installed as /etc/systemd/system/meetween-fastapi@.service by deploy/bootstrap.sh. One
+# instance per environment: meetween-fastapi@dev, meetween-fastapi@prod. See deploy/README.md.
+#
+# The unit runs as root, with no User=, because the docker client reads --env-file itself
+# and /etc/meetween/<env>.env is root only: it carries the JWT secret. The process inside the
+# container still runs as uid 1000, set by the image.
+[Unit]
+Description=Meetween FastAPI server (%i)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+# One line, IMAGE=ghcr.io/meetween/fastapi-server@sha256:<digest>, written by meetween-deploy.
+EnvironmentFile=/mnt/vdc/meetween/%i/image.env
+# Before the first deploy image.env has no IMAGE. The condition skips the start cleanly, so an
+# enabled unit does not loop on a failing docker run after a reboot.
+ExecCondition=/usr/bin/test -n "${IMAGE}"
+# A container left behind by a crash or a kill would hold the name.
+ExecStartPre=-/usr/bin/docker rm -f meetween-fastapi-%i
+# Host network: MongoDB on localhost:27017 and Triton on localhost:9000, 9100, 9110 are
+# reached as they are today. The port comes from PORT in the env file. Recordings are mounted
+# at the same path so RECORDINGS_BASE_PATH reads the same inside and outside.
+ExecStart=/usr/bin/docker run --rm --name meetween-fastapi-%i \
+  --network host \
+  --env-file /etc/meetween/%i.env \
+  -v /mnt/vdc/meetween/%i/recordings:/mnt/vdc/meetween/%i/recordings \
+  --log-driver json-file --log-opt max-size=50m --log-opt max-file=5 \
+  ${IMAGE}
+# docker stop sends SIGTERM, which lets uvicorn run the shutdown hooks: scheduler, sessions,
+# MongoDB client. 20 s for that, the stop timeout of the unit covers it.
+ExecStop=/usr/bin/docker stop -t 20 meetween-fastapi-%i
+Restart=always
+RestartSec=3
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

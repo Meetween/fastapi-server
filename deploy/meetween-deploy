@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+# Deploys one image tag to one environment on the VM: pull, resolve the digest, remember the
+# previous image, write the new one, restart the unit, poll /health, roll back if the
+# reported version is not the one in the image label. Installed as
+# /usr/local/bin/meetween-deploy, run as ubuntu by hand or through the SSH gate.
+#
+#   meetween-deploy <dev|prod> <tag>
+#
+# prod takes only vX.Y.Z; dev also takes sha-<40 hex> and main. Exit code 0 only when the
+# requested tag is running. Safe to rerun: the same tag on a healthy service is a no-op.
+
+main() {
+  set -euo pipefail
+  # A forced command and sudo both run with a minimal environment; pin PATH so the result does
+  # not depend on the caller.
+  export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+  local env="${1:-}" tag="${2:-}"
+  if [ $# -ne 2 ]; then
+    echo "usage: meetween-deploy <dev|prod> <tag>" >&2
+    exit 2
+  fi
+  valid_tag "$env" "$tag" || exit 2
+
+  local repo=ghcr.io/meetween/fastapi-server
+  local dir="/mnt/vdc/meetween/$env"
+  local unit="meetween-fastapi@$env"
+  local container="meetween-fastapi-$env"
+  local timeout=90
+
+  if [ ! -d "$dir" ]; then
+    echo "$dir is missing, run deploy/bootstrap.sh $env first" >&2
+    exit 1
+  fi
+  # Two deploys of one environment at once would race on image.env and previous-image.
+  exec 9>"$dir/.deploy.lock"
+  if ! flock -n 9; then
+    echo "another deploy of $env is running" >&2
+    exit 1
+  fi
+
+  local port
+  port=$(sudo sed -n 's/^PORT=//p' "/etc/meetween/$env.env" | tail -n 1)
+  if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+    echo "no PORT in /etc/meetween/$env.env" >&2
+    exit 1
+  fi
+  local health="http://127.0.0.1:$port/health"
+
+  docker pull --quiet "$repo:$tag" >/dev/null
+  # Pin by digest so a moving tag such as main cannot change what a restart runs. RepoDigests
+  # is filtered on the repository: index 0 may belong to another name of the same image.
+  local target
+  target=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$tag" \
+    | grep -m 1 "^$repo@sha256:" || true)
+  if [ -z "$target" ]; then
+    echo "no digest for $repo:$tag" >&2
+    exit 1
+  fi
+
+  local current="" previous=""
+  current=$(image_of "$dir/image.env")
+  if [ "$current" = "$target" ]; then
+    # Rerun of the same tag: previous-image already holds the image before it.
+    previous=$(image_of "$dir/previous-image")
+    if verify "$health" 1 "$container" "$target" >/dev/null 2>&1; then
+      echo "$env already runs $tag ($target)"
+      prune "$repo"
+      exit 0
+    fi
+  else
+    previous="$current"
+    if [ -n "$previous" ]; then
+      write_atomic "$dir/previous-image" "IMAGE=$previous"
+    fi
+  fi
+  if [ "$previous" = "$target" ]; then
+    previous=""
+  fi
+
+  local before
+  before=$(cat "$dir/image.env" 2>/dev/null || true)
+  echo "deploying $tag to $env: $target, previous ${previous:-none}"
+  write_atomic "$dir/image.env" "IMAGE=$target"
+  sudo systemctl restart "$unit"
+  if verify "$health" "$timeout" "$container" "$target"; then
+    prune "$repo"
+    echo "deployed $tag to $env: $target"
+    exit 0
+  fi
+
+  docker logs --tail 50 "$container" >&2 || true
+  if [ -z "$previous" ]; then
+    # First deploy, nothing to go back to. Put image.env back as it was and stop the unit
+    # rather than let it restart a broken image every few seconds.
+    echo "verification failed and there is no previous image, stopping $unit" >&2
+    write_atomic "$dir/image.env" "$before"
+    sudo systemctl stop "$unit"
+    exit 1
+  fi
+  echo "verification failed, rolling back to $previous" >&2
+  write_atomic "$dir/image.env" "IMAGE=$previous"
+  sudo systemctl restart "$unit"
+  if verify "$health" "$timeout" "$container" "$previous"; then
+    echo "rolled back $env to $previous" >&2
+  else
+    docker logs --tail 50 "$container" >&2 || true
+    echo "rollback failed, the service needs a hand" >&2
+  fi
+  exit 1
+}
+
+valid_tag() {
+  local env="$1" tag="$2"
+  case "$env" in
+    prod)
+      [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
+      echo "refused: prod takes only vX.Y.Z, got '$tag'" >&2
+      ;;
+    dev)
+      [[ "$tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{40}|main)$ ]] && return 0
+      echo "refused: dev takes vX.Y.Z, sha-<40 hex> or main, got '$tag'" >&2
+      ;;
+    *)
+      echo "refused: unknown environment '$env'" >&2
+      ;;
+  esac
+  return 1
+}
+
+# The image reference in an IMAGE= line, empty when the file or the line is missing.
+image_of() {
+  sed -n 's/^IMAGE=//p' "$1" 2>/dev/null | tail -n 1
+}
+
+# Temp file in the same directory, then rename: a reader, systemd included, sees the old file
+# or the new one, never half of one.
+write_atomic() {
+  local path="$1" content="$2" tmp
+  tmp=$(mktemp "$path.XXXXXX")
+  printf '%s\n' "$content" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$path"
+}
+
+# Succeeds when /health answers with the version in the image label and the container runs
+# that exact image. The version alone cannot tell two dev builds of one release apart.
+verify() {
+  local health="$1" timeout="$2" container="$3" image="$4"
+  local expected want_id got_id body got
+  expected=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")
+  want_id=$(docker image inspect --format '{{.Id}}' "$image")
+  body=""
+  for _ in $(seq 1 "$timeout"); do
+    if body=$(curl -sf --max-time 2 "$health"); then
+      break
+    fi
+    body=""
+    sleep 1
+  done
+  if [ -z "$body" ]; then
+    echo "no answer from $health after ${timeout}s" >&2
+    return 1
+  fi
+  got=$(printf '%s' "$body" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  if [ -z "$expected" ] || [ "$got" != "$expected" ]; then
+    echo "version mismatch: /health reports '$got', the image label says '$expected'" >&2
+    return 1
+  fi
+  got_id=$(docker inspect --format '{{.Image}}' "$container" 2>/dev/null || true)
+  if [ "$got_id" != "$want_id" ]; then
+    echo "image mismatch: $container runs '$got_id', expected '$want_id'" >&2
+    return 1
+  fi
+  echo "$body"
+}
+
+# Keeps the three most recent images of the repository, plus every image that an image.env, a
+# previous-image or a running container refers to. Docker refuses to remove an image a
+# container still uses, so a failure here is reported and ignored.
+prune() {
+  local repo="$1" keep=3 id ref n=0 removed=0
+  local -A pinned=()
+  while read -r ref; do
+    id=$(docker image inspect --format '{{.Id}}' "$ref" 2>/dev/null || true)
+    if [ -n "$id" ]; then
+      pinned[$id]=1
+    fi
+  done < <(sed -n 's/^IMAGE=//p' /mnt/vdc/meetween/*/image.env /mnt/vdc/meetween/*/previous-image 2>/dev/null)
+  while read -r id; do
+    if [ -n "$id" ]; then
+      pinned[$id]=1
+    fi
+  done < <(docker ps -q | xargs -r docker inspect --format '{{.Image}}')
+  # docker image ls lists newest first; an image with several tags appears once per tag.
+  for id in $(docker image ls --no-trunc --format '{{.ID}}' "$repo" | awk '!seen[$0]++'); do
+    n=$((n + 1))
+    if [ "$n" -le "$keep" ] || [ -n "${pinned[$id]:-}" ]; then
+      continue
+    fi
+    # Remove by name, every tag and digest of this repository: removing by id fails when the
+    # image carries more than one name.
+    local refs
+    refs=$(docker image inspect --format '{{range .RepoTags}}{{println .}}{{end}}{{range .RepoDigests}}{{println .}}{{end}}' "$id" \
+      | grep "^${repo}[:@]" || true)
+    # shellcheck disable=SC2086 # one name per line, none with spaces
+    if [ -n "$refs" ] && docker image rm $refs >/dev/null; then
+      removed=$((removed + 1))
+    else
+      echo "warning: could not remove $id" >&2
+    fi
+  done
+  echo "pruned $removed image(s) of $repo"
+}
+
+main "$@"
