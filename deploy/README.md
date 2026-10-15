@@ -27,8 +27,10 @@ The unit runs with `--pull=never`, so a restart or a reboot only needs the image
 
 - The env files are `root:root 0600`: they hold the JWT secret. Everything else under
   `/mnt/vdc/meetween/<env>` is owned by uid 1000, the `ubuntu` user and the user inside the image.
-- Docker keeps the logs as json-file, 50 MB by 5 files per container.
-  `journalctl -u meetween-fastapi@<env>` shows the unit starting and stopping.
+- Docker keeps the logs as json-file, 50 MB by 5 files per container, on its own disk.
+  `journalctl -u meetween-fastapi@<env>` shows only the unit starting, stopping and its exit
+  status: the unit sends the container output nowhere else, so nothing reaches the journal on
+  the root disk.
 - Each environment has its own database, JWT secret and recordings tree, so a dev token is
   never valid on prod and the 02:00 retention cleanup of one cannot delete files of the other.
 

@@ -34,6 +34,12 @@ ExecStart=/usr/bin/docker run --rm --pull=never --name meetween-fastapi-%i \
 # docker stop sends SIGTERM, which lets uvicorn run the shutdown hooks: scheduler, sessions,
 # MongoDB client. 20 s for that, the stop timeout of the unit covers it.
 ExecStop=/usr/bin/docker stop -t 20 meetween-fastapi-%i
+# The client attached to the container would copy every line to the journal, and journald
+# lives on the root disk, which is shared and has run full. Docker already keeps the output in
+# the json-file log above, on its own disk: read it with docker logs meetween-fastapi-<env>.
+# The journal keeps the unit's start, stop and exit status.
+StandardOutput=null
+StandardError=null
 Restart=always
 RestartSec=3
 TimeoutStopSec=30
