@@ -1,4 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
+from jose import jwt
 
 from config import MeetingJwtSettings, settings
 from tests.utils.helpers import (
@@ -12,6 +15,17 @@ _REGISTER_PAYLOAD = {
     "email": "blocked@example.com",
     "password": "secret123",
 }
+
+
+def _encode_expired_token(*, sub: str, audience: str) -> str:
+    """A correctly signed token whose exp passed one minute ago."""
+    aj = settings.app_jwt
+    expired_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    return jwt.encode(
+        {"exp": expired_at, "sub": sub, "aud": audience},
+        aj.secret_key,
+        algorithm=aj.algorithm,
+    )
 
 
 @pytest.mark.integration
@@ -100,6 +114,78 @@ class TestAuthEndpoints:
             headers={"Authorization": f"Bearer {refresh_data['access_token']}"},
         )
         assert protected.status_code == 404
+
+    def test_expired_access_token_is_reported_as_expired(self, test_client):
+        expired = _encode_expired_token(
+            sub="expired@example.com", audience=settings.app_jwt.audience_access
+        )
+        response = test_client.get(
+            "/api/auth/context/some-room",
+            headers={"Authorization": f"Bearer {expired}"},
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Access token expired"
+        assert response.headers["WWW-Authenticate"] == (
+            'Bearer error="invalid_token", '
+            'error_description="The access token expired"'
+        )
+
+    def test_malformed_access_token_is_reported_as_invalid(self, test_client):
+        response = test_client.get(
+            "/api/auth/context/some-room",
+            headers={"Authorization": "Bearer not-a-valid-token"},
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid access token"
+        assert response.headers["WWW-Authenticate"] == 'Bearer error="invalid_token"'
+
+    def test_missing_access_token_carries_challenge(self, test_client):
+        response = test_client.get("/api/auth/context/some-room")
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Missing bearer token"
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
+    def test_refresh_works_after_access_token_expired(
+        self, test_client, admin_headers
+    ):
+        register_user_via_api(
+            test_client,
+            {"email": "expired-refresh@example.com", "password": "secret123"},
+            headers=admin_headers,
+        )
+        login = test_client.post(
+            "/api/auth/login",
+            json={"email": "expired-refresh@example.com", "password": "secret123"},
+        ).json()
+        expired = _encode_expired_token(
+            sub="expired-refresh@example.com",
+            audience=settings.app_jwt.audience_access,
+        )
+        rejected = test_client.get(
+            "/api/auth/context/some-room",
+            headers={"Authorization": f"Bearer {expired}"},
+        )
+        assert rejected.status_code == 401
+
+        refreshed = test_client.post(
+            "/api/auth/refresh", json={"refresh_token": login["refresh_token"]}
+        )
+        assert refreshed.status_code == 200
+        accepted = test_client.get(
+            "/api/auth/context/some-room",
+            headers={"Authorization": f"Bearer {refreshed.json()['access_token']}"},
+        )
+        assert accepted.status_code == 404
+
+    def test_refresh_rejects_expired_refresh_token(self, test_client):
+        expired = _encode_expired_token(
+            sub="expired@example.com", audience=settings.app_jwt.audience_refresh
+        )
+        response = test_client.post(
+            "/api/auth/refresh", json={"refresh_token": expired}
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Refresh token expired"
 
     def test_refresh_rejects_invalid_token(self, test_client):
         response = test_client.post(
