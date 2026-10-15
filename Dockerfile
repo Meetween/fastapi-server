@@ -13,7 +13,7 @@
 # There is no .env in the image: .dockerignore keeps local env files out of the context.
 
 # Same uv version as CI, so the lock file is read by the tool that wrote it.
-FROM ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bdf83d5ff0208fe105d4d8d2f5 AS uv
+FROM ghcr.io/astral-sh/uv:0.13.1@sha256:4a1f3666816dafadd20ceb71eac9a7d56d7ef30279f7d64048519ab901ada336 AS uv
 
 
 # python:3.12-slim by multi-arch index digest, so the same line builds linux/amd64 on CI and
