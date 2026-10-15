@@ -161,6 +161,10 @@ jobs:
           REGISTRY_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
+          # A first pull moves about 2 GB and prints nothing while a layer downloads; without
+          # keepalives the network between the runner and the VM drops the idle connection and
+          # the deploy is cut after the pull. One probe every 30 s, give up after 5 missed.
           printf '%s\n%s\n' "$REGISTRY_TOKEN" "$REGISTRY_USER" \
             | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+              -o ServerAliveInterval=30 -o ServerAliveCountMax=5 \
               "$VM_USER@$VM_HOST" "deploy $TAG"
