@@ -22,7 +22,10 @@ ExecStartPre=-/usr/bin/docker rm -f meetween-fastapi-%i
 # Host network: MongoDB on localhost:27017 and Triton on localhost:9000, 9100, 9110 are
 # reached as they are today. The port comes from PORT in the env file. Recordings are mounted
 # at the same path so RECORDINGS_BASE_PATH reads the same inside and outside.
-ExecStart=/usr/bin/docker run --rm --name meetween-fastapi-%i \
+# --pull=never: the VM holds no registry credential and the package is private, so a restart
+# or a reboot must run the image on disk. meetween-deploy pulled it before writing image.env,
+# and its prune never removes an image that image.env or previous-image refers to.
+ExecStart=/usr/bin/docker run --rm --pull=never --name meetween-fastapi-%i \
   --network host \
   --env-file /etc/meetween/%i.env \
   -v /mnt/vdc/meetween/%i/recordings:/mnt/vdc/meetween/%i/recordings \

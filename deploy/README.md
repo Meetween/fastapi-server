@@ -7,6 +7,10 @@ keeps MongoDB on `localhost:27017` and Triton on `localhost:9000`, `9100`, `9110
 they always were. The image is pinned by digest, so a restart never picks up a moved tag. The
 unit, the scripts and the env files are not in the image; `bootstrap.sh` installs them.
 
+The package is private and the VM stores no registry credential. Each deploy from GitHub Actions
+sends the job's own `GITHUB_TOKEN` over SSH, and the VM pulls with it once and throws it away.
+The unit runs with `--pull=never`, so a restart or a reboot only needs the image on disk.
+
 ## Layout
 
 | | dev | prod |
@@ -82,11 +86,47 @@ To undo a bad change for good, revert it in a pull request titled as a `fix`, fo
 `fix(summary): revert ...`. release-please bumps the patch for a `fix`, so the revert ships as the
 next patch release.
 
+## How a deploy pulls the image
+
+`deploy: vm` runs with `permissions: contents: read, packages: read`. Its SSH step writes two
+lines to the standard input of `ssh`, line 1 the job's `GITHUB_TOKEN`, line 2 `github.actor`;
+the remote command stays `deploy <tag>`. Both go through `env:` and `printf`, a shell builtin,
+so neither is in a command line on the runner or on the VM.
+
+On the VM `meetween-deploy-gate` reads at most those two lines, waiting 10 seconds for each,
+checks their shape (a token of 1 to 255 characters without whitespace, a GitHub login with an
+optional `[bot]` suffix) and hands them to `meetween-deploy` on its stdin. A malformed token
+or login is refused with exit 2 before docker runs. `status` reads nothing.
+
+`meetween-deploy` then logs in to `ghcr.io` in a temporary docker config, mode 700, with
+`--password-stdin`, pulls, logs out and deletes the directory; an exit trap deletes it on any
+failure too. Nothing reaches `~/.docker` of the deploy user. The token is valid for this
+repository only and expires when the job ends.
+
+Without credentials on stdin `meetween-deploy` uses the image for the tag if it is already on the
+VM, and says it did not pull. A moving tag such as `main` may then be older than the registry's;
+the digest it prints tells which build it is. If the image is not there it tries an anonymous
+pull, which fails while the package is private, and exits 1 with "image not present and no
+registry credentials" without changing anything.
+
 ## On the VM
 
 ```sh
 meetween-deploy <dev|prod> <tag>      # dev: vX.Y.Z, main, sha-<40 hex>; prod: vX.Y.Z
 meetween-deploy prod v0.2.0
+```
+
+By hand, without a token, this works for any image still on the VM: the three most recent and
+whatever `image.env` and `previous-image` point to, which covers a rollback.
+`docker image ls ghcr.io/meetween/fastapi-server` lists them. For any other tag dispatch
+`deploy: vm` instead. Should the registry ever have to be reached by hand, pass a classic
+personal access token with only `read:packages` on stdin, never as an argument, and revoke it
+afterwards:
+
+```sh
+read -rs TOKEN                       # paste the token, it is not echoed
+printf '%s\nmime-pi\n' "$TOKEN" | meetween-deploy dev <tag>
+unset TOKEN
 ```
 
 Status, logs, restart:
@@ -103,7 +143,8 @@ sudo systemctl restart meetween-fastapi@<env>
 
 1. Takes the lock `/mnt/vdc/meetween/<env>/.deploy.lock`, so two deploys of one environment
    cannot race on `image.env`. A second one exits at once.
-2. Pulls `ghcr.io/meetween/fastapi-server:<tag>` and resolves its digest.
+2. Pulls `ghcr.io/meetween/fastapi-server:<tag>` with the credentials from stdin, or without
+   them uses the copy already on the VM (see above), and resolves its digest.
 3. If that digest already runs and `/health` is right, prints "already runs" and exits 0.
 4. Copies the current image to `previous-image`, writes the new digest to `image.env` and
    restarts the unit.
@@ -119,15 +160,16 @@ sudo systemctl restart meetween-fastapi@<env>
 | Exit | Meaning |
 | --- | --- |
 | 0 | The requested tag is running |
-| 1 | Not running: verification failed (rolled back, or stopped on a first deploy), rollback failed, lock held, `bootstrap.sh` not run, no `PORT` in the env file, pull or digest failed |
-| 2 | Refused before any change: wrong argument count, unknown environment, tag not allowed for it |
+| 1 | Not running: verification failed (rolled back, or stopped on a first deploy), rollback failed, lock held, `bootstrap.sh` not run, no `PORT` in the env file, login, pull or digest failed, image not present and no credentials |
+| 2 | Refused before any change: wrong argument count, unknown environment, tag not allowed for it, malformed token or login on stdin |
 
 On exit 1 read the output: "rollback failed, the service needs a hand" means neither image
 answers and someone has to look at `docker logs`.
 
 ## Bootstrap, once per environment
 
-The VM needs Docker, `openssl`, `curl` and `flock`, and the deploy user (`ubuntu`) must be in the
+The VM needs Docker 20.10 or later (the unit uses `docker run --pull=never`), `openssl`, `curl`
+and `flock`, and the deploy user (`ubuntu`) must be in the
 `docker` group and have passwordless `sudo`: `meetween-deploy` runs `docker` as that user and
 calls `sudo systemctl` and `sudo sed` on the env file.
 
@@ -181,7 +223,8 @@ restrict,command="/usr/local/bin/meetween-deploy-gate prod" ssh-ed25519 AAAA... 
 ```
 
 `restrict` turns off the terminal and every forwarding. The environment comes from the key. The
-gate accepts only `status` and `deploy <tag>`, and for prod only `vX.Y.Z`.
+gate accepts only `status` and `deploy <tag>`, and for prod only `vX.Y.Z`. A deploy may carry
+the registry token and login on stdin, as described above.
 
 Store the private halves and the connection details on GitHub:
 
@@ -215,9 +258,12 @@ rm meetween-ci-dev meetween-ci-dev.pub meetween-ci-prod meetween-ci-prod.pub
   required reviewers, the maintainers team. Each holds its own `VM_SSH_KEY`.
 - Rulesets on `main`: a pull request is required, the checks `Test` and `Conventional Commits
   title` must pass, and only the maintainers merge.
-- The GHCR package `fastapi-server` must be public, so the VM pulls without credentials. A new
-  package starts private: set it public in the package settings after the first push, and check
-  with `docker pull ghcr.io/meetween/fastapi-server:main` on the VM, logged out.
+- The GHCR package `fastapi-server` is private; the organisation does not allow public packages.
+  It must stay linked to this repository: a package linked to a repository grants that
+  repository's workflows access, so the `GITHUB_TOKEN` of `deploy: vm` with `packages: read` can
+  pull it. Check under the package settings, "Manage Actions access", that
+  `Meetween/fastapi-server` is listed with read access or more. No registry credential is stored
+  on the VM or in the repository secrets.
 
 ## Cutover of prod to 8001
 
