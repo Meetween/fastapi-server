@@ -10,6 +10,13 @@ from the pull request titles merged into `main`. Entries are not added by hand. 
 visible in the open `chore(main): release ...` pull request; merging it commits the version, creates
 the `vX.Y.Z` tag, publishes the GitHub Release and deploys it to the VM.
 
+## [0.4.1](https://github.com/Meetween/fastapi-server/compare/v0.4.0...v0.4.1) (2026-10-15)
+
+
+### Fixed
+
+* **auth:** tell clients when the access token has expired ([#94](https://github.com/Meetween/fastapi-server/issues/94)) ([950bde7](https://github.com/Meetween/fastapi-server/commit/950bde7af02d8010c61128e0ab1caa1e44b6765e))
+
 ## [0.4.0](https://github.com/Meetween/fastapi-server/compare/v0.3.0...v0.4.0) (2026-10-15)
 
 
