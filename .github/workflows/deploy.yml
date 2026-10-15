@@ -18,7 +18,9 @@
 #
 # Nothing is checked out on the runner. The VM pulls the image, restarts the service, checks
 # /health against the version label of the image and rolls back on its own if they disagree.
-# Its exit code is the result of this job.
+# Its exit code is the result of this job. The package is private and the VM stores no registry
+# credential: it pulls with this job's GITHUB_TOKEN, sent over SSH for the one deploy. The token
+# reads only packages linked to this repository and expires when the job ends.
 name: "deploy: vm"
 run-name: >-
   deploy
@@ -69,6 +71,10 @@ jobs:
     concurrency:
       group: deploy-${{ inputs.environment || 'dev' }}
       cancel-in-progress: false
+    # contents: the release tag check. packages: the pull on the VM.
+    permissions:
+      contents: read
+      packages: read
     steps:
       # Everything is checked before the SSH key is written, so a mistyped dispatch fails in
       # seconds. The gate on the VM checks the tag again; this is the early, readable refusal.
@@ -142,12 +148,19 @@ jobs:
       # TAG goes through env:, never through ${{ }} inside run:, and the gate on the VM
       # validates it again before it reaches docker. The key decides the environment on the VM,
       # so the command carries the tag only.
+      #
+      # The registry credentials go on stdin, line 1 the token, line 2 the login, so they are in
+      # no command line here or on the VM. printf is a shell builtin. The VM logs in with them
+      # in a temporary docker config and deletes it after the pull.
       - name: Run the remote deploy
         env:
           VM_HOST: ${{ secrets.VM_HOST }}
           VM_USER: ${{ vars.VM_USER }}
           TAG: ${{ steps.target.outputs.tag }}
+          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.actor }}
         run: |
           set -euo pipefail
-          ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
-            "$VM_USER@$VM_HOST" "deploy $TAG"
+          printf '%s\n%s\n' "$REGISTRY_TOKEN" "$REGISTRY_USER" \
+            | ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
+              "$VM_USER@$VM_HOST" "deploy $TAG"
