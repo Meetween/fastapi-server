@@ -1,9 +1,12 @@
+# Local development only. The deployment does not use this file; see deploy/README.md.
 services:
   mongo:
-    image: mongo:7
+    # Pinned to the version running on the shared VM, so local matches it.
+    image: mongo:7.0.32
     container_name: meetween-mongo
     ports:
-      - "27017:27017"
+      # Loopback only, so the database is not reachable from the network.
+      - "127.0.0.1:27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped

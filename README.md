@@ -26,7 +26,8 @@ Recording chunks are stored under `RECORDINGS_BASE_PATH` and deleted daily at 02
 - Python 3.12, selected by `.python-version`, and [uv](https://docs.astral.sh/uv/)
 - ffmpeg on the PATH, used by pydub
 - a reachable Triton server with one of the models in `model_profiles.yml`
-- MongoDB, `docker-compose.yml` starts one
+- MongoDB, `docker-compose.yml` starts one for local development only. The deployment does not
+  use this file; see `deploy/README.md`.
 
 ## Run
 
