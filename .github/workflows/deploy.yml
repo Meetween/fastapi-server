@@ -1,40 +1,100 @@
-# Deploys one git ref to the shared VM over SSH. release.yml dispatches it at every release
-# tag; anyone with write access can dispatch it by hand with a branch, a tag or a commit.
+# Deploys one image tag to one environment on the shared VM over SSH.
 #
-# The gate is write access plus the tag. The organisation is on GitHub Free with a private
-# repository, so there is no environment approval to put in front of this. The SSH key in
-# VM_SSH_KEY is bound on the VM to a forced command that accepts only "deploy <ref>" and
-# "status", see deploy/ssh-gate.sh, so the key cannot open a shell.
+# dev follows main: every image that build: image pushes from main is deployed to dev, as long
+# as the repository variable DEPLOY_DEV_ENABLED is "true". prod is deployed at a release:
+# release.yml promotes the image to vX.Y.Z and dispatches this workflow at the tag. Anyone with
+# write access can also dispatch it by hand and pick the environment.
 #
-# Nothing is checked out on the runner. The VM fetches the ref, installs the locked
-# dependencies, restarts the service, polls /health and rolls back on its own if the reported
-# version is not the one expected. Its exit code is the result of this job.
+# The gates are GitHub environments. dev admits branch main, prod admits tags v*.*.* and waits
+# for a reviewer. Each holds its own VM_SSH_KEY, and on the VM each key is bound to a forced
+# command, meetween-deploy-gate, that accepts only "status" and "deploy <tag>", and for prod
+# only a vX.Y.Z tag. The key cannot open a shell.
+#
+# Nothing is checked out on the runner. The VM pulls the image, restarts the service, checks
+# /health against the version label of the image and rolls back on its own if they disagree.
+# Its exit code is the result of this job.
 name: "deploy: vm"
-run-name: deploy ${{ inputs.ref }} to the VM
+run-name: >-
+  deploy
+  ${{ github.event_name == 'workflow_run' && format('sha-{0}', github.event.workflow_run.head_sha)
+  || github.ref_type == 'tag' && github.ref_name || format('sha-{0}', github.sha) }}
+  to ${{ inputs.environment || 'dev' }}
 
 on:
+  workflow_run:
+    workflows: ["build: image"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Tag, branch or commit to deploy (vX.Y.Z for a release)"
+      environment:
+        description: "dev takes the selected branch or tag, prod takes a vX.Y.Z tag only"
         required: true
-        default: main
+        type: choice
+        options: [dev, prod]
 
 permissions:
   contents: read
 
-# Two deployments never run at the same time and none is cancelled: a cancelled deploy could
-# leave the VM between two versions.
-concurrency:
-  group: deploy-vm
-  cancel-in-progress: false
-
 jobs:
   deploy:
     name: Deploy over SSH
+    # workflow_run runs in the context of this repository, with its secrets, whatever started
+    # the build. The branches filter alone is not enough: it compares the branch name only, and
+    # a pull request from a fork whose branch is called main would pass it. So the build must
+    # have succeeded, must come from a push, and its commit must live in this repository.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || (github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && github.event.workflow_run.head_repository.full_name == github.repository
+      && vars.DEPLOY_DEV_ENABLED == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # On workflow_run there are no inputs, which selects dev.
+    environment: ${{ inputs.environment || 'dev' }}
+    # One deployment per environment at a time and none is cancelled: a cancelled deploy could
+    # leave the VM between two versions. Set on the job, so a run whose condition is false never
+    # takes the slot of a real deployment waiting in the queue.
+    concurrency:
+      group: deploy-${{ inputs.environment || 'dev' }}
+      cancel-in-progress: false
     steps:
+      # The image tag follows from the event: the commit that was built, the tag dispatched, or
+      # the head of the branch dispatched. prod refuses anything but a release tag here as well
+      # as on the VM.
+      - name: Resolve the image tag
+        id: target
+        env:
+          EVENT: ${{ github.event_name }}
+          ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+          BUILT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == "workflow_run" ]]; then
+            tag="sha-$BUILT_SHA"
+          elif [[ "$REF_TYPE" == "tag" ]]; then
+            tag="$REF_NAME"
+          else
+            tag="sha-$SHA"
+          fi
+
+          if [[ "$ENVIRONMENT" == "prod" ]]; then
+            if [[ "$REF_TYPE" != "tag" || ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::prod deploys a release tag only. Dispatch with a vX.Y.Z tag as the ref, got $REF_TYPE '$REF_NAME'."
+              exit 1
+            fi
+          elif [[ ! "$tag" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+|sha-[0-9a-f]{40})$ ]]; then
+            echo "::error::No image tag for $REF_TYPE '$REF_NAME'. Dispatch with a branch or a vX.Y.Z tag."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Deploying $tag to $ENVIRONMENT"
+
       - name: Prepare the SSH client
         env:
           VM_SSH_KEY: ${{ secrets.VM_SSH_KEY }}
@@ -46,14 +106,15 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "$VM_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
-      # REF goes through env:, never through ${{ }} inside run:, and the gate on the VM
-      # validates it again before it reaches git.
+      # TAG goes through env:, never through ${{ }} inside run:, and the gate on the VM
+      # validates it again before it reaches docker. The key decides the environment on the VM,
+      # so the command carries the tag only.
       - name: Run the remote deploy
         env:
           VM_HOST: ${{ vars.VM_HOST }}
           VM_USER: ${{ vars.VM_USER }}
-          REF: ${{ inputs.ref }}
+          TAG: ${{ steps.target.outputs.tag }}
         run: |
           set -euo pipefail
           ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=15 \
-            "$VM_USER@$VM_HOST" "deploy $REF"
+            "$VM_USER@$VM_HOST" "deploy $TAG"

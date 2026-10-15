@@ -1,7 +1,8 @@
 # release-please keeps one pull request open, "chore(main): release x.y.z", and rewrites it on
 # every merge to main. Its diff is the CHANGELOG entry plus the version in pyproject.toml and
 # config.py. Merging that pull request is what cuts a release: it commits the version, creates
-# the tag, publishes the GitHub Release, and from here deploys the tag to the VM.
+# the tag, publishes the GitHub Release, and from here promotes the image of that commit to the
+# release tag and asks for the production deploy.
 name: "release: draft or cut"
 # GitHub titles a run with the commit subject, so this workflow and CI, which both fire on a
 # push to main, would otherwise appear as two identical rows.
@@ -30,11 +31,15 @@ jobs:
     outputs:
       released: ${{ steps.rp.outputs.release_created }}
       tag: ${{ steps.rp.outputs.tag_name }}
+      sha: ${{ steps.rp.outputs.sha }}
     steps:
       # The default GITHUB_TOKEN, deliberately. GitHub does not start workflow runs from events
-      # raised with it, which is its guard against a workflow triggering itself forever. The
-      # consequence to know about: no CI runs on the release pull request, so CI cannot be a
-      # required check on it. Accepted, in exchange for having no App or long-lived token to own.
+      # raised with it, which is its guard against a workflow triggering itself forever; only
+      # workflow_dispatch and repository_dispatch are exempt. Two consequences to know about.
+      # The checks on the release pull request wait as "action required" until a maintainer
+      # clicks "Approve workflows to run" on it. The tag this step creates starts nothing, which
+      # is why the jobs below promote and dispatch explicitly. Accepted, in exchange for having
+      # no App or long-lived token to own.
       - name: Run release-please
         id: rp
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
@@ -43,12 +48,72 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  # Dispatched rather than called, so the deployment gets its own run named after the tag.
-  # workflow_dispatch is one of the two events that still fire when raised with GITHUB_TOKEN.
-  deploy:
-    name: Deploy the release to the VM
+  # Promoted, not rebuilt. image.yml has already built and pushed sha-<commit> for this very
+  # commit, on the same push to main. Giving that manifest a second name makes the release the
+  # exact bytes that were built and could have run on dev, with the same digest. A rebuild would
+  # resolve base images and packages again and produce a different image under the same version.
+  promote:
+    name: Promote the image to the release tag
     needs: release-please
     if: needs.release-please.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    # The one exception to the 15 minute rule. The image is built in parallel by image.yml,
+    # whose own job may take up to 15 minutes, and this job waits for it.
+    timeout-minutes: 25
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # imagetools works on the registry only: no builder, no layers downloaded. From a single
+      # source that is an index, which is what build-push-action pushes with its provenance
+      # attestation, it makes a carbon copy, so the digest does not change. --prefer-index=false
+      # keeps that true should the source ever be a plain manifest, and the end of the step
+      # proves it.
+      - name: Wait for the commit image and tag it
+        env:
+          IMAGE: ghcr.io/meetween/fastapi-server
+          SHA: ${{ needs.release-please.outputs.sha }}
+          TAG: ${{ needs.release-please.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ || ! "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Unexpected release-please output: tag '$TAG', sha '$SHA'"
+            exit 1
+          fi
+
+          source="$IMAGE:sha-$SHA"
+          deadline=$((SECONDS + 20 * 60))
+          until docker buildx imagetools inspect "$source" > /dev/null 2>&1; do
+            if (( SECONDS >= deadline )); then
+              echo "::error::$source did not appear within 20 minutes. Check the build: image run for $SHA; if it failed, dispatch build: image with ref $TAG, then re-run this job."
+              exit 1
+            fi
+            echo "Waiting for $source"
+            sleep 20
+          done
+
+          docker buildx imagetools create --prefer-index=false -t "$IMAGE:$TAG" "$source"
+
+          want=$(docker buildx imagetools inspect "$source" --format '{{.Manifest.Digest}}')
+          got=$(docker buildx imagetools inspect "$IMAGE:$TAG" --format '{{.Manifest.Digest}}')
+          if [[ "$want" != "$got" ]]; then
+            echo "::error::$IMAGE:$TAG has digest $got, expected $want"
+            exit 1
+          fi
+          echo "$IMAGE:$TAG is $want"
+
+  # Dispatched rather than called, so the deployment gets its own run named after the tag, and
+  # so it runs with the tag as its ref: the prod environment admits tags only. workflow_dispatch
+  # is one of the two events that still fire when raised with GITHUB_TOKEN. The prod environment
+  # then holds the run until a reviewer approves it.
+  deploy:
+    name: Request the production deploy
+    needs: [release-please, promote]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -61,5 +126,5 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag }}
         run: |
           set -euo pipefail
-          gh workflow run deploy.yml --ref "$TAG" -f ref="$TAG"
-          echo "Dispatched deploy: vm for $TAG"
+          gh workflow run deploy.yml --ref "$TAG" -f environment=prod
+          echo "Dispatched deploy: vm for $TAG to prod"
