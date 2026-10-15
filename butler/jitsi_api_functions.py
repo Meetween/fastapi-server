@@ -201,7 +201,7 @@ async def transcribe_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task="transcribe",
+        task=TaskType.TRANSCRIPTION,
         language=language,
         **gen_kwargs,
     )
@@ -262,7 +262,7 @@ async def caption_audio(
         prompt=prompt,
         audio=audio_tensor,
         sample_rate=target_sr,
-        task="caption",
+        task=TaskType.CAPTION,
         language=language,
         max_new_tokens=max_tokens,
         do_sample=False,
