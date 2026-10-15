@@ -1,5 +1,9 @@
 # Deployment
 
+This page still describes the checkout deploy and is being rewritten for the container deploy.
+Until then the comments in `deploy/bootstrap.sh`, `deploy/meetween-deploy`,
+`deploy/ssh-gate.sh` and `deploy/meetween-fastapi@.service` are the reference.
+
 The service runs on the shared VM as the systemd unit `meetween-fastapi`, on port 8001, from
 the release checkout `/mnt/vdc/meetween/fastapi-server`. Jigasi and the Jitsi web frontend
 reach it at `host.docker.internal:8001`.
@@ -10,8 +14,8 @@ reach it at `host.docker.internal:8001`.
 2. release-please updates the open `chore(main): release x.y.z` pull request.
 3. Merging that pull request creates the tag `vX.Y.Z` and the GitHub Release.
 4. `release: draft or cut` dispatches `deploy: vm` at the tag.
-5. `deploy/deploy.sh` runs on the VM: fetch, checkout, `uv sync --locked --no-dev`, restart,
-   poll `/health`, compare the reported version with `pyproject.toml`, roll back on mismatch.
+5. `meetween-deploy` runs on the VM: pull, pin the digest, restart, poll `/health`, compare
+   the reported version with the image label, roll back on mismatch.
 
 ## Deploy a branch or roll back
 
@@ -23,7 +27,7 @@ gh workflow run deploy.yml -f ref=v0.2.0
 On the VM, the same without GitHub:
 
 ```sh
-/mnt/vdc/meetween/fastapi-server/deploy/deploy.sh v0.2.0
+meetween-deploy prod v0.2.0
 ```
 
 ## Logs and status
@@ -40,9 +44,10 @@ Copy them again when their source in `deploy/` changes.
 
 | On the VM | Source |
 | --- | --- |
-| `/etc/systemd/system/meetween-fastapi.service` | `deploy/meetween-fastapi.service` |
-| `/etc/meetween/fastapi.env` | `deploy/fastapi.env.example`, with the real values |
+| `/etc/systemd/system/meetween-fastapi@.service` | `deploy/meetween-fastapi@.service` |
+| `/etc/meetween/<env>.env` | `deploy/fastapi.env.example`, filled by `deploy/bootstrap.sh` |
 | `/usr/local/bin/meetween-deploy-gate` | `deploy/ssh-gate.sh` |
+| `/usr/local/bin/meetween-deploy` | `deploy/meetween-deploy` |
 
 ## Bootstrap, once
 
@@ -69,12 +74,9 @@ git checkout --detach v0.1.0
 # 5. Dependencies. uv picks /usr/bin/python3.12 from .python-version.
 UV_CACHE_DIR=/mnt/vdc/meetween/uv-cache uv sync --locked --no-dev
 
-# 6. Configuration, unit and gate.
-sudo cp deploy/fastapi.env.example /etc/meetween/fastapi.env && sudo chmod 600 /etc/meetween/fastapi.env
-sudo vi /etc/meetween/fastapi.env
-sudo cp deploy/meetween-fastapi.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable meetween-fastapi
-sudo install -m 755 deploy/ssh-gate.sh /usr/local/bin/meetween-deploy-gate
+# 6. Configuration, unit, gate and deploy script, per environment.
+./deploy/bootstrap.sh dev
+./deploy/bootstrap.sh prod
 ```
 
 On a laptop, the key the workflow uses:
@@ -82,7 +84,7 @@ On a laptop, the key the workflow uses:
 ```sh
 ssh-keygen -t ed25519 -f meetween-ci-deploy -N "" -C meetween-ci-deploy
 # Append to ~ubuntu/.ssh/authorized_keys on the VM, on one line:
-#   command="/usr/local/bin/meetween-deploy-gate",no-pty,no-port-forwarding,no-agent-forwarding,no-X11-forwarding <contents of meetween-ci-deploy.pub>
+#   restrict,command="/usr/local/bin/meetween-deploy-gate <env>" <contents of meetween-ci-deploy.pub>
 gh secret set VM_SSH_KEY -R Meetween/fastapi-server < meetween-ci-deploy
 gh variable set VM_HOST -R Meetween/fastapi-server -b "<vm-host>"
 gh variable set VM_USER -R Meetween/fastapi-server -b ubuntu
