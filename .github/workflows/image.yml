@@ -1,0 +1,155 @@
+# Builds the container image. A pull request only builds it, so a broken Dockerfile fails
+# before the merge and nothing is published from code that has not been reviewed. A push to
+# main publishes the image under the commit SHA and under the moving tag main. Release tags
+# are not built here: release.yml promotes the image that main already published, see there.
+#
+# The manual dispatch is for backfill. Tags cut before this workflow existed, or a commit
+# whose build failed, get an image by dispatching with that tag or commit as the ref.
+name: "build: image"
+# A push to main would otherwise be titled with the commit subject, the same as check: ci.
+run-name: >-
+  ${{ github.event_name == 'pull_request' && github.event.pull_request.title
+  || format('image for {0}', inputs.ref || github.ref_name) }}
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release tag (vX.Y.Z) or full 40 character commit SHA to build and push"
+        required: true
+
+permissions:
+  contents: read
+
+# Lower case on purpose: registry references must be lower case, the organisation is not.
+env:
+  IMAGE: ghcr.io/meetween/fastapi-server
+
+# A new push to the same pull request cancels the build in flight. On main every commit gets
+# its own group: with one group per branch GitHub keeps a single pending run and drops the
+# older one when a third push arrives, and the commit it drops might be the one release.yml
+# is about to promote. Builds on main are never cancelled.
+concurrency:
+  group: image-${{ github.event.pull_request.number || inputs.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    name: Build without pushing
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same build arguments as on main, so the pull request exercises the same Dockerfile path.
+      - name: Read the version
+        id: meta
+        run: |
+          set -euo pipefail
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # No login and no secret: the job runs with the code of the pull request, which may come
+      # from a fork. The layer cache is read from main and not written: caches from a pull
+      # request are visible only to that pull request, and writing them would spend the
+      # repository's cache quota and evict the layers main relies on.
+      - name: Build the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: false
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ github.event.pull_request.head.sha }}
+          cache-from: type=gha
+
+  publish:
+    name: Build and push
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Granted here and nowhere else in this workflow: the pull request job never sees it.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Checked before anything is fetched. Only two shapes are accepted, so the value that
+      # later becomes an image tag cannot be a branch name or a short, ambiguous SHA.
+      - name: Validate the requested ref
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && ! "$REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::ref must be a release tag vX.Y.Z or a full 40 character commit SHA, got: $REF"
+            exit 1
+          fi
+
+      # On a push inputs.ref is empty and the checkout takes the pushed commit.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+
+      # The commit is read from the checkout, not from the event, so a backfill of an old tag
+      # is labelled with the commit of that tag and not with the head of main.
+      - name: Resolve the version and the tags
+        id: meta
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+
+          tags="$IMAGE:sha-$sha"
+          if [[ "$EVENT" == "push" ]]; then
+            tags+=$'\n'"$IMAGE:main"
+          elif [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            # A branch can carry a tag's name. Push the release tag only if it is a real tag.
+            git rev-parse --verify --quiet "refs/tags/$REF^{commit}" > /dev/null \
+              || { echo "::error::$REF is not a tag in this repository"; exit 1; }
+            tags+=$'\n'"$IMAGE:$REF"
+          fi
+
+          {
+            echo "sha=$sha"
+            echo "version=$version"
+            echo "tags<<EOF"
+            echo "$tags"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          printf 'version %s\n%s\n' "$version" "$tags"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # The job token is enough to push to a package owned by the organisation that owns this
+      # repository. No personal token and no secret to rotate.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # VERSION and REVISION become the OCI labels. The VM compares the version reported by
+      # /health with the label after a deploy and rolls back on a mismatch.
+      - name: Build and push the image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            VERSION=${{ steps.meta.outputs.version }}
+            REVISION=${{ steps.meta.outputs.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
