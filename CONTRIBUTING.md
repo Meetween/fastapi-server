@@ -40,11 +40,13 @@ An optional local aid for commit messages is [commitizen](https://commitizen-too
 ## Releases
 
 release-please keeps one pull request open, `chore(main): release x.y.z`, and rewrites it on
-every merge. Merge it to release: the tag `vX.Y.Z`, the GitHub Release and the deployment to
-the VM follow on their own. Versions are `0.x`: `feat` bumps the minor, `fix` bumps the patch.
+every merge. Merge it to release: the tag `vX.Y.Z` and the GitHub Release follow on their own,
+and the deployment to prod follows once a maintainer approves it in the `prod` environment.
+Versions are `0.x`: `feat` bumps the minor, `fix` bumps the patch.
 
 To force a version, add a line `Release-As: X.Y.Z` to the description of a `feat` or `fix`
 pull request before merging it. On a hidden type the line is ignored.
 
-To deploy a branch to the VM before it is released: `gh workflow run deploy.yml -f ref=<branch>`.
-See `deploy/README.md`.
+Every merge to `main` is built and, while `DEPLOY_DEV_ENABLED` is true, deployed to dev. A branch
+cannot be deployed: images are published from `main` only. To redeploy or roll back by hand, see
+`deploy/README.md`.
