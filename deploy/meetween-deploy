@@ -36,8 +36,8 @@ main() {
   fi
   exec </dev/null
   if [ -n "$token" ]; then
-    if [[ ! "$token" =~ ^[[:graph:]]{1,255}$ ]]; then
-      echo "refused: malformed registry token" >&2
+    if [[ ! "$token" =~ ^[[:graph:]]+$ ]] || [ "${#token}" -gt 4096 ]; then
+      echo "refused: malformed registry token (${#token} characters)" >&2
       exit 2
     fi
     if [[ ! "$actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$ ]]; then

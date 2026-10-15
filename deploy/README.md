@@ -94,7 +94,7 @@ the remote command stays `deploy <tag>`. Both go through `env:` and `printf`, a 
 so neither is in a command line on the runner or on the VM.
 
 On the VM `meetween-deploy-gate` reads at most those two lines, waiting 10 seconds for each,
-checks their shape (a token of 1 to 255 characters without whitespace, a GitHub login with an
+checks their shape (a token of 1 to 4096 characters without whitespace, a GitHub login with an
 optional `[bot]` suffix) and hands them to `meetween-deploy` on its stdin. A malformed token
 or login is refused with exit 2 before docker runs. `status` reads nothing.
 

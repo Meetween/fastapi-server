@@ -66,8 +66,8 @@ elif [[ "$cmd" =~ ^deploy\ ([^[:space:]]+)$ ]]; then
   IFS= read -r -t 10 actor || true
   # A loose check: no whitespace, so the token cannot smuggle a second line or an argument, and
   # a length cap. The login allows the [bot] suffix of github-actions[bot].
-  if [[ ! "$token" =~ ^[[:graph:]]{1,255}$ ]]; then
-    echo "refused: malformed registry token" >&2
+  if [[ ! "$token" =~ ^[[:graph:]]+$ ]] || [ "${#token}" -gt 4096 ]; then
+    echo "refused: malformed registry token (${#token} characters)" >&2
     exit 2
   fi
   if [[ ! "$actor" =~ ^[A-Za-z0-9][A-Za-z0-9-]{0,38}(\[bot\])?$ ]]; then
