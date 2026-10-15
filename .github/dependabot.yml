@@ -65,5 +65,7 @@ updates:
     ignore:
       - dependency-name: "python"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
-      - dependency-name: "ghcr.io/astral-sh/uv"
+      # Dependabot names this image without its registry, astral-sh/uv, so the full
+      # ghcr.io/astral-sh/uv never matched. The wildcard covers both spellings.
+      - dependency-name: "*astral-sh/uv"
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
