@@ -117,4 +117,4 @@ in [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-No license file is included. Add one before publishing this repository.
+Apache-2.0, see [LICENSE](LICENSE).

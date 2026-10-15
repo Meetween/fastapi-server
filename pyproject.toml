@@ -3,6 +3,7 @@ name = "fastapi-server"
 version = "0.2.0"
 description = "Meeting intelligence API for Meetween, backed by Triton"
 readme = "README.md"
+license = "Apache-2.0"
 # The upper bound follows torch 2.3.1, which ships wheels up to CPython 3.12.
 # Remove it when torch leaves the dependency list.
 requires-python = ">=3.12,<3.13"
