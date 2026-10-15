@@ -45,3 +45,25 @@ updates:
       actions-security:
         applies-to: "security-updates"
         patterns: ["*"]
+
+  # Base images in the Dockerfile, pinned by digest. Patch releases and digest refreshes only:
+  # the Python minor is bounded by requires-python, and uv moves together with the uv pinned in
+  # ci.yml, so both are bumped by hand.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 3
+    groups:
+      docker-base-images:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "ghcr.io/astral-sh/uv"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
