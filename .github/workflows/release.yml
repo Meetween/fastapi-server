@@ -107,10 +107,10 @@ jobs:
           fi
           echo "$IMAGE:$TAG is $want"
 
-  # Dispatched rather than called, so the deployment gets its own run named after the tag, and
-  # so it runs with the tag as its ref: the prod environment admits tags only. workflow_dispatch
-  # is one of the two events that still fire when raised with GITHUB_TOKEN. The prod environment
-  # then holds the run until a reviewer approves it.
+  # Dispatched rather than called, so the deployment gets its own run named after the tag.
+  # workflow_dispatch is one of the two events that still fire when raised with GITHUB_TOKEN.
+  # Dispatched on main with the tag as an input, like every deploy, see deploy.yml for why. The
+  # prod environment then holds the run until a reviewer approves it.
   deploy:
     name: Request the production deploy
     needs: [release-please, promote]
@@ -126,5 +126,5 @@ jobs:
           TAG: ${{ needs.release-please.outputs.tag }}
         run: |
           set -euo pipefail
-          gh workflow run deploy.yml --ref "$TAG" -f environment=prod
+          gh workflow run deploy.yml --ref main -f environment=prod -f tag="$TAG"
           echo "Dispatched deploy: vm for $TAG to prod"
