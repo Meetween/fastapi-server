@@ -84,8 +84,9 @@ docker run --rm -p 8000:8000 -e MONGO_URI=mongodb://<host>:27017 -e JWT_SECRET_K
 ```
 
 The image runs as uid and gid 1000, listens on `HOST` and `PORT` (`0.0.0.0:8000`) and reads
-every setting above from the environment; no `.env` file is copied in. `VERSION` and
-`REVISION` only set the OCI labels, `/health` reports the version from `config.py`. The
+every setting above from the environment; no `.env` file is copied in. `/health`
+reports the version from `config.py` and, as `commit`, the `REVISION` the image was built from
+(`unknown` without it). The
 default `RECORDINGS_BASE_PATH`, `/mnt/recordings`, exists in the image and belongs to uid 1000;
 a directory mounted there or anywhere else must be writable by that uid.
 
@@ -104,7 +105,7 @@ a directory mounted there or anywhere else must be writable by that uid.
 | POST | `/api/auth/login`, `/api/auth/refresh`, `/api/auth/jitsi/validate` | public auth endpoints |
 | POST | `/api/auth/users`, `/api/auth/jitsi/issue` | user creation and Jitsi room token, authenticated |
 | GET | `/api/auth/context/{room_name}` | meeting context, authenticated |
-| GET | `/`, `/health` | liveness; `/health` reports the running version |
+| GET | `/`, `/health` | liveness; `/health` reports the running version and commit |
 
 Request and response schemas are in `models.py` and in the generated docs.
 
