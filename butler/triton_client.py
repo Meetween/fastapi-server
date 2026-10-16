@@ -13,7 +13,20 @@ import httpx
 import torch
 import soundfile as sf
 
+from models import TaskType
+
 logger = logging.getLogger(__name__)
+
+# Modes that accept a source language in the general_json payload.
+_LANGUAGE_MODES = {
+    t.lower()
+    for t in (
+        TaskType.CAPTION,
+        TaskType.TRANSCRIPTION,
+        TaskType.SPEECH_TRANSLATION,
+        TaskType.TEXT_TRANSLATION,
+    )
+}
 
 class TritonClient:
     """Client for Triton Inference Server with SpeechLMM model interface"""
@@ -124,17 +137,14 @@ class TritonClient:
             mode = (task or "").strip().lower()
             if not mode:
                 # Infer best-effort from whether audio is present.
-                mode = "chat" if audio_b64 is None else "transcribe"
-            # Map downstream task acronyms to legacy general_json modes.
-            mode = {
-                "asr": "transcribe",
-                "sqa": "chat",
-            }.get(mode, mode)
+                mode = (
+                    TaskType.SPOKEN_QUESTION_ANSWERING if audio_b64 is None else TaskType.TRANSCRIPTION
+                ).lower()
             payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
-            if mode == "caption":
+            if mode == TaskType.CAPTION.lower():
                 payload_obj["caption_chars"] = self.caption_chars
             # Voxtral/Qwen: source language in JSON (caption/transcribe/ST/MT).
-            if language and mode in {"caption", "transcribe", "st", "mt"}:
+            if language and mode in _LANGUAGE_MODES:
                 lang_code = language.split("-")[0].strip().lower()
                 if lang_code:
                     payload_obj["language"] = lang_code
