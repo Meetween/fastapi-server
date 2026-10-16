@@ -20,6 +20,7 @@ class TestHealthEndpoints:
         data = assert_successful_response(response)
         assert "service" in data
         assert "version" in data
+        assert data["commit"] == settings.app_commit
         assert "status" in data
         assert data["status"] == "running"
         assert "engine_loaded" in data
@@ -34,4 +35,5 @@ class TestHealthEndpoints:
         assert "status" in data
         assert data["status"] == "healthy"
         assert data["version"] == settings.app_version
+        assert data["commit"] == settings.app_commit
         assert "engine" in data

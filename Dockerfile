@@ -5,9 +5,9 @@
 #     --build-arg REVISION=$(git rev-parse HEAD) \
 #     -t fastapi-server .
 #
-# VERSION and REVISION only feed the OCI labels. The deploy script compares the version label
-# with what /health reports, so CI must pass the pyproject version; a local build without them
-# still works and is labelled "dev".
+# VERSION feeds the OCI label, which the deploy script compares with what /health reports, so CI
+# must pass the pyproject version; a local build without it still works and is labelled "dev".
+# REVISION feeds the label and APP_COMMIT, which /health reports as "commit".
 #
 # The container is configured only through environment variables, see the table in README.md.
 # There is no .env in the image: .dockerignore keeps local env files out of the context.
@@ -80,6 +80,9 @@ WORKDIR /app
 # The venv and the code are separate layers: a code change ships kilobytes, not torch.
 COPY --from=builder /app/.venv /app/.venv
 COPY . /app
+
+# Set after the code layer, which changes on every commit anyway, so no cache is lost.
+ENV APP_COMMIT=${REVISION}
 
 # librosa compiles some functions with numba, which caches them next to the source, else in
 # the home directory. site-packages is read-only for the app user and a home directory is not

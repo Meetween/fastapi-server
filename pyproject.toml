@@ -1,6 +1,6 @@
 [project]
 name = "fastapi-server"
-version = "0.3.0"
+version = "0.4.1"
 description = "Meeting intelligence API for Meetween, backed by Triton"
 readme = "README.md"
 license = "Apache-2.0"

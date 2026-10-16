@@ -11,6 +11,7 @@ async def root():
     return {
         "service": settings.app_name,
         "version": settings.app_version,
+        "commit": settings.app_commit,
         "status": "running",
         "engine_loaded": engine_loaded,
         "model_profile": settings.model_profile,
@@ -27,6 +28,7 @@ async def health_check():
     return {
         "status": "healthy",
         "version": settings.app_version,
+        "commit": settings.app_commit,
         "engine": "loaded" if engine_loaded else "not loaded",
         "model_profile": settings.model_profile,
         "triton_url": settings.triton.url,
