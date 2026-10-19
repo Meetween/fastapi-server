@@ -103,7 +103,8 @@ async def _setup_indexes() -> None:
     Imported lazily to avoid circular imports between mongo.py and models.
     """
     from src.database.models.meeting_context import MeetingContext
+    from src.database.models.room_owner import RoomOwner
     from src.database.models.user import User
 
-    for model in (User, MeetingContext):
+    for model in (User, MeetingContext, RoomOwner):
         await model.setup_indexes()

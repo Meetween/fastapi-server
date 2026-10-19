@@ -59,6 +59,7 @@ class MongoSettings(BaseModel):
     db_name: str
     users_collection: str
     meeting_context_collection: str
+    room_owner_collection: str
 
 
 def _resolve_profiles_path(path: Path) -> Path:
@@ -209,6 +210,7 @@ class Settings(BaseSettings):
             db_name=self.mongo_db_name,
             users_collection=self.mongo_users_collection,
             meeting_context_collection=self.mongo_meeting_context_collection,
+            room_owner_collection=self.mongo_room_owner_collection,
         )
 
     @property
