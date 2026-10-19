@@ -5,6 +5,7 @@ from jose import JWTError
 
 from api.deps.auth import REQUIRE_ADMIN, get_current_subject
 from config import settings
+from core import room_access
 from src.database.models.user import User
 from src.schemas.auth import (
     UserCreateRequest,
@@ -105,10 +106,12 @@ async def issue_jitsi_token(
         room_name=room,
         metadata=request.metadata,
     )
+    # A moderator request is honored only for the room's owner and moderators; an unclaimed room is claimed by the caller.
+    moderator = request.moderator and await room_access.grants_moderator(room, current_subject)
     jitsi_token = create_jitsi_token(
         sub=current_subject,
         room=room,
-        moderator=request.moderator,
+        moderator=moderator,
     )
     mj = settings.meeting_jwt
     meet_join_url = (
