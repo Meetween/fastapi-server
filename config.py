@@ -164,6 +164,21 @@ class Settings(BaseSettings):
     mongo_meeting_context_collection: str = Field(
         default="meeting_context", env="MONGO_MEETING_CONTEXT_COLLECTION"
     )
+    mongo_room_owner_collection: str = Field(
+        default="room_owner", env="MONGO_ROOM_OWNER_COLLECTION"
+    )
+
+    valkey_url: str = Field(default="redis://localhost:6379/0", env="VALKEY_URL")
+    # Shared secret the control route presents to vp-worker on every call.
+    vp_worker_shared_secret: str = Field(default="", env="VP_WORKER_SHARED_SECRET")
+    vp_worker_dispatch_timeout_seconds: float = Field(
+        default=10.0, env="VP_WORKER_DISPATCH_TIMEOUT_SECONDS"
+    )
+    # A pending bot with no alive key after this long is reaped (doc §6).
+    vp_bot_pending_timeout_seconds: int = Field(
+        default=60, env="VP_BOT_PENDING_TIMEOUT_SECONDS"
+    )
+    vp_reaper_interval_seconds: int = Field(default=30, env="VP_REAPER_INTERVAL_SECONDS")
 
     model_profile: str = Field(default="speechlmm", env="MODEL_PROFILE")
     model_profiles_path: Path = Field(default=Path("model_profiles.yml"), env="MODEL_PROFILES_PATH")
