@@ -11,5 +11,26 @@ services:
       - mongo_data:/data/db
     restart: unless-stopped
 
+  valkey:
+    image: valkey/valkey:8-alpine
+    container_name: meetween-valkey
+    # Requires VALKEY_PASSWORD in .env. VALKEY_URL must carry the same password,
+    # e.g. redis://:<password>@localhost:6379/0
+    command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}", "--save", "60", "1", "--loglevel", "warning"]
+    ports:
+      # Loopback only, so the routing store is not reachable from the network.
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$${VALKEY_PASSWORD}\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    environment:
+      - VALKEY_PASSWORD=${VALKEY_PASSWORD:?set VALKEY_PASSWORD in .env}
+    restart: unless-stopped
+
 volumes:
   mongo_data:
+  valkey_data:
