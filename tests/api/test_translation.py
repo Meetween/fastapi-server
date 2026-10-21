@@ -8,6 +8,20 @@ from models import TaskType
 from tests.utils.assertions import assert_successful_response, assert_error_response, assert_translation_response
 from tests.utils.helpers import create_mt_payload, create_st_payload
 
+from config import settings
+
+_JIGASI_KEY = "jigasi-test-key"
+
+
+@pytest.fixture
+def client(test_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """Translation is a Jigasi route: send the shared key, not a user access token."""
+    monkeypatch.setattr(settings, "jigasi_meetween_api_key", _JIGASI_KEY)
+    return TestClient(
+        test_client.app,
+        headers={"Authorization": f"Bearer {_JIGASI_KEY}"},
+    )
+
 
 @pytest.mark.integration
 @pytest.mark.regression
