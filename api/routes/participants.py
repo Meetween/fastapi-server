@@ -1,12 +1,12 @@
 import logging
 from fastapi import APIRouter, HTTPException
 
-from api.deps.auth import REQUIRE_AUTH
+from api.deps.service_token import REQUIRE_SERVICE_TOKEN
 
 from core import SessionManager
 from models import ParticipantUpdateRequest
 
-router = APIRouter(tags=["participants"], dependencies=REQUIRE_AUTH)
+router = APIRouter(tags=["participants"], dependencies=REQUIRE_SERVICE_TOKEN)
 logger = logging.getLogger(__name__)
 
 

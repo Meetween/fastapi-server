@@ -3,7 +3,9 @@ import logging
 from typing import Annotated, Union
 
 from pydub import AudioSegment
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Body, HTTPException
+
+from api.deps.service_token import REQUIRE_SERVICE_TOKEN
 
 from core import EngineManager
 from utils import pydub_to_pcm16
@@ -15,7 +17,11 @@ from models import (
 )
 from butler import translate_audio, translate_text
 
-router = APIRouter(prefix="/api", tags=["translation"])
+router = APIRouter(
+    prefix="/api",
+    tags=["translation"],
+    dependencies=REQUIRE_SERVICE_TOKEN,
+)
 
 logger = logging.getLogger(__name__)
 
