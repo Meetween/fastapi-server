@@ -143,6 +143,8 @@ class Settings(BaseSettings):
 
     # Meetings with no open websocket and no activity for this long are cleared from memory.
     meeting_idle_timeout_seconds: int = 6 * 60 * 60
+    # How long an ended meeting is remembered, so late updates for it are still rejected.
+    ended_meeting_retention_seconds: int = 24 * 60 * 60
 
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.

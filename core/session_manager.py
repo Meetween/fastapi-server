@@ -54,8 +54,8 @@ class SessionManager:
     _sessions: Dict[str, Session] = {}
     _participant_locks: Dict[str, asyncio.Lock] = {}
     _participant_locks_guard: Optional[asyncio.Lock] = None
-    # In-memory only: meetings Jigasi reported as ended. Survives session clears, lost on restart.
-    _ended_meetings: set = set()
+    # In-memory only: meeting id -> monotonic time Jigasi reported it ended. Pruned by the idle sweep.
+    _ended_meetings: Dict[str, float] = {}
     # Monotonic time of the last activity per meeting. Drives the idle sweep.
     _last_activity: Dict[str, float] = {}
 
@@ -79,7 +79,8 @@ class SessionManager:
         Clearing is unconditional: an open websocket does not block it.
         """
         newly_ended = meeting_id not in cls._ended_meetings
-        cls._ended_meetings.add(meeting_id)
+        if newly_ended:
+            cls._ended_meetings[meeting_id] = time.monotonic()
 
         # Detach the socket before any await so no other task can pick it up.
         websocket = cls._connections.pop(meeting_id, None)
@@ -106,7 +107,8 @@ class SessionManager:
         """
         Clear meetings with no open websocket and no activity for `meeting_idle_timeout_seconds`.
 
-        Covers meetings whose end signal never arrived. Returns the cleared meeting ids.
+        Covers meetings whose end signal never arrived. Also prunes expired ended-meeting
+        entries and orphaned participant locks. Returns the cleared meeting ids.
         """
         now = time.monotonic() if now is None else now
         cutoff = now - settings.meeting_idle_timeout_seconds
@@ -123,18 +125,40 @@ class SessionManager:
                 room_name=session.room_name if session else None,
             )
 
+        cls._prune_ended_meetings(now=now)
+        cls._prune_orphaned_locks()
+
         if idle:
             logger.info(f"Swept {len(idle)} idle meeting(s): {idle}")
         return idle
+
+    @classmethod
+    def _prune_ended_meetings(cls, now: float) -> None:
+        """Forget ended meetings past `ended_meeting_retention_seconds`. Late updates for them are accepted again after this."""
+        cutoff = now - settings.ended_meeting_retention_seconds
+        expired = [meeting_id for meeting_id, ended_at in cls._ended_meetings.items() if ended_at <= cutoff]
+        for meeting_id in expired:
+            del cls._ended_meetings[meeting_id]
+        if expired:
+            logger.info(f"Pruned {len(expired)} ended meeting(s) past retention")
+
+    @classmethod
+    def _prune_orphaned_locks(cls) -> None:
+        """Drop unlocked participant locks whose meeting is no longer tracked."""
+        for key, lock in list(cls._participant_locks.items()):
+            meeting_id = key.split(":", 1)[0]
+            if meeting_id not in cls._last_activity and not lock.locked():
+                cls._participant_locks.pop(key, None)
 
     @classmethod
     def _clear_meeting_state(cls, meeting_id: str, room_name: Optional[str]) -> None:
         cls.reset_caption_handler(meeting_id=meeting_id)
         cls.clear_session(meeting_id=meeting_id, room_name=room_name, force=True)
 
+        # A held lock belongs to an in-flight request. Leave it; it is pruned once released.
         lock_prefix = f"{meeting_id}:"
-        for key in list(cls._participant_locks.keys()):
-            if key.startswith(lock_prefix):
+        for key, lock in list(cls._participant_locks.items()):
+            if key.startswith(lock_prefix) and not lock.locked():
                 cls._participant_locks.pop(key, None)
 
         cls._last_activity.pop(meeting_id, None)
@@ -430,7 +454,8 @@ class SessionManager:
         session.transcript = None
         logger.info(f"Cleared session: {meeting_id} room_name={room_name}")
 
+        # Held locks belong to in-flight requests; leave them for _prune_orphaned_locks.
         prefix = f"{meeting_id}:{room_name or ''}:"
-        for key in list(cls._participant_locks.keys()):
-            if key.startswith(prefix):
+        for key, lock in list(cls._participant_locks.items()):
+            if key.startswith(prefix) and not lock.locked():
                 cls._participant_locks.pop(key, None)
