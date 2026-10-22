@@ -104,3 +104,34 @@ class TestPruneEndedMeetings:
 
         SessionManager.sweep_idle_meetings(now=1000.0 + RETENTION)
         assert not SessionManager.is_meeting_ended(MEETING_ID)
+
+
+class TestReadsDoNotCreateState:
+    def test_get_transcript_on_unknown_meeting_creates_nothing(self):
+        assert SessionManager.get_transcript(meeting_id=MEETING_ID, room_name=None) is None
+
+        assert MEETING_ID not in SessionManager._sessions
+        assert MEETING_ID not in SessionManager._last_activity
+
+    def test_get_participant_history_on_unknown_meeting_creates_nothing(self):
+        history = SessionManager.get_participant_history(
+            meeting_id=MEETING_ID, room_name=None, participant_id="p1"
+        )
+
+        assert history == []
+        assert MEETING_ID not in SessionManager._sessions
+        assert MEETING_ID not in SessionManager._last_activity
+
+    def test_read_after_end_does_not_revive_ended_meeting_state(self):
+        SessionManager.update_transcript(
+            meeting_id=MEETING_ID,
+            room_name=None,
+            transcript="hello",
+            participant_id="p1",
+            timestamp=1.0,
+        )
+        SessionManager._sessions.pop(MEETING_ID)
+        SessionManager._last_activity.pop(MEETING_ID)
+
+        assert SessionManager.get_transcript(meeting_id=MEETING_ID, room_name=None) is None
+        assert MEETING_ID not in SessionManager._sessions

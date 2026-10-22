@@ -146,6 +146,22 @@ class TestMeetingEnded:
         assert response.status_code == 409
         assert MEETING_ID not in SessionManager._sessions
 
+    def test_agenda_after_end_is_rejected(self, client: TestClient):
+        client.post(f"/meetings/{MEETING_ID}/ended", headers=AUTH)
+
+        response = client.post(
+            "/api/agenda-tracking",
+            json={
+                "type": TaskType.AGENDA_TRACKING,
+                "meeting_id": MEETING_ID,
+                "room_id": "room-1",
+                "items": [{"index": 0, "text": "Budget", "status": "pending"}],
+            },
+        )
+
+        assert response.status_code == 409
+        assert MEETING_ID not in SessionManager._sessions
+
     def test_other_meetings_are_unaffected(self, test_client: TestClient):
         other = "00000000-0000-4000-8000-000000000001"
         test_client.post(f"/meetings/{MEETING_ID}/ended", headers=AUTH)

@@ -351,10 +351,11 @@ class SessionManager:
 
         Format: "John Doe: Hello everyone\nJane Smith: Hi John\n..."
         Returns None if no transcript entries exist.
+        Read-only: never creates a session, so reads cannot revive an ended or swept meeting.
         """
-        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        session = cls._sessions.get(meeting_id)
 
-        if not session.transcript:
+        if not session or not session.transcript:
             return None
 
         dialogue_lines = []
@@ -368,8 +369,11 @@ class SessionManager:
         Get the in-memory chat history for a participant in a meeting.
 
         Returns an empty list if no history is stored yet.
+        Read-only: never creates a session.
         """
-        session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
+        session = cls._sessions.get(meeting_id)
+        if not session:
+            return []
         return session.participant_histories.get(participant_id, [])
 
     @classmethod

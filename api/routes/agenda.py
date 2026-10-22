@@ -10,6 +10,7 @@ from typing import Dict, List, get_args
 from fastapi import APIRouter, Body, HTTPException, Response
 
 from api.deps.auth import REQUIRE_AUTH
+from api.deps.meeting_ended import reject_if_meeting_ended
 from pydantic import ValidationError
 
 from core import EngineManager, SessionManager
@@ -182,6 +183,8 @@ def _build_agenda_prompt(items: List[AgendaItem], transcript: str) -> str:
 async def agenda_tracking(
     request: MeetweenAgendaTrackingRequest = Body(...),
 ) -> MeetweenAgendaTrackingResponse | Response:
+    reject_if_meeting_ended(request.meeting_id)
+
     engine = EngineManager.get_lmm()
     if not engine:
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
