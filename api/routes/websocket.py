@@ -35,6 +35,10 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     """
     await websocket.accept()
 
+    if SessionManager.is_meeting_ended(meeting_id):
+        await websocket.close(code=1008, reason="meeting ended")
+        return
+
     SessionManager.add_connection(meeting_id, websocket)
     caption_handler = None
     audio_recorder_initialized = False
@@ -152,10 +156,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             SessionManager.remove_connection(meeting_id)
             if room_name:
                 AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
-            SessionManager.clear_meeting_state_if_inactive(
-                meeting_id=meeting_id,
-                room_name=room_name,
-            )
+            # Session state is NOT cleared here. A dropped socket must not wipe a running
+            # meeting's transcript; only the jigasi end-of-meeting signal clears it.
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")

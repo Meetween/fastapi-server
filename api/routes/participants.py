@@ -21,6 +21,9 @@ async def update_participants(
     Adds or updates participants in the session usermap.
     Participants are never removed even if they leave the meeting.
     """
+    if SessionManager.is_meeting_ended(meeting_id):
+        raise HTTPException(status_code=409, detail="Meeting has ended")
+
     try:
         participants = [
             {"participant_id": p.participant_id, "username": p.username}
@@ -48,3 +51,20 @@ async def update_participants(
     except Exception:
         logger.error("Error updating participants", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update participants")
+
+
+@router.post("/meetings/{meeting_id}/ended")
+async def meeting_ended(meeting_id: str):
+    """
+    Receive the end-of-meeting signal from jigasi.
+
+    Force-clears in-memory session state for the meeting and marks it ended.
+    Later participant updates and new websocket connections for the meeting are rejected.
+    Idempotent: a repeated call returns success with already_ended=true.
+    """
+    newly_ended = SessionManager.mark_meeting_ended(meeting_id=meeting_id)
+    return {
+        "status": "success",
+        "meeting_id": meeting_id,
+        "already_ended": not newly_ended,
+    }
