@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -53,11 +54,114 @@ class SessionManager:
     _sessions: Dict[str, Session] = {}
     _participant_locks: Dict[str, asyncio.Lock] = {}
     _participant_locks_guard: Optional[asyncio.Lock] = None
+    # In-memory only: meeting id -> monotonic time Jigasi reported it ended. Pruned by the idle sweep.
+    _ended_meetings: Dict[str, float] = {}
+    # Monotonic time of the last activity per meeting. Drives the idle sweep.
+    _last_activity: Dict[str, float] = {}
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(SessionManager, cls).__new__(cls)
         return cls._instance
+
+    # Meeting lifecycle
+
+    @classmethod
+    def is_meeting_ended(cls, meeting_id: str) -> bool:
+        return meeting_id in cls._ended_meetings
+
+    @classmethod
+    async def mark_meeting_ended(cls, meeting_id: str) -> bool:
+        """
+        Mark a meeting as ended, force-clear its in-memory state, and close its websocket.
+
+        Returns True when the meeting was newly ended, False when it was already ended.
+        Clearing is unconditional: an open websocket does not block it.
+        """
+        newly_ended = meeting_id not in cls._ended_meetings
+        if newly_ended:
+            cls._ended_meetings[meeting_id] = time.monotonic()
+
+        # Detach the socket before any await so no other task can pick it up.
+        websocket = cls._connections.pop(meeting_id, None)
+        cls._clear_meeting_state(meeting_id=meeting_id, room_name=None)
+
+        if websocket is not None:
+            try:
+                await websocket.close(code=1008, reason="meeting ended")
+            except Exception as e:
+                logger.warning(f"Failed to close websocket for ended meeting {meeting_id}: {e}")
+
+        logger.info(f"Meeting ended: {meeting_id} (newly_ended={newly_ended})")
+        return newly_ended
+
+    # Idle sweep
+
+    @classmethod
+    def touch_meeting(cls, meeting_id: str) -> None:
+        """Record activity for a meeting so the idle clock restarts."""
+        cls._last_activity[meeting_id] = time.monotonic()
+
+    @classmethod
+    def sweep_idle_meetings(cls, now: Optional[float] = None) -> List[str]:
+        """
+        Clear meetings with no open websocket and no activity for `meeting_idle_timeout_seconds`.
+
+        Covers meetings whose end signal never arrived. Also prunes expired ended-meeting
+        entries and orphaned participant locks. Returns the cleared meeting ids.
+        """
+        now = time.monotonic() if now is None else now
+        cutoff = now - settings.meeting_idle_timeout_seconds
+        idle = [
+            meeting_id
+            for meeting_id, last_seen in cls._last_activity.items()
+            if last_seen <= cutoff and meeting_id not in cls._connections
+        ]
+
+        for meeting_id in idle:
+            session = cls._sessions.get(meeting_id)
+            cls._clear_meeting_state(
+                meeting_id=meeting_id,
+                room_name=session.room_name if session else None,
+            )
+
+        cls._prune_ended_meetings(now=now)
+        cls._prune_orphaned_locks()
+
+        if idle:
+            logger.info(f"Swept {len(idle)} idle meeting(s): {idle}")
+        return idle
+
+    @classmethod
+    def _prune_ended_meetings(cls, now: float) -> None:
+        """Forget ended meetings past `ended_meeting_retention_seconds`. Late updates for them are accepted again after this."""
+        cutoff = now - settings.ended_meeting_retention_seconds
+        expired = [meeting_id for meeting_id, ended_at in cls._ended_meetings.items() if ended_at <= cutoff]
+        for meeting_id in expired:
+            del cls._ended_meetings[meeting_id]
+        if expired:
+            logger.info(f"Pruned {len(expired)} ended meeting(s) past retention")
+
+    @classmethod
+    def _prune_orphaned_locks(cls) -> None:
+        """Drop unlocked participant locks whose meeting is no longer tracked."""
+        for key, lock in list(cls._participant_locks.items()):
+            meeting_id = key.split(":", 1)[0]
+            if meeting_id not in cls._last_activity and not lock.locked():
+                cls._participant_locks.pop(key, None)
+
+    @classmethod
+    def _clear_meeting_state(cls, meeting_id: str, room_name: Optional[str]) -> None:
+        cls.reset_caption_handler(meeting_id=meeting_id)
+        cls.clear_session(meeting_id=meeting_id, room_name=room_name, force=True)
+
+        # A held lock belongs to an in-flight request. Leave it; it is pruned once released.
+        lock_prefix = f"{meeting_id}:"
+        for key, lock in list(cls._participant_locks.items()):
+            if key.startswith(lock_prefix) and not lock.locked():
+                cls._participant_locks.pop(key, None)
+
+        cls._last_activity.pop(meeting_id, None)
 
     # WebSocket connection management
 
@@ -65,6 +169,7 @@ class SessionManager:
     def add_connection(cls, meeting_id: str, websocket: WebSocket):
         """Add a WebSocket connection"""
         cls._connections[meeting_id] = websocket
+        cls.touch_meeting(meeting_id)
         logger.info(f"Added WebSocket connection: {meeting_id}")
 
     @classmethod
@@ -74,30 +179,13 @@ class SessionManager:
         """
         if meeting_id in cls._connections:
             del cls._connections[meeting_id]
+            cls.touch_meeting(meeting_id)
             logger.info(f"Removed WebSocket connection: {meeting_id}")
 
     @classmethod
     def get_connection(cls, meeting_id: str) -> Optional[WebSocket]:
         """Get one WebSocket connection (if any) for a meeting."""
         return cls._connections.get(meeting_id)
-
-    @classmethod
-    def clear_meeting_state_if_inactive(
-        cls,
-        meeting_id: str,
-        room_name: Optional[str],
-    ) -> bool:
-        """
-        Clear meeting-level in-memory state when no websocket clients remain.
-
-        Returns True when cleanup was performed, False when the meeting is still active.
-        """
-        if meeting_id in cls._connections:
-            return False
-
-        cls.reset_caption_handler(meeting_id=meeting_id)
-        cls.clear_session(meeting_id=meeting_id, room_name=room_name, force=True)
-        return True
 
     @classmethod
     async def cleanup(cls):
@@ -122,6 +210,7 @@ class SessionManager:
         engine: TritonClient,
     ) -> CaptionHandler:
         """Get existing or create new caption handler"""
+        cls.touch_meeting(meeting_id)
         if meeting_id not in cls._caption_handlers:
             cls._caption_handlers[meeting_id] = CaptionHandler()
             logger.info(f"Created caption handler for session: {meeting_id}")
@@ -196,6 +285,7 @@ class SessionManager:
         The session stores the full transcript and per-participant chat history
         in memory for the lifetime of the meeting.
         """
+        cls.touch_meeting(meeting_id)
         session = cls._sessions.get(meeting_id)
         if session is None:
             session = Session(meeting_id=meeting_id, room_name=room_name)
@@ -219,6 +309,10 @@ class SessionManager:
 
         Requires participant_id and timestamp to store entry.
         """
+        # In-flight websocket messages can outlive the end signal; never recreate state for them.
+        if cls.is_meeting_ended(meeting_id):
+            logger.info("Dropping transcript for ended meeting: %s", meeting_id)
+            return
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
         if not transcript:
             return
@@ -360,7 +454,8 @@ class SessionManager:
         session.transcript = None
         logger.info(f"Cleared session: {meeting_id} room_name={room_name}")
 
+        # Held locks belong to in-flight requests; leave them for _prune_orphaned_locks.
         prefix = f"{meeting_id}:{room_name or ''}:"
-        for key in list(cls._participant_locks.keys()):
-            if key.startswith(prefix):
+        for key, lock in list(cls._participant_locks.items()):
+            if key.startswith(prefix) and not lock.locked():
                 cls._participant_locks.pop(key, None)

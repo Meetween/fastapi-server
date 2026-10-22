@@ -9,20 +9,12 @@ from utils.auth import (
     AccessTokenError,
     AccessTokenExpiredError,
     resolve_access_subject,
+    CHALLENGE_MISSING,
+    CHALLENGE_INVALID,
+    CHALLENGE_EXPIRED,
 )
 
 bearer_security = HTTPBearer(auto_error=False)
-
-# RFC 6750 section 3: a 401 carries WWW-Authenticate so clients can tell an
-# expired token, which a refresh repairs, from a missing or forged one.
-_CHALLENGE_MISSING = {"WWW-Authenticate": "Bearer"}
-_CHALLENGE_INVALID = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
-_CHALLENGE_EXPIRED = {
-    "WWW-Authenticate": (
-        'Bearer error="invalid_token", '
-        'error_description="The access token expired"'
-    )
-}
 
 
 def get_current_subject(
@@ -32,17 +24,17 @@ def get_current_subject(
         raise HTTPException(
             status_code=401,
             detail="Missing bearer token",
-            headers=_CHALLENGE_MISSING,
+            headers=CHALLENGE_MISSING,
         )
     try:
         return resolve_access_subject(credentials.credentials)
     except AccessTokenExpiredError as exc:
         raise HTTPException(
-            status_code=401, detail=str(exc), headers=_CHALLENGE_EXPIRED
+            status_code=401, detail=str(exc), headers=CHALLENGE_EXPIRED
         ) from exc
     except AccessTokenError as exc:
         raise HTTPException(
-            status_code=401, detail=str(exc), headers=_CHALLENGE_INVALID
+            status_code=401, detail=str(exc), headers=CHALLENGE_INVALID
         ) from exc
 
 

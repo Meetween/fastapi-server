@@ -15,6 +15,17 @@ from src.database.models.user import User
 
 logger = logging.getLogger(__name__)
 
+# RFC 6750 section 3: a 401 carries WWW-Authenticate so clients can tell an
+# expired token, which a refresh repairs, from a missing or forged one.
+CHALLENGE_MISSING = {"WWW-Authenticate": "Bearer"}
+CHALLENGE_INVALID = {"WWW-Authenticate": 'Bearer error="invalid_token"'}
+CHALLENGE_EXPIRED = {
+    "WWW-Authenticate": (
+        'Bearer error="invalid_token", '
+        'error_description="The access token expired"'
+    )
+}
+
 
 def hash_password(password: str) -> str:
     payload = f"{settings.app_jwt.secret_key}:{password}".encode("utf-8")

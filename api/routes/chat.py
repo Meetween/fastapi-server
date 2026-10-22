@@ -22,6 +22,12 @@ router = APIRouter(
 logger = logging.getLogger(__name__)
 
 
+def _reject_if_meeting_ended(meeting_id: str) -> None:
+    # Checked under the history mutex: a turn in flight when the meeting ends must not write back.
+    if SessionManager.is_meeting_ended(meeting_id):
+        raise HTTPException(status_code=409, detail="Meeting has ended")
+
+
 def _build_chat_prompt(
     query: str,
     context: str | None,
@@ -84,6 +90,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             room_name=request.room_name,
             participant_id=participant_id,
         ):
+            _reject_if_meeting_ended(request.meeting_id)
             transcript = SessionManager.get_transcript(
                 meeting_id=request.meeting_id,
                 room_name=request.room_name,
@@ -119,6 +126,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             room_name=request.room_name,
             participant_id=participant_id,
         ):
+            _reject_if_meeting_ended(request.meeting_id)
             SessionManager.store_chat_turn(
                 meeting_id=request.meeting_id,
                 room_name=request.room_name,
