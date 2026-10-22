@@ -53,11 +53,41 @@ class SessionManager:
     _sessions: Dict[str, Session] = {}
     _participant_locks: Dict[str, asyncio.Lock] = {}
     _participant_locks_guard: Optional[asyncio.Lock] = None
+    # In-memory only: meetings Jigasi reported as ended. Survives session clears, lost on restart.
+    _ended_meetings: set = set()
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super(SessionManager, cls).__new__(cls)
         return cls._instance
+
+    # Meeting lifecycle
+
+    @classmethod
+    def is_meeting_ended(cls, meeting_id: str) -> bool:
+        return meeting_id in cls._ended_meetings
+
+    @classmethod
+    def mark_meeting_ended(cls, meeting_id: str) -> bool:
+        """
+        Mark a meeting as ended and force-clear its in-memory state.
+
+        Returns True when the meeting was newly ended, False when it was already ended.
+        Clearing is unconditional: an open websocket does not block it.
+        """
+        newly_ended = meeting_id not in cls._ended_meetings
+        cls._ended_meetings.add(meeting_id)
+
+        cls.reset_caption_handler(meeting_id=meeting_id)
+        cls.clear_session(meeting_id=meeting_id, room_name=None, force=True)
+
+        lock_prefix = f"{meeting_id}:"
+        for key in list(cls._participant_locks.keys()):
+            if key.startswith(lock_prefix):
+                cls._participant_locks.pop(key, None)
+
+        logger.info(f"Meeting ended: {meeting_id} (newly_ended={newly_ended})")
+        return newly_ended
 
     # WebSocket connection management
 

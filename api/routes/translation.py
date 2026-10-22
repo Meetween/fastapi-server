@@ -7,7 +7,7 @@ from fastapi import APIRouter, Body, HTTPException
 
 from api.deps.service_token import REQUIRE_SERVICE_TOKEN
 
-from core import EngineManager
+from core import EngineManager, SessionManager
 from utils import pydub_to_pcm16
 from models import (
     MeetweenTranslationResponse,
@@ -106,6 +106,9 @@ async def api_translate(request: TranslationRequest):
 
     Returns a single translation result.
     """
+    if request.meeting_id and SessionManager.is_meeting_ended(request.meeting_id):
+        raise HTTPException(status_code=409, detail="Meeting has ended")
+
     if not EngineManager.get_lmm():
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
 
