@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -55,6 +56,8 @@ class SessionManager:
     _participant_locks_guard: Optional[asyncio.Lock] = None
     # In-memory only: meetings Jigasi reported as ended. Survives session clears, lost on restart.
     _ended_meetings: set = set()
+    # Monotonic time of the last activity per meeting. Drives the idle sweep.
+    _last_activity: Dict[str, float] = {}
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -80,14 +83,7 @@ class SessionManager:
 
         # Detach the socket before any await so no other task can pick it up.
         websocket = cls._connections.pop(meeting_id, None)
-
-        cls.reset_caption_handler(meeting_id=meeting_id)
-        cls.clear_session(meeting_id=meeting_id, room_name=None, force=True)
-
-        lock_prefix = f"{meeting_id}:"
-        for key in list(cls._participant_locks.keys()):
-            if key.startswith(lock_prefix):
-                cls._participant_locks.pop(key, None)
+        cls._clear_meeting_state(meeting_id=meeting_id, room_name=None)
 
         if websocket is not None:
             try:
@@ -98,12 +94,58 @@ class SessionManager:
         logger.info(f"Meeting ended: {meeting_id} (newly_ended={newly_ended})")
         return newly_ended
 
+    # Idle sweep
+
+    @classmethod
+    def touch_meeting(cls, meeting_id: str) -> None:
+        """Record activity for a meeting so the idle clock restarts."""
+        cls._last_activity[meeting_id] = time.monotonic()
+
+    @classmethod
+    def sweep_idle_meetings(cls, now: Optional[float] = None) -> List[str]:
+        """
+        Clear meetings with no open websocket and no activity for `meeting_idle_timeout_seconds`.
+
+        Covers meetings whose end signal never arrived. Returns the cleared meeting ids.
+        """
+        now = time.monotonic() if now is None else now
+        cutoff = now - settings.meeting_idle_timeout_seconds
+        idle = [
+            meeting_id
+            for meeting_id, last_seen in cls._last_activity.items()
+            if last_seen <= cutoff and meeting_id not in cls._connections
+        ]
+
+        for meeting_id in idle:
+            session = cls._sessions.get(meeting_id)
+            cls._clear_meeting_state(
+                meeting_id=meeting_id,
+                room_name=session.room_name if session else None,
+            )
+
+        if idle:
+            logger.info(f"Swept {len(idle)} idle meeting(s): {idle}")
+        return idle
+
+    @classmethod
+    def _clear_meeting_state(cls, meeting_id: str, room_name: Optional[str]) -> None:
+        cls.reset_caption_handler(meeting_id=meeting_id)
+        cls.clear_session(meeting_id=meeting_id, room_name=room_name, force=True)
+
+        lock_prefix = f"{meeting_id}:"
+        for key in list(cls._participant_locks.keys()):
+            if key.startswith(lock_prefix):
+                cls._participant_locks.pop(key, None)
+
+        cls._last_activity.pop(meeting_id, None)
+
     # WebSocket connection management
 
     @classmethod
     def add_connection(cls, meeting_id: str, websocket: WebSocket):
         """Add a WebSocket connection"""
         cls._connections[meeting_id] = websocket
+        cls.touch_meeting(meeting_id)
         logger.info(f"Added WebSocket connection: {meeting_id}")
 
     @classmethod
@@ -113,30 +155,13 @@ class SessionManager:
         """
         if meeting_id in cls._connections:
             del cls._connections[meeting_id]
+            cls.touch_meeting(meeting_id)
             logger.info(f"Removed WebSocket connection: {meeting_id}")
 
     @classmethod
     def get_connection(cls, meeting_id: str) -> Optional[WebSocket]:
         """Get one WebSocket connection (if any) for a meeting."""
         return cls._connections.get(meeting_id)
-
-    @classmethod
-    def clear_meeting_state_if_inactive(
-        cls,
-        meeting_id: str,
-        room_name: Optional[str],
-    ) -> bool:
-        """
-        Clear meeting-level in-memory state when no websocket clients remain.
-
-        Returns True when cleanup was performed, False when the meeting is still active.
-        """
-        if meeting_id in cls._connections:
-            return False
-
-        cls.reset_caption_handler(meeting_id=meeting_id)
-        cls.clear_session(meeting_id=meeting_id, room_name=room_name, force=True)
-        return True
 
     @classmethod
     async def cleanup(cls):
@@ -161,6 +186,7 @@ class SessionManager:
         engine: TritonClient,
     ) -> CaptionHandler:
         """Get existing or create new caption handler"""
+        cls.touch_meeting(meeting_id)
         if meeting_id not in cls._caption_handlers:
             cls._caption_handlers[meeting_id] = CaptionHandler()
             logger.info(f"Created caption handler for session: {meeting_id}")
@@ -235,6 +261,7 @@ class SessionManager:
         The session stores the full transcript and per-participant chat history
         in memory for the lifetime of the meeting.
         """
+        cls.touch_meeting(meeting_id)
         session = cls._sessions.get(meeting_id)
         if session is None:
             session = Session(meeting_id=meeting_id, room_name=room_name)

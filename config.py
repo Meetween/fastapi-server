@@ -141,6 +141,9 @@ class Settings(BaseSettings):
 
     recording_retention_days: int = 7
 
+    # Meetings with no open websocket and no activity for this long are cleared from memory.
+    meeting_idle_timeout_seconds: int = 6 * 60 * 60
+
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.
     jigasi_meetween_api_key: str = Field(default="", env="JIGASI_MEETWEEN_API_KEY")

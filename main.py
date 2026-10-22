@@ -8,6 +8,7 @@ import uvicorn
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from config import settings
 from core import EngineManager, SessionManager
@@ -75,6 +76,15 @@ async def startup_event():
         id="cleanup_old_recordings",
         name="Cleanup old recordings",
         replace_existing=True
+    )
+
+    # Clear in-memory state for meetings that went idle without an end signal
+    scheduler.add_job(
+        SessionManager.sweep_idle_meetings,
+        trigger=IntervalTrigger(minutes=15),
+        id="sweep_idle_meetings",
+        name="Sweep idle meetings",
+        replace_existing=True,
     )
     scheduler.start()
     logger.info("Scheduled recording cleanup job (daily at 2:00 AM UTC)")
