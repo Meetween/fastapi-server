@@ -62,7 +62,7 @@ async def meeting_ended(meeting_id: str):
     Later participant updates and new websocket connections for the meeting are rejected.
     Idempotent: a repeated call returns success with already_ended=true.
     """
-    newly_ended = SessionManager.mark_meeting_ended(meeting_id=meeting_id)
+    newly_ended = await SessionManager.mark_meeting_ended(meeting_id=meeting_id)
     return {
         "status": "success",
         "meeting_id": meeting_id,

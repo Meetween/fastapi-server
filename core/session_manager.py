@@ -68,15 +68,18 @@ class SessionManager:
         return meeting_id in cls._ended_meetings
 
     @classmethod
-    def mark_meeting_ended(cls, meeting_id: str) -> bool:
+    async def mark_meeting_ended(cls, meeting_id: str) -> bool:
         """
-        Mark a meeting as ended and force-clear its in-memory state.
+        Mark a meeting as ended, force-clear its in-memory state, and close its websocket.
 
         Returns True when the meeting was newly ended, False when it was already ended.
         Clearing is unconditional: an open websocket does not block it.
         """
         newly_ended = meeting_id not in cls._ended_meetings
         cls._ended_meetings.add(meeting_id)
+
+        # Detach the socket before any await so no other task can pick it up.
+        websocket = cls._connections.pop(meeting_id, None)
 
         cls.reset_caption_handler(meeting_id=meeting_id)
         cls.clear_session(meeting_id=meeting_id, room_name=None, force=True)
@@ -85,6 +88,12 @@ class SessionManager:
         for key in list(cls._participant_locks.keys()):
             if key.startswith(lock_prefix):
                 cls._participant_locks.pop(key, None)
+
+        if websocket is not None:
+            try:
+                await websocket.close(code=1008, reason="meeting ended")
+            except Exception as e:
+                logger.warning(f"Failed to close websocket for ended meeting {meeting_id}: {e}")
 
         logger.info(f"Meeting ended: {meeting_id} (newly_ended={newly_ended})")
         return newly_ended
@@ -249,6 +258,10 @@ class SessionManager:
 
         Requires participant_id and timestamp to store entry.
         """
+        # In-flight websocket messages can outlive the end signal; never recreate state for them.
+        if cls.is_meeting_ended(meeting_id):
+            logger.info("Dropping transcript for ended meeting: %s", meeting_id)
+            return
         session = cls.get_or_create_session(meeting_id=meeting_id, room_name=room_name)
         if not transcript:
             return
