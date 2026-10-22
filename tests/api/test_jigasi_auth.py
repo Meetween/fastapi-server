@@ -77,6 +77,20 @@ class TestJigasiParticipantAuth:
 
         assert response.status_code == 401
 
+    def test_non_ascii_bearer_is_rejected(
+        self, test_client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        _use_jigasi_key(monkeypatch)
+
+        response = test_client.post(
+            f"/meetings/{MEETING_ID}/participants",
+            json=_participant_update(),
+            # Raw latin-1 bytes: httpx refuses non-ASCII str headers, and this is what hits the server.
+            headers={"Authorization": b"Bearer caf\xe9"},
+        )
+
+        assert response.status_code == 401
+
     def test_user_access_token_is_rejected(
         self,
         test_client: TestClient,

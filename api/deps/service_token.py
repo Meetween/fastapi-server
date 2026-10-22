@@ -19,7 +19,8 @@ def require_service_token(
 
     secret = settings.jigasi_meetween_api_key
     presented = credentials.credentials if credentials is not None else ""
-    if secret and hmac.compare_digest(presented, secret):
+    # str compare_digest raises TypeError on non-ASCII; header text can carry it (latin-1 decoded).
+    if secret and hmac.compare_digest(presented.encode(), secret.encode()):
         return
 
     missing = credentials is None
