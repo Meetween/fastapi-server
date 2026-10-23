@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.testclient import WebSocketDenialResponse
 from starlette.websockets import WebSocketDisconnect
 
 from config import settings
@@ -92,11 +93,11 @@ class TestMeetingEnded:
     def test_websocket_after_end_is_closed_with_meeting_ended(self, test_client: TestClient):
         test_client.post(f"/meetings/{MEETING_ID}/ended", headers=AUTH)
 
-        with pytest.raises(WebSocketDisconnect) as exc:
-            with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
-                ws.receive_text()
+        with pytest.raises(WebSocketDenialResponse) as exc:
+            with test_client.websocket_connect(f"/ws/{MEETING_ID}"):
+                pass
 
-        assert exc.value.code == 1008
+        assert exc.value.status_code == 409
         assert MEETING_ID not in SessionManager._connections
 
     def test_open_websocket_is_closed_by_end_signal(self, test_client: TestClient):

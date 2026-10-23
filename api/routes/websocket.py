@@ -33,11 +33,14 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     - same language as source:      transcription only (no translation needed)
     - different language(s):        transcription + translation per target language
     """
-    await websocket.accept()
-
     if SessionManager.is_meeting_ended(meeting_id):
-        await websocket.close(code=1008, reason="meeting ended")
+        # Reject the handshake (not accept-then-close): Jigasi retries failed handshakes
+        # with bounded backoff, but treats a server close after accept as a drop and reconnects forever.
+        await websocket.send({"type": "websocket.http.response.start", "status": 409, "headers": []})
+        await websocket.send({"type": "websocket.http.response.body", "body": b"Meeting has ended"})
         return
+
+    await websocket.accept()
 
     SessionManager.add_connection(meeting_id, websocket)
     caption_handler = None
