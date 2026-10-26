@@ -19,7 +19,7 @@ FROM ghcr.io/astral-sh/uv:0.9.13@sha256:f07d1bf7b1fb4b983eed2b31320e25a2a76625bd
 # python:3.12-slim by multi-arch index digest, so the same line builds linux/amd64 on CI and
 # linux/arm64 on a Mac. The runtime stage uses the same digest: the venv links to this
 # interpreter. Written out twice rather than through an ARG so that Dependabot can bump both.
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS builder
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
 
 COPY --from=uv /uv /usr/local/bin/uv
 
@@ -49,7 +49,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
 
-FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 
 ARG VERSION=dev
 ARG REVISION=unknown
