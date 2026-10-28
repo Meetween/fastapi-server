@@ -1,5 +1,7 @@
 """Idle sweep: clears meetings with no open websocket and no recent activity."""
 
+import asyncio
+
 import pytest
 
 from config import settings
@@ -130,8 +132,9 @@ class TestReadsDoNotCreateState:
             participant_id="p1",
             timestamp=1.0,
         )
-        SessionManager._sessions.pop(MEETING_ID)
-        SessionManager._last_activity.pop(MEETING_ID)
+        asyncio.run(SessionManager.mark_meeting_ended(MEETING_ID))
 
+        assert SessionManager.is_meeting_ended(MEETING_ID)
         assert SessionManager.get_transcript(meeting_id=MEETING_ID, room_name=None) is None
         assert MEETING_ID not in SessionManager._sessions
+        assert MEETING_ID not in SessionManager._last_activity
