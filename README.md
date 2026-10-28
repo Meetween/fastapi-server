@@ -68,6 +68,23 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `TRITON_TIMEOUT` | `1800` | inference timeout in seconds |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
+### Virtual participant settings
+
+`/api/virtual-participants` is a thin control route. It needs a bearer token, refuses a room with no
+human in it, caps the bots per room, mints the bot's room token and forwards to `vp-worker`, which
+owns the browsers and the media.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `VP_WORKER_URL` | `http://vp-worker:8000` | base URL of the worker service |
+| `VP_WORKER_SECRET` | empty | shared secret sent as `X-VP-Secret`; the route answers `503` while it is unset |
+| `VP_REQUIRE_HUMAN` | `true` | query Prosody before sending a bot into a room |
+| `VP_MAX_BOTS_PER_ROOM` | `2` | active bots allowed per room |
+| `VP_PROSODY_HTTP_URL` | `http://xmpp.meet.jitsi:5280` | Prosody HTTP port; needs `mod_muc_size`, set `XMPP_MODULES=muc_size` |
+| `VP_XMPP_DOMAIN` | `meet.jitsi` | XMPP domain for the room lookup |
+| `VP_SERVICE_NAMES` | `Transcriber,Recorder,Jibri,Jigasi` | display names, matched case insensitively, that do not count as a human |
+| `VP_REQUEST_TIMEOUT_S` | `10` | timeout for the worker and Prosody calls |
+
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),
 `qwen25_omni` and `voxtral_mini_3b_2507` (JSON envelope). A profile overrides only the Triton
 fields it lists.
@@ -105,6 +122,9 @@ a directory mounted there or anywhere else must be writable by that uid.
 | POST | `/api/auth/login`, `/api/auth/refresh`, `/api/auth/jitsi/validate` | public auth endpoints |
 | POST | `/api/auth/users`, `/api/auth/jitsi/issue` | user creation and Jitsi room token, authenticated |
 | GET | `/api/auth/context/{room_name}` | meeting context, authenticated |
+| POST, GET | `/api/virtual-participants` | start a virtual participant, list the active ones, authenticated |
+| GET, DELETE | `/api/virtual-participants/{bot_id}` | status of one virtual participant, stop it, authenticated |
+| POST | `/api/virtual-participants/{bot_id}/say` | make a virtual participant speak, authenticated |
 | GET | `/`, `/health` | liveness; `/health` reports the running version and commit |
 
 Request and response schemas are in `models.py` and in the generated docs.
