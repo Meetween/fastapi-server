@@ -78,6 +78,9 @@ async def startup_event():
         replace_existing=True
     )
 
+    if settings.enable_auth and not settings.jigasi_meetween_api_key:
+        logger.warning("ENABLE_AUTH is on and JIGASI_MEETWEEN_API_KEY is empty, Jigasi calls will be rejected")
+
     # Clear in-memory state for meetings that went idle without an end signal.
     # A coroutine runs on the event loop. A plain function runs in a worker thread
     # and mutates the session dicts while request handlers do the same.
