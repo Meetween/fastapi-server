@@ -3,9 +3,11 @@ import logging
 from typing import Annotated, Union
 
 from pydub import AudioSegment
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Body, HTTPException
 
-from core import EngineManager
+from api.deps.service_token import REQUIRE_SERVICE_TOKEN
+
+from core import EngineManager, SessionManager
 from utils import pydub_to_pcm16
 from models import (
     MeetweenTranslationResponse,
@@ -15,7 +17,11 @@ from models import (
 )
 from butler import translate_audio, translate_text
 
-router = APIRouter(prefix="/api", tags=["translation"])
+router = APIRouter(
+    prefix="/api",
+    tags=["translation"],
+    dependencies=REQUIRE_SERVICE_TOKEN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +106,9 @@ async def api_translate(request: TranslationRequest):
 
     Returns a single translation result.
     """
+    if request.meeting_id and SessionManager.is_meeting_ended(request.meeting_id):
+        raise HTTPException(status_code=409, detail="Meeting has ended")
+
     if not EngineManager.get_lmm():
         raise HTTPException(status_code=503, detail="SpeechLMM model not loaded")
 

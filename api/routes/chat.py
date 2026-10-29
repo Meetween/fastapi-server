@@ -9,6 +9,7 @@ import logging
 from fastapi import APIRouter, HTTPException, Body
 
 from api.deps.auth import REQUIRE_AUTH
+from api.deps.meeting_ended import reject_if_meeting_ended
 
 from core import EngineManager, SessionManager
 from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry, TaskType
@@ -84,6 +85,8 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             room_name=request.room_name,
             participant_id=participant_id,
         ):
+            # Checked under the history mutex: a turn in flight when the meeting ends must not write back.
+            reject_if_meeting_ended(request.meeting_id)
             transcript = SessionManager.get_transcript(
                 meeting_id=request.meeting_id,
                 room_name=request.room_name,
@@ -119,6 +122,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             room_name=request.room_name,
             participant_id=participant_id,
         ):
+            reject_if_meeting_ended(request.meeting_id)
             SessionManager.store_chat_turn(
                 meeting_id=request.meeting_id,
                 room_name=request.room_name,

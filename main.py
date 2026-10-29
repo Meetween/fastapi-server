@@ -8,6 +8,7 @@ import uvicorn
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 
 from config import settings
 from core import EngineManager, SessionManager
@@ -75,6 +76,23 @@ async def startup_event():
         id="cleanup_old_recordings",
         name="Cleanup old recordings",
         replace_existing=True
+    )
+
+    if settings.enable_auth and not settings.jigasi_meetween_api_key:
+        logger.warning("ENABLE_AUTH is on and JIGASI_MEETWEEN_API_KEY is empty, Jigasi calls will be rejected")
+
+    # Clear in-memory state for meetings that went idle without an end signal.
+    # A coroutine runs on the event loop. A plain function runs in a worker thread
+    # and mutates the session dicts while request handlers do the same.
+    async def sweep_idle_meetings_job():
+        SessionManager.sweep_idle_meetings()
+
+    scheduler.add_job(
+        sweep_idle_meetings_job,
+        trigger=IntervalTrigger(minutes=15),
+        id="sweep_idle_meetings",
+        name="Sweep idle meetings",
+        replace_existing=True,
     )
     scheduler.start()
     logger.info("Scheduled recording cleanup job (daily at 2:00 AM UTC)")

@@ -33,6 +33,13 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     - same language as source:      transcription only (no translation needed)
     - different language(s):        transcription + translation per target language
     """
+    if SessionManager.is_meeting_ended(meeting_id):
+        # Reject the handshake (not accept-then-close): Jigasi retries failed handshakes
+        # with bounded backoff, but treats a server close after accept as a drop and reconnects forever.
+        await websocket.send({"type": "websocket.http.response.start", "status": 409, "headers": []})
+        await websocket.send({"type": "websocket.http.response.body", "body": b"Meeting has ended"})
+        return
+
     await websocket.accept()
 
     SessionManager.add_connection(meeting_id, websocket)
@@ -152,10 +159,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             SessionManager.remove_connection(meeting_id)
             if room_name:
                 AudioRecorder.stop_recording(room_name=room_name, meeting_id=meeting_id)
-            SessionManager.clear_meeting_state_if_inactive(
-                meeting_id=meeting_id,
-                room_name=room_name,
-            )
+            # Session state is NOT cleared here. A dropped socket must not wipe a running
+            # meeting's transcript; only the jigasi end-of-meeting signal clears it.
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
