@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "Meetween FastAPI Server"
-    app_version: str = "0.4.1"  # x-release-please-version
+    app_version: str = "0.5.0"  # x-release-please-version
     # Commit the image was built from, set by the Dockerfile. "unknown" when run from source.
     app_commit: str = "unknown"
     host: str = "0.0.0.0"
