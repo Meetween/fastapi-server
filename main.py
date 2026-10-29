@@ -78,9 +78,14 @@ async def startup_event():
         replace_existing=True
     )
 
-    # Clear in-memory state for meetings that went idle without an end signal
+    # Clear in-memory state for meetings that went idle without an end signal.
+    # A coroutine runs on the event loop. A plain function runs in a worker thread
+    # and mutates the session dicts while request handlers do the same.
+    async def sweep_idle_meetings_job():
+        SessionManager.sweep_idle_meetings()
+
     scheduler.add_job(
-        SessionManager.sweep_idle_meetings,
+        sweep_idle_meetings_job,
         trigger=IntervalTrigger(minutes=15),
         id="sweep_idle_meetings",
         name="Sweep idle meetings",
