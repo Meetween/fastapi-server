@@ -66,6 +66,8 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `RECORDINGS_BASE_PATH` | `/mnt/recordings` | where recording chunks are written |
 | `RECORDING_RETENTION_DAYS` | `7` | retention of recording chunks |
 | `TRITON_TIMEOUT` | `1800` | inference timeout in seconds |
+| `ASR_SILENCE_RMS` | `150` | caption websocket: chunks whose 20 ms frames all stay below this RMS (raw int16 units, 0 to 32767, 150 is about -47 dBFS) are not sent to the model; `0` turns the gate off |
+| `ASR_SILENCE_MIN_ACTIVE_MS` | `100` | caption websocket: time at or above `ASR_SILENCE_RMS` a chunk needs to count as speech |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),

@@ -5,7 +5,8 @@ import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from core import EngineManager, SessionManager
 from butler import caption_audio, translate_audio, ResultType
-from utils import AudioRecorder, UUIDHelper
+from config import settings
+from utils import AudioRecorder, UUIDHelper, pcm16_has_speech
 from pydantic import ValidationError
 
 from models import (
@@ -87,6 +88,16 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             )
                             logger.error("SpeechLMM not available")
                             await websocket.send_json(error_response.model_dump())
+                            continue
+
+                        # Silence goes to the model as a chatbot prompt and comes back as text,
+                        # so a chunk without speech is dropped before any model call.
+                        if not pcm16_has_speech(
+                            audio_data,
+                            rms_threshold=settings.asr_silence_rms,
+                            min_active_ms=settings.asr_silence_min_active_ms,
+                        ):
+                            logger.info("Dropping silent chunk: meeting=%s bytes=%d", meeting_id, len(audio_data))
                             continue
 
                         try:

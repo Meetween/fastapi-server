@@ -1,6 +1,7 @@
 """Idle sweep: clears meetings with no open websocket and no recent activity."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,9 @@ from core import SessionManager
 MEETING_ID = "5506be1e-b870-4922-845d-d053b1d0b4db"
 IDLE_TIMEOUT = 600
 RETENTION = 100
+
+# Whole seconds, so `(START + IDLE_TIMEOUT) - IDLE_TIMEOUT == START` holds exactly in binary floating point.
+START = 1000.0
 
 
 class _Lock:
@@ -24,6 +28,11 @@ class _Lock:
 
 @pytest.fixture(autouse=True)
 def _isolate_session_state(monkeypatch: pytest.MonkeyPatch):
+    # The sweep compares `last_seen <= now - timeout`. With the real monotonic clock, the boundary tests
+    # (`now=last_seen + IDLE_TIMEOUT`) fail whenever the float round trip loses a bit, which happens on a
+    # freshly booted CI runner where uptime is a few hundred seconds. Only the module's clock is replaced,
+    # so the event loop keeps the real one.
+    monkeypatch.setattr("core.session_manager.time", SimpleNamespace(monotonic=lambda: START))
     monkeypatch.setattr(settings, "meeting_idle_timeout_seconds", IDLE_TIMEOUT)
     monkeypatch.setattr(settings, "ended_meeting_retention_seconds", RETENTION)
     monkeypatch.setattr(SessionManager, "_sessions", {})
