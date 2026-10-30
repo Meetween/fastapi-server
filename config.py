@@ -180,6 +180,13 @@ class Settings(BaseSettings):
     triton_max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
 
+    # Silence gate on the caption websocket. A chunk with no speech never reaches the model,
+    # which otherwise answers silence as a chatbot. The RMS is in raw int16 units (0 to 32767):
+    # 150 is about -47 dBFS. 0 turns the gate off.
+    asr_silence_rms: float = Field(default=150.0, env="ASR_SILENCE_RMS")
+    # Total time at or above that RMS (20 ms frames) a chunk needs to count as speech.
+    asr_silence_min_active_ms: int = Field(default=100, env="ASR_SILENCE_MIN_ACTIVE_MS")
+
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
     _meeting_jwt: MeetingJwtSettings = PrivateAttr()
