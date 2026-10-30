@@ -10,6 +10,19 @@ from config import settings
 _bearer = HTTPBearer(auto_error=False)
 
 
+def token_matches(
+    credentials: HTTPAuthorizationCredentials | None, secret: str
+) -> bool:
+    """Constant time check of the presented bearer against one configured secret.
+
+    An empty secret never matches, so a service whose key is unset is rejected, not open.
+    """
+    if not secret or credentials is None:
+        return False
+    # str compare_digest raises TypeError on non-ASCII; header text can carry it (latin-1 decoded).
+    return hmac.compare_digest(credentials.credentials.encode(), secret.encode())
+
+
 def require_service_token(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> None:
@@ -17,10 +30,7 @@ def require_service_token(
     if not settings.enable_auth:
         return
 
-    secret = settings.jigasi_meetween_api_key
-    presented = credentials.credentials if credentials is not None else ""
-    # str compare_digest raises TypeError on non-ASCII; header text can carry it (latin-1 decoded).
-    if secret and hmac.compare_digest(presented.encode(), secret.encode()):
+    if token_matches(credentials, settings.jigasi_meetween_api_key):
         return
 
     missing = credentials is None
