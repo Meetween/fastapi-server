@@ -97,7 +97,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             rms_threshold=settings.asr_silence_rms,
                             min_active_ms=settings.asr_silence_min_active_ms,
                         ):
-                            logger.debug("Dropping silent chunk: meeting=%s bytes=%d", meeting_id, len(audio_data))
+                            logger.info("Dropping silent chunk: meeting=%s bytes=%d", meeting_id, len(audio_data))
                             continue
 
                         try:
