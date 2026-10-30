@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.
     jigasi_meetween_api_key: str = Field(default="", env="JIGASI_MEETWEEN_API_KEY")
+    # Shared bearer the virtual participant worker sends to /api/chat, and nowhere else.
+    # Kept apart from the Jigasi key so a worker holds no right to end meetings or push
+    # participants. Empty while auth is on rejects those calls.
+    vp_meetween_api_key: str = Field(default="", env="VP_MEETWEEN_API_KEY")
 
     jwt_secret_key: str = Field(default="change-me-in-production", env="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
