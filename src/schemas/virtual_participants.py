@@ -27,6 +27,16 @@ class VirtualParticipantCreateRequest(BaseModel):
         description=f"Name shown in the meeting. The worker appends '{BOT_NAME_SUFFIX}'.",
     )
     script: str | None = Field(default=None, max_length=2000)
+    meeting_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description=(
+            "Jitsi meeting id, the one Jigasi reports as ended. Optional. When given and the "
+            "meeting has ended the request is refused with 409. A room name cannot stand in "
+            "for it: rooms are reused, the meeting id is not."
+        ),
+    )
 
     @field_validator("room_name", mode="before")
     @classmethod

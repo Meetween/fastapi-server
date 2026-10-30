@@ -73,6 +73,9 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 `/api/virtual-participants` is a thin control route. It needs a bearer token, refuses a room with no
 human in it, caps the bots per room, mints the bot's room token and forwards to `vp-worker`, which
 owns the browsers and the media.
+A create request may carry `meeting_id`, the id Jigasi reports as ended. If that meeting has ended the
+route answers `409` with `Meeting has ended`. Without it the check is skipped, because a room name
+cannot identify a meeting: rooms are reused.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

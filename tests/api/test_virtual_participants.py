@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 
 from api.routes import virtual_participants as vp_routes
 from config import VirtualParticipantSettings, settings
+from core import SessionManager
 from main import app
 from utils.auth import verify_jitsi_token
 
@@ -22,6 +23,7 @@ PROSODY_HOST = "xmpp.test"
 WORKER_SECRET = "test-vp-secret-0123456789"
 XMPP_DOMAIN = "meet.jitsi"
 ROOM = "team-sync"
+MEETING_ID = "5506be1e-b870-4922-845d-d053b1d0b4db"
 BASE = "/api/virtual-participants"
 
 
@@ -441,6 +443,67 @@ class TestCreateVirtualParticipant:
         response = client.post(BASE, json={"room_name": ROOM})
 
         assert response.status_code == 503
+        assert upstream.requests == []
+
+
+@pytest.mark.integration
+class TestCreateAfterMeetingEnded:
+    """A meeting Jigasi reported as ended refuses a bot, using the 118 ended state."""
+
+    @pytest.fixture(autouse=True)
+    def _isolate_ended_state(self, monkeypatch):
+        monkeypatch.setattr(SessionManager, "_ended_meetings", {})
+
+    def test_ended_meeting_is_refused_before_any_upstream_call(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        asyncio.run(SessionManager.mark_meeting_ended(MEETING_ID))
+
+        response = client.post(BASE, json={"room_name": ROOM, "meeting_id": MEETING_ID})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Meeting has ended"
+        assert upstream.requests == []
+
+    def test_ended_meeting_is_refused_with_the_human_check_off(
+        self, client: TestClient, upstream: FakeUpstream, vp_settings
+    ):
+        vp_settings(require_human=False)
+        asyncio.run(SessionManager.mark_meeting_ended(MEETING_ID))
+
+        response = client.post(BASE, json={"room_name": ROOM, "meeting_id": MEETING_ID})
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "Meeting has ended"
+        assert upstream.requests == []
+
+    def test_live_meeting_passes_and_the_id_is_not_forwarded(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        asyncio.run(SessionManager.mark_meeting_ended("another-meeting"))
+
+        response = client.post(BASE, json={"room_name": ROOM, "meeting_id": MEETING_ID})
+
+        assert response.status_code == 202
+        (create,) = upstream.calls("POST", "/bots")
+        assert "meeting_id" not in json.loads(create.content)
+
+    def test_request_without_meeting_id_is_unaffected(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        asyncio.run(SessionManager.mark_meeting_ended(MEETING_ID))
+
+        response = client.post(BASE, json={"room_name": ROOM})
+
+        assert response.status_code == 202
+
+    @pytest.mark.parametrize("meeting_id", ["", "x" * 129])
+    def test_rejects_invalid_meeting_id(
+        self, client: TestClient, upstream: FakeUpstream, meeting_id
+    ):
+        response = client.post(BASE, json={"room_name": ROOM, "meeting_id": meeting_id})
+
+        assert response.status_code == 422
         assert upstream.requests == []
 
 

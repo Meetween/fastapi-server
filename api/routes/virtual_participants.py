@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
 
 from api.deps.auth import REQUIRE_AUTH, get_current_subject
+from api.deps.meeting_ended import reject_if_meeting_ended
 from config import VirtualParticipantSettings, settings
 from src.schemas.virtual_participants import (
     BOT_ID_PATTERN,
@@ -231,7 +232,10 @@ async def _active_bots(client: httpx.AsyncClient, room: str) -> list[dict[str, A
     response_model=VirtualParticipantView,
     responses={
         200: {"model": VirtualParticipantView, "description": "An active bot with this name is already in the room"},
-        409: {"model": VirtualParticipantError, "description": "No human in the room, or bot limit reached"},
+        409: {
+            "model": VirtualParticipantError,
+            "description": "The meeting has ended, no human in the room, or bot limit reached",
+        },
         429: {"model": VirtualParticipantError, "description": "All worker replicas are full; see Retry-After"},
         **_ERROR_RESPONSES,
     },
@@ -244,6 +248,15 @@ async def create_virtual_participant(
     """Send a bot into a room that already has a human participant."""
     vp = _vp_settings()
     room = request.room_name
+
+    if request.meeting_id is not None:
+        try:
+            reject_if_meeting_ended(request.meeting_id)
+        except HTTPException:
+            logger.info(
+                f"virtual participant create refused subject={current_subject} room={room} reason=meeting_ended"
+            )
+            raise
 
     if vp.require_human and await _count_humans(client, vp, room) == 0:
         logger.info(
