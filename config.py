@@ -149,9 +149,9 @@ class Settings(BaseSettings):
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.
     jigasi_meetween_api_key: str = Field(default="", env="JIGASI_MEETWEEN_API_KEY")
-    # Shared bearer the virtual participant worker sends to /api/chat, and nowhere else.
-    # Kept apart from the Jigasi key so a worker holds no right to end meetings or push
-    # participants. Empty while auth is on rejects those calls.
+    # Shared bearer the virtual participant worker sends to /api/chat and to the chat message
+    # route, and nowhere else. Kept apart from the Jigasi key so a worker holds no right to end
+    # meetings or push participants. Empty while auth is on rejects those calls.
     vp_meetween_api_key: str = Field(default="", env="VP_MEETWEEN_API_KEY")
     # Display name suffix that marks a virtual participant, the worker's VP_BOT_NAME_SUFFIX.
     # Audio of a participant whose name ends with it is not transcribed, so the bot's own

@@ -22,6 +22,7 @@ from api.routes import (
     summary,
     app_config,
     chat,
+    chat_messages,
     agenda,
     auth,
     translation,
@@ -126,6 +127,7 @@ app.include_router(transcription.router)
 app.include_router(summary.router)
 app.include_router(app_config.router)
 app.include_router(chat.router)
+app.include_router(chat_messages.router)
 app.include_router(agenda.router)
 app.include_router(auth.public_router)
 app.include_router(auth.protected_router)

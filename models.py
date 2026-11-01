@@ -105,6 +105,21 @@ class ParticipantUpdateRequest(BaseModel):
     participants: List[ParticipantInfo] = Field(..., max_length=500)
 
 
+class MeetingChatMessage(BaseModel):
+    """A message typed in the meeting's group chat, forwarded by the virtual participant worker"""
+    participant_id: str = Field(..., min_length=1, max_length=100)
+    username: str = Field(default="", max_length=100)
+    text: str = Field(..., min_length=1, max_length=2000)
+    # Epoch milliseconds, like the ASR lines.
+    timestamp: Optional[float] = Field(default=None, ge=0)
+
+
+class MeetingChatMessageResponse(BaseModel):
+    status: str
+    meeting_id: str
+    stored: bool
+
+
 class ParticipantUpdateResponse(BaseModel):
     """Response for a participant update"""
     status: str

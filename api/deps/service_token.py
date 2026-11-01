@@ -33,8 +33,25 @@ def require_service_token(
     if token_matches(credentials, settings.jigasi_meetween_api_key):
         return
 
+    raise _unauthorized(credentials)
+
+
+def require_vp_worker(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> None:
+    """Accept the virtual participant worker key when auth is on. Otherwise allow the call."""
+    if not settings.enable_auth:
+        return
+
+    if token_matches(credentials, settings.vp_meetween_api_key):
+        return
+
+    raise _unauthorized(credentials)
+
+
+def _unauthorized(credentials: HTTPAuthorizationCredentials | None) -> HTTPException:
     missing = credentials is None
-    raise HTTPException(
+    return HTTPException(
         status_code=401,
         detail="Missing bearer token" if missing else "Invalid bearer token",
         headers=CHALLENGE_MISSING if missing else CHALLENGE_INVALID,
