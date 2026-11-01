@@ -364,6 +364,22 @@ class SessionManager:
         return "\n".join(dialogue_lines)
 
     @classmethod
+    def is_virtual_participant(cls, meeting_id: str, participant_id: Optional[str]) -> bool:
+        """
+        True when the participant's display name ends with `vp_bot_name_suffix`.
+
+        The name comes from the Jigasi participant update. A participant not in the usermap yet
+        is taken for a human, so a missing update transcribes the bot rather than mutes a person.
+        Read-only: never creates a session.
+        """
+        suffix = settings.vp_bot_name_suffix.strip()
+        session = cls._sessions.get(meeting_id)
+        if not suffix or not participant_id or session is None:
+            return False
+        username = session.usermap.get(participant_id) or ""
+        return username.rstrip().endswith(suffix)
+
+    @classmethod
     def get_participant_history(cls, meeting_id: str, room_name: Optional[str], participant_id: str) -> List[HistoryEntry]:
         """
         Get the in-memory chat history for a participant in a meeting.

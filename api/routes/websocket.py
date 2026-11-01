@@ -81,6 +81,10 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             chunk_duration=2.0,
                         )
 
+                        if SessionManager.is_virtual_participant(meeting_id, request.participant_id):
+                            # The bot's own speech: no caption, no transcript line, no GPU time.
+                            continue
+
                         if not EngineManager.get_lmm() or not caption_handler:
                             error_response = MeetweenErrorResponse(
                                 message="SpeechLMM not available",
