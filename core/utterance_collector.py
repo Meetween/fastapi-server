@@ -6,7 +6,8 @@ from typing import Awaitable, Callable, Dict, Optional, Set
 from butler import transcribe_audio
 from core.engine_manager import EngineManager
 from core.session_manager import SessionManager
-from utils import UtteranceBuffer
+from config import settings
+from utils import UtteranceBuffer, is_model_reply
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,8 @@ class UtteranceCollector:
     An utterance closes on the participant's first silent chunk, at `max_s` of audio, or when
     the participant sends nothing for `idle_s`. One with less than `min_speech_ms` of speech is
     dropped: the model answers a lone fragment as a chatbot ("End.", "I'm sorry, I didn't
-    understand the question") instead of transcribing it. Jigasi drops non-speech audio with its own VAD,
+    understand the question") instead of transcribing it. With ASR_OUTPUT_GUARD a text that is such a
+    reply is dropped as well, after the call. Jigasi drops non-speech audio with its own VAD,
     so the chunks of a speaker who stops talking usually just stop instead of turning silent.
     Transcription runs in the background so live captions never wait for it.
 
@@ -139,6 +141,15 @@ class UtteranceCollector:
             logger.error(
                 "Utterance transcription failed: meeting=%s participant=%s seconds=%.1f: %s",
                 self.meeting_id, utterance.participant_id, utterance.duration_s, e,
+            )
+            await self._finish(utterance, None)
+            return
+
+        if settings.asr_output_guard_enabled and is_model_reply(result.text):
+            # Not speech: the final caption falls back to the interim text, the transcript gets nothing.
+            logger.debug(
+                "Dropping model reply utterance: meeting=%s participant=%s text=%r",
+                self.meeting_id, utterance.participant_id, result.text,
             )
             await self._finish(utterance, None)
             return
