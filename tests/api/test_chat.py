@@ -5,8 +5,9 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
+from api.routes.chat import _build_chat_prompt
 from core import SessionManager
-from models import TaskType
+from models import HistoryEntry, TaskType
 from tests.utils.assertions import assert_successful_response
 
 
@@ -193,3 +194,40 @@ def test_chat_with_transcript_has_no_error_field_set(
     data = assert_successful_response(response)
     assert data["result"] == "Mock chat response text for testing"
     assert data["error"] is None
+
+
+def _prompt(**overrides) -> str:
+    args = dict(
+        query="How are you?",
+        context="Alice: the deadline is June 15.",
+        history=None,
+        max_context_chars=300_000,
+        max_history_chars=600_000,
+    )
+    args.update(overrides)
+    return _build_chat_prompt(**args)
+
+
+def test_chat_prompt_asks_for_direct_short_answers():
+    prompt = _prompt()
+    assert "at most two short sentences" in prompt
+    assert "Never open with a preamble" in prompt
+    assert "small talk" in prompt
+    assert "one plain" in prompt
+
+
+def test_chat_prompt_does_not_suggest_a_transcript_preamble():
+    prompt = _prompt()
+    assert 'you may say things like "Based on the meeting' not in prompt
+    assert "Use bullet points" not in prompt
+
+
+def test_chat_prompt_carries_transcript_history_and_question():
+    history = [
+        HistoryEntry(role="user", content="Hello"),
+        HistoryEntry(role="assistant", content="Hi there"),
+    ]
+    prompt = _prompt(history=history)
+    assert "<context>\nAlice: the deadline is June 15.\n</context>" in prompt
+    assert "User: Hello\nAssistant: Hi there" in prompt
+    assert "<question>\nHow are you?\n</question>" in prompt
