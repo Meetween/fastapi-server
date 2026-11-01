@@ -26,12 +26,22 @@ logger = logging.getLogger(__name__)
 NO_TRANSCRIPT_ERROR = "no_transcript"
 
 
+# Participant ids of the virtual participant start with this prefix. Its answers are read aloud.
+VP_PARTICIPANT_PREFIX = "vp:"
+
+SPOKEN_STYLE = (
+    "\n- Your answer will be read aloud. Reply in at most two short sentences of plain\n"
+    "  spoken English, with no bullet points, headings, markdown or emoji."
+)
+
+
 def _build_chat_prompt(
     query: str,
     context: str | None,
     history: list[HistoryEntry] | None,
     max_context_chars: int,
     max_history_chars: int,
+    participant_id: str | None = None,
 ) -> str:
     meeting_transcript = (context or "").strip()
     if len(meeting_transcript) > max_context_chars:
@@ -50,6 +60,7 @@ def _build_chat_prompt(
         meeting_transcript=meeting_transcript,
         chat_history=chat_history,
         user_question=query.strip(),
+        spoken_style=SPOKEN_STYLE if (participant_id or "").startswith(VP_PARTICIPANT_PREFIX) else "",
     )
 
 
@@ -128,8 +139,9 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
             history=history_snapshot,
             max_context_chars=engine.max_context_chars,
             max_history_chars=engine.max_history_chars,
+            participant_id=request.participant_id,
         )
-        
+
         result = await engine._generate_text(
             prompt=combined_prompt,
             audio=None,
