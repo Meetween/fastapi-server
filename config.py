@@ -190,6 +190,15 @@ class Settings(BaseSettings):
     asr_silence_rms: float = Field(default=150.0, env="ASR_SILENCE_RMS")
     # Total time at or above that RMS (20 ms frames) a chunk needs to count as speech.
     asr_silence_min_active_ms: int = Field(default=100, env="ASR_SILENCE_MIN_ACTIVE_MS")
+    # Utterance mode: speech chunks of a participant are joined until a pause or the cap,
+    # transcribed once, and that text is the transcript line. Live captions stay per chunk.
+    # Off keeps one transcript line per 2 s caption chunk.
+    asr_utterance_mode: bool = Field(default=False, env="ASR_UTTERANCE_MODE")
+    # Longest utterance in seconds. Also bounds the buffer: about 32 KB per second per speaker.
+    asr_utterance_max_s: float = Field(default=10.0, env="ASR_UTTERANCE_MAX_S")
+    # An utterance also closes when its speaker sends nothing for this long. Jigasi drops silence
+    # with its own VAD, so chunks stop rather than turn silent. 0 turns the timer off.
+    asr_utterance_idle_s: float = Field(default=3.0, env="ASR_UTTERANCE_IDLE_S")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()

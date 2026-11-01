@@ -4,6 +4,7 @@ import logging
 import time
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from core import EngineManager, SessionManager
+from core.utterance_collector import UtteranceCollector
 from butler import caption_audio, translate_audio, ResultType
 from config import settings
 from utils import AudioRecorder, UUIDHelper, pcm16_has_speech
@@ -47,6 +48,15 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     caption_handler = None
     audio_recorder_initialized = False
     room_name = None
+    utterances = (
+        UtteranceCollector(
+            meeting_id,
+            max_s=settings.asr_utterance_max_s,
+            idle_s=settings.asr_utterance_idle_s,
+        )
+        if settings.asr_utterance_mode
+        else None
+    )
 
     logger.info(f"WebSocket connected: {meeting_id}")
 
@@ -96,11 +106,20 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
                         # Silence goes to the model as a chatbot prompt and comes back as text,
                         # so a chunk without speech is dropped before any model call.
-                        if not pcm16_has_speech(
+                        has_speech = pcm16_has_speech(
                             audio_data,
                             rms_threshold=settings.asr_silence_rms,
                             min_active_ms=settings.asr_silence_min_active_ms,
-                        ):
+                        )
+                        if utterances is not None:
+                            utterances.feed(
+                                participant_id=request.participant_id,
+                                language=request.language,
+                                room_name=room_name,
+                                audio=audio_data,
+                                has_speech=has_speech,
+                            )
+                        if not has_speech:
                             logger.debug("Dropping silent chunk: meeting=%s bytes=%d", meeting_id, len(audio_data))
                             continue
 
@@ -121,7 +140,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                             if getattr(result, "result_type", None) == ResultType.NO_RESULT:
                                 continue
 
-                            if not result.is_interim:
+                            # In utterance mode the transcript line comes from the joined utterance.
+                            if not result.is_interim and utterances is None:
                                 SessionManager.update_transcript(
                                     meeting_id=meeting_id,
                                     room_name=room_name,
@@ -180,6 +200,11 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             # meeting's transcript; only the jigasi end-of-meeting signal clears it.
         except Exception as e:
             logger.warning(f"Error during cleanup: {e}")
+        if utterances is not None:
+            try:
+                await utterances.flush()
+            except Exception as e:
+                logger.warning(f"Error flushing utterances: {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
 
 
