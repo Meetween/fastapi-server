@@ -111,6 +111,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                     meeting_id=meeting_id,
                                     room_name=room_name,
                                     transcript=result.text,
+                                    participant_id=request.participant_id,
+                                    timestamp=result.timestamp,
                                 )
 
                             response = MeetweenWebsocketResponse(
