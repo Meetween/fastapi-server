@@ -132,3 +132,64 @@ def test_chat_uses_session_manager_context_and_history_only(
         force=True,
     )
 
+
+
+def _chat_payload(meeting_id: str, room_name: str, participant_id: str = "user-empty") -> dict:
+    return {
+        "type": TaskType.SPOKEN_QUESTION_ANSWERING,
+        "meeting_id": meeting_id,
+        "room_name": room_name,
+        "participant_id": participant_id,
+        "language": "en-US",
+        "prompt": "What was decided on the budget?",
+    }
+
+
+def test_chat_without_transcript_skips_model_and_returns_reason(client: TestClient):
+    meeting_id, room_name = "chat-empty-meeting", "chat-empty-room"
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+    calls = {"n": 0}
+
+    async def mock_generate_text(*args, **kwargs):
+        calls["n"] += 1
+        return "Based on the meeting transcript, the deadline is June 15."
+
+    mock_engine._generate_text = mock_generate_text
+
+    with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+        response = client.post("/api/chat", json=_chat_payload(meeting_id, room_name))
+
+    data = assert_successful_response(response)
+    assert data["result"] == ""
+    assert data["error"] == "no_transcript"
+    assert data["meeting_id"] == meeting_id
+    assert data["room_name"] == room_name
+    assert data["participant_id"] == "user-empty"
+    assert calls["n"] == 0
+    assert SessionManager.get_participant_history(meeting_id, room_name, "user-empty") == []
+
+
+def test_chat_with_transcript_has_no_error_field_set(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Server transcript says budget was approved.",
+    )
+    try:
+        response = client.post("/api/chat", json=_chat_payload(test_meeting_id, test_room_name))
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            force=True,
+        )
+
+    data = assert_successful_response(response)
+    assert data["result"] == "Mock chat response text for testing"
+    assert data["error"] is None
