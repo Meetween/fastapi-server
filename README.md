@@ -66,6 +66,7 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `RECORDINGS_BASE_PATH` | `/mnt/recordings` | where recording chunks are written |
 | `RECORDING_RETENTION_DAYS` | `7` | retention of recording chunks |
 | `TRITON_TIMEOUT` | `1800` | inference timeout in seconds |
+| `ASR_VOCABULARY` | empty | comma separated names the speakers may say; added to the transcription prompt so the model spells them correctly |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),

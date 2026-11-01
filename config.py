@@ -179,6 +179,9 @@ class Settings(BaseSettings):
     triton_max_history_turns: int = Field(default=400, env="TRITON_MAX_HISTORY_TURNS")
     triton_max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
+    # Comma separated names the speakers may say, e.g. "Agentar,Meetween". Added to the
+    # transcription prompt so the model spells them correctly. Empty leaves the prompt unchanged.
+    asr_vocabulary: str = Field(default="", env="ASR_VOCABULARY")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
