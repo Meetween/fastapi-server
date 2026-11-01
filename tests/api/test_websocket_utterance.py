@@ -113,6 +113,9 @@ def utterance_mode(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "asr_utterance_idle_s", 60.0)
     monkeypatch.setattr(settings, "asr_utterance_min_speech_ms", 500)
     monkeypatch.setattr(settings, "asr_silence_rms", 150.0)
+    # Tones stand in for speech here, which the speech detector rightly rejects, so these tests
+    # drive the RMS gate. TestCleanAsr covers the detector.
+    monkeypatch.setattr(settings, "asr_vad", False)
     # The transcript tests below keep every 2 s caption final; TestFinalCaption turns this on.
     monkeypatch.setattr(settings, "asr_utterance_final_caption", False)
 
@@ -453,6 +456,98 @@ class TestFinalCaption:
         assert transcribe.await_count == 0
 
 
+class TestCleanAsr:
+    """Speech detector in front of the model."""
+
+    @pytest.fixture(autouse=True)
+    def clean_asr(self, utterance_mode, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "asr_vad", None)
+        monkeypatch.setattr(settings, "asr_vad_threshold", 0.5)
+        monkeypatch.setattr(settings, "asr_vad_min_speech_ms", 96)
+        monkeypatch.setattr(settings, "asr_utterance_final_caption", True)
+
+    @pytest.fixture
+    def vad(self):
+        """Speech ms by chunk: _speech() is all voice, _tail(ms) holds ms of voice, the rest none."""
+        rated = {_speech(): 2000, _tail(300): 300, _tail(600): 600}
+        detector = MagicMock(side_effect=lambda audio, threshold: rated.get(audio, 0))
+        with patch("api.routes.websocket.pcm16_speech_ms", detector):
+            yield detector
+
+    def test_detector_is_on_in_utterance_mode(self, test_client: TestClient, pipeline, meeting_id, vad):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            ws.receive_json()
+            _sync(ws)
+
+        assert vad.call_args.kwargs == {"threshold": 0.5}
+
+    def test_loud_chunk_without_voice_never_reaches_the_model(
+        self, test_client: TestClient, pipeline, meeting_id, vad
+    ):
+        caption, transcribe = pipeline
+        # Loud enough for the RMS gate, but the detector hears no voice in it: fan, music, echo.
+        noise = _pcm(np.random.default_rng(3).normal(0, 2000, SR * 2))
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            ws.receive_json()
+            ws.send_text(_message(meeting_id, noise))
+            final = ws.receive_json()
+            _sync(ws)
+
+        assert caption.await_count == 1
+        # The voiceless chunk also closes the utterance, without its audio.
+        assert [_seconds(c) for c in transcribe.await_args_list] == [2.0]
+        assert (final["is_interim"], final["transcript"]) == (False, "utterance of 2 s")
+
+    def test_faint_voice_under_the_rms_floor_never_reaches_the_model(
+        self, test_client: TestClient, pipeline, meeting_id, vad
+    ):
+        caption, transcribe = pipeline
+        # The bot's answer leaking back through a laptop microphone: voice, but faint.
+        t = np.arange(SR * 2) / SR
+        echo = _pcm(60 * np.sin(2 * np.pi * 200 * t))
+        vad.side_effect = lambda audio, threshold: 2000
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, echo))
+            _sync(ws)
+
+        assert caption.await_count == 0
+        assert vad.call_count == 0
+
+    def test_utterance_minimum_counts_voice_not_loudness(
+        self, test_client: TestClient, pipeline, meeting_id, vad
+    ):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            # 300 ms of voice passes the chunk minimum but not the utterance minimum of 500 ms.
+            ws.send_text(_message(meeting_id, _tail(300)))
+            ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            ws.receive_json()
+            ws.send_text(_message(meeting_id, _tail(600)))
+            ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            ws.receive_json()
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [2.0]
+
+    def test_detector_off_falls_back_to_the_rms_gate(
+        self, test_client: TestClient, pipeline, meeting_id, vad, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_vad", False)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _pcm(np.random.default_rng(3).normal(0, 2000, SR * 2))))
+            ws.receive_json()
+            _sync(ws)
+
+        assert vad.call_count == 0
+        assert caption.await_count == 1
+
+
 class TestUtteranceModeOff:
     def test_mode_off_stores_one_line_per_caption_chunk(
         self, test_client: TestClient, pipeline, meeting_id, monkeypatch
@@ -481,3 +576,16 @@ def test_utterance_defaults():
     assert fresh.asr_utterance_idle_s == 3.0
     assert fresh.asr_utterance_min_speech_ms == 500
     assert fresh.asr_utterance_final_caption is True
+    assert fresh.asr_vad is None
+    assert fresh.asr_vad_threshold == 0.5
+    assert fresh.asr_vad_min_speech_ms == 96
+
+
+@pytest.mark.parametrize("mode, setting, enabled", [
+    (False, None, False), (True, None, True), (True, False, False), (False, True, True),
+])
+def test_detector_follows_utterance_mode_unless_set(mode, setting, enabled):
+    from config import Settings
+
+    fresh = Settings(asr_utterance_mode=mode, asr_vad=setting)
+    assert fresh.asr_vad_enabled is enabled

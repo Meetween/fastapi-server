@@ -9,7 +9,14 @@ from core import EngineManager, SessionManager
 from core.utterance_collector import UtteranceCollector
 from butler import caption_audio, translate_audio, ResultType
 from config import settings
-from utils import AudioRecorder, UUIDHelper, UtteranceBuffer, pcm16_has_speech
+from utils import (
+    AudioRecorder,
+    UUIDHelper,
+    UtteranceBuffer,
+    pcm16_active_ms,
+    pcm16_has_speech,
+    pcm16_speech_ms,
+)
 from pydantic import ValidationError
 
 from models import (
@@ -153,11 +160,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
                         # Silence goes to the model as a chatbot prompt and comes back as text,
                         # so a chunk without speech is dropped before any model call.
-                        has_speech = pcm16_has_speech(
-                            audio_data,
-                            rms_threshold=settings.asr_silence_rms,
-                            min_active_ms=settings.asr_silence_min_active_ms,
-                        )
+                        has_speech, speech_ms = await _measure_speech(audio_data)
                         utterance = None
                         if utterances is not None:
                             utterance = utterances.feed(
@@ -166,9 +169,13 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 room_name=room_name,
                                 audio=audio_data,
                                 has_speech=has_speech,
+                                speech_ms=speech_ms,
                             )
                         if not has_speech:
-                            logger.debug("Dropping silent chunk: meeting=%s bytes=%d", meeting_id, len(audio_data))
+                            logger.debug(
+                                "Dropping silent chunk: meeting=%s bytes=%d speech_ms=%d",
+                                meeting_id, len(audio_data), speech_ms,
+                            )
                             continue
 
                         try:
@@ -265,6 +272,25 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             except Exception as e:
                 logger.warning(f"Error flushing utterances: {e}")
         logger.info(f"WebSocket session closed: {meeting_id}")
+
+
+async def _measure_speech(audio_data: bytes) -> tuple[bool, int]:
+    """
+    Whether a chunk holds speech, and how many ms of it. The RMS gate is the loudness floor; with
+    ASR_VAD the speech detector then decides whether a loud enough chunk holds voice, so a quiet echo
+    stays out by the floor and a loud fan or breath by the detector.
+    """
+    loud = pcm16_has_speech(
+        audio_data,
+        rms_threshold=settings.asr_silence_rms,
+        min_active_ms=settings.asr_silence_min_active_ms,
+    )
+    if not settings.asr_vad_enabled:
+        return loud, pcm16_active_ms(audio_data, rms_threshold=settings.asr_silence_rms)
+    if not loud:
+        return False, 0
+    speech_ms = await asyncio.to_thread(pcm16_speech_ms, audio_data, threshold=settings.asr_vad_threshold)
+    return speech_ms >= settings.asr_vad_min_speech_ms, speech_ms
 
 
 async def _get_translations(

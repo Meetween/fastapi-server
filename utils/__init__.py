@@ -6,6 +6,7 @@ from .prompt_template import get_task_prompt
 from .prompt_template import PromptLoader
 from .audio import pydub_to_pcm16, pcm16_active_ms, pcm16_has_speech
 from .utterance import UtteranceBuffer
+from .vad import pcm16_speech_ms
 
 __all__ = [
     "StorageManager",
@@ -19,4 +20,5 @@ __all__ = [
     "pcm16_active_ms",
     "pcm16_has_speech",
     "UtteranceBuffer",
+    "pcm16_speech_ms",
 ]

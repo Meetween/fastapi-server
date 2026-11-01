@@ -6,8 +6,7 @@ from typing import Awaitable, Callable, Dict, Optional, Set
 from butler import transcribe_audio
 from core.engine_manager import EngineManager
 from core.session_manager import SessionManager
-from config import settings
-from utils import UtteranceBuffer, pcm16_active_ms
+from utils import UtteranceBuffer
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +57,12 @@ class UtteranceCollector:
         room_name: Optional[str],
         audio: bytes,
         has_speech: bool,
+        speech_ms: int = 0,
     ) -> Optional[UtteranceBuffer]:
-        """Add a chunk. Returns the utterance a speech chunk joined, which may already be closed by the cap."""
+        """
+        Add a chunk with its measured speech. Returns the utterance a speech chunk joined, which may
+        already be closed by the cap.
+        """
         self.room_name = room_name
         if not has_speech:
             self._close(participant_id)
@@ -73,7 +76,7 @@ class UtteranceCollector:
                 timestamp=time.time_ns() // 1_000_000,
             )
             self._open[participant_id] = utterance
-        utterance.append(audio, pcm16_active_ms(audio, rms_threshold=settings.asr_silence_rms))
+        utterance.append(audio, speech_ms)
 
         if utterance.duration_s >= self.max_s:
             self._close(participant_id)
