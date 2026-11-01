@@ -6,7 +6,8 @@ from typing import Dict, Optional, Set
 from butler import transcribe_audio
 from core.engine_manager import EngineManager
 from core.session_manager import SessionManager
-from utils import UtteranceBuffer
+from config import settings
+from utils import UtteranceBuffer, pcm16_active_ms
 
 logger = logging.getLogger(__name__)
 
@@ -20,15 +21,18 @@ class UtteranceCollector:
     transcribes each utterance once and stores it as one transcript line.
 
     An utterance closes on the participant's first silent chunk, at `max_s` of audio, or when
-    the participant sends nothing for `idle_s`. Jigasi drops non-speech audio with its own VAD,
+    the participant sends nothing for `idle_s`. One with less than `min_speech_ms` of speech is
+    dropped: the model answers a lone fragment as a chatbot ("End.", "I'm sorry, I didn't
+    understand the question") instead of transcribing it. Jigasi drops non-speech audio with its own VAD,
     so the chunks of a speaker who stops talking usually just stop instead of turning silent.
     Transcription runs in the background so live captions never wait for it.
     """
 
-    def __init__(self, meeting_id: str, *, max_s: float, idle_s: float):
+    def __init__(self, meeting_id: str, *, max_s: float, idle_s: float, min_speech_ms: int):
         self.meeting_id = meeting_id
         self.max_s = max_s
         self.idle_s = idle_s
+        self.min_speech_ms = min_speech_ms
         self.room_name: Optional[str] = None
         self._open: Dict[Optional[str], UtteranceBuffer] = {}
         self._timers: Dict[Optional[str], asyncio.TimerHandle] = {}
@@ -56,7 +60,7 @@ class UtteranceCollector:
                 timestamp=time.time_ns() // 1_000_000,
             )
             self._open[participant_id] = utterance
-        utterance.append(audio)
+        utterance.append(audio, pcm16_active_ms(audio, rms_threshold=settings.asr_silence_rms))
 
         if utterance.duration_s >= self.max_s:
             self._close(participant_id)
@@ -81,6 +85,12 @@ class UtteranceCollector:
         self._cancel_timer(participant_id)
         utterance = self._open.pop(participant_id, None)
         if utterance is None or SessionManager.is_meeting_ended(self.meeting_id):
+            return
+        if utterance.speech_ms < self.min_speech_ms:
+            logger.info(
+                "Dropping short utterance: meeting=%s participant=%s speech_ms=%d",
+                self.meeting_id, utterance.participant_id, utterance.speech_ms,
+            )
             return
         task = asyncio.create_task(self._store(utterance, self.room_name))
         self._tasks.add(task)

@@ -71,6 +71,7 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `ASR_UTTERANCE_MODE` | `false` | caption websocket: join a participant's speech chunks until a pause, transcribe them once and store that as the transcript line; live captions stay per chunk. Off stores one line per caption chunk |
 | `ASR_UTTERANCE_MAX_S` | `10` | caption websocket: an utterance is closed and transcribed at this length; it also caps the buffer at about 32 KB per second per speaker |
 | `ASR_UTTERANCE_IDLE_S` | `3` | caption websocket: an utterance is also closed when its speaker sends no chunk for this long, since Jigasi stops sending during silence; `0` turns the timer off |
+| `ASR_UTTERANCE_MIN_SPEECH_MS` | `500` | caption websocket: an utterance with less speech than this (20 ms frames at or above `ASR_SILENCE_RMS`) is dropped instead of transcribed alone; its caption is still sent |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),

@@ -32,6 +32,14 @@ def _speech() -> bytes:
     return _pcm(2500 * np.sin(2 * np.pi * 200 * t))
 
 
+def _tail(speech_ms: int = 300) -> bytes:
+    """A 2 s chunk holding `speech_ms` of tone and silence after it, the end of a line."""
+    t = np.arange(SR * 2) / SR
+    tone = 2500 * np.sin(2 * np.pi * 200 * t)
+    tone[SR * speech_ms // 1000:] = 0
+    return _pcm(tone)
+
+
 def _message(meeting_id: str, audio: bytes, participant_id: str = "p1", **extra) -> str:
     return json.dumps(
         {
@@ -101,6 +109,7 @@ def utterance_mode(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "asr_utterance_mode", True)
     monkeypatch.setattr(settings, "asr_utterance_max_s", 10.0)
     monkeypatch.setattr(settings, "asr_utterance_idle_s", 60.0)
+    monkeypatch.setattr(settings, "asr_utterance_min_speech_ms", 500)
     monkeypatch.setattr(settings, "asr_silence_rms", 150.0)
 
 
@@ -166,6 +175,38 @@ class TestUtteranceMode:
             while not _lines(meeting_id) and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert [e.text for e in _lines(meeting_id)] == ["utterance of 4 s"]
+
+        assert transcribe.await_count == 1
+
+    def test_lone_short_tail_is_dropped(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _tail(300)))
+            # Past the silence gate, so it is still captioned.
+            assert ws.receive_json()["transcript"] == "chunk text"
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert transcribe.await_count == 0
+        assert _lines(meeting_id) == []
+
+    def test_short_tail_joins_the_speech_before_it(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            for audio in (_speech(), _tail(300)):
+                ws.send_text(_message(meeting_id, audio))
+                ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [4.0]
+        assert [e.text for e in _lines(meeting_id)] == ["utterance of 4 s"]
+
+    def test_tail_with_enough_speech_is_kept(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _tail(600)))
+            ws.receive_json()
 
         assert transcribe.await_count == 1
 
@@ -300,3 +341,4 @@ def test_utterance_defaults():
     assert fresh.asr_utterance_mode is False
     assert fresh.asr_utterance_max_s == 10.0
     assert fresh.asr_utterance_idle_s == 3.0
+    assert fresh.asr_utterance_min_speech_ms == 500

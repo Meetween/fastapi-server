@@ -53,6 +53,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             meeting_id,
             max_s=settings.asr_utterance_max_s,
             idle_s=settings.asr_utterance_idle_s,
+            min_speech_ms=settings.asr_utterance_min_speech_ms,
         )
         if settings.asr_utterance_mode
         else None

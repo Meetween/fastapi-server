@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     # An utterance also closes when its speaker sends nothing for this long. Jigasi drops silence
     # with its own VAD, so chunks stop rather than turn silent. 0 turns the timer off.
     asr_utterance_idle_s: float = Field(default=3.0, env="ASR_UTTERANCE_IDLE_S")
+    # An utterance with less speech than this (frames above ASR_SILENCE_RMS) is dropped, not
+    # transcribed: alone, a fragment comes back as a chatbot reply rather than as speech.
+    asr_utterance_min_speech_ms: int = Field(default=500, env="ASR_UTTERANCE_MIN_SPEECH_MS")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()

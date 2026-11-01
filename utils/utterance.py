@@ -17,10 +17,13 @@ class UtteranceBuffer:
     timestamp: int
     chunks: List[bytes] = field(default_factory=list)
     nbytes: int = 0
+    # Time of the 20 ms frames above the silence gate threshold, summed over the chunks.
+    speech_ms: int = 0
 
-    def append(self, audio: bytes) -> None:
+    def append(self, audio: bytes, speech_ms: int = 0) -> None:
         self.chunks.append(audio)
         self.nbytes += len(audio)
+        self.speech_ms += speech_ms
 
     @property
     def duration_s(self) -> float:
