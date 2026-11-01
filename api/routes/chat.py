@@ -22,6 +22,9 @@ router = APIRouter(
 )
 logger = logging.getLogger(__name__)
 
+# Value of `error` on a 200 response whose `result` is empty because the meeting has no transcript yet.
+NO_TRANSCRIPT_ERROR = "no_transcript"
+
 
 def _build_chat_prompt(
     query: str,
@@ -57,6 +60,8 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
 
     - Uses server-side transcript built from the caption WebSocket as `context`.
     - Uses server-side per-participant history stored in `SessionManager`.
+    - With no transcript for the meeting the model is not called: the response is 200 with an
+      empty `result` and `error` set to `no_transcript`.
     """
     engine = EngineManager.get_lmm()
     if not engine:
@@ -97,6 +102,25 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
                 participant_id=participant_id,
             )
             history_snapshot = list(history)
+
+        if not (transcript or "").strip():
+            # SQA answers questions about the meeting. With no transcript the model can only deflect or
+            # invent, so skip it and return an empty result with a reason. The turn is not stored.
+            logger.info(
+                "Chat skipped, no transcript for meeting_id=%s participant_id=%s",
+                request.meeting_id,
+                participant_id,
+            )
+            return MeetweenTaskResponse(
+                type=request.type,
+                resultType="text",
+                room_name=request.room_name,
+                meeting_id=request.meeting_id,
+                result="",
+                language=request.language,
+                participant_id=request.participant_id,
+                error=NO_TRANSCRIPT_ERROR,
+            )
 
         combined_prompt = _build_chat_prompt(
             query=request.prompt,
