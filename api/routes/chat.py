@@ -32,6 +32,16 @@ VP_PARTICIPANT_PREFIX = "vp:"
 SPOKEN_STYLE = (
     "\n- Your answer will be read aloud. Reply in at most two short sentences of plain\n"
     "  spoken English, with no bullet points, headings, markdown or emoji."
+    "\n- Answer only from lines of the meeting transcript."
+    "\n- If no line of the transcript states the answer, reply exactly: That was not mentioned in the meeting."
+    "\n- Never guess. Never give a name, number, date or time that is not written in a transcript line."
+    "\n- A fact about a different subject does not answer the question."
+    "\n- When asked who said something, name the speaker of that line."
+    "\n\nExample, with a different meeting:\n"
+    "Zed: The van leaves at noon.\nKim: I will pack the boxes.\n"
+    "Question: When does the van leave? Answer: The van leaves at noon.\n"
+    "Question: Who drives the van? Answer: That was not mentioned in the meeting.\n"
+    "Question: How many boxes are there? Answer: That was not mentioned in the meeting."
 )
 
 

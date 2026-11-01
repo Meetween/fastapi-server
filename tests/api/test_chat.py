@@ -231,6 +231,20 @@ def test_chat_prompt_adds_spoken_style_for_the_virtual_participant():
     assert "no bullet points, headings, markdown or emoji" in prompt
 
 
+def test_chat_prompt_grounds_the_virtual_participant_in_the_transcript():
+    prompt = _prompt(participant_id="vp:bot1-3")
+    assert "Answer only from lines of the meeting transcript" in prompt
+    assert "reply exactly: That was not mentioned in the meeting." in prompt
+    assert "Never guess" in prompt
+    assert "Question: Who drives the van? Answer: That was not mentioned in the meeting." in prompt
+
+
+def test_chat_prompt_leaves_the_web_prompt_free_of_the_grounding_example():
+    prompt = _prompt(participant_id="user-123")
+    assert "Answer only from lines" not in prompt
+    assert "Who drives the van?" not in prompt
+
+
 def test_chat_endpoint_passes_participant_id_to_the_prompt(
     client: TestClient,
     test_room_name: str,
