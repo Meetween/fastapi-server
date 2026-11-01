@@ -1,7 +1,9 @@
 """Caption websocket in utterance mode: speech chunks are joined and transcribed once per utterance."""
 
+import asyncio
 import base64
 import json
+import logging
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -111,6 +113,8 @@ def utterance_mode(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "asr_utterance_idle_s", 60.0)
     monkeypatch.setattr(settings, "asr_utterance_min_speech_ms", 500)
     monkeypatch.setattr(settings, "asr_silence_rms", 150.0)
+    # The transcript tests below keep every 2 s caption final; TestFinalCaption turns this on.
+    monkeypatch.setattr(settings, "asr_utterance_final_caption", False)
 
 
 def _lines(meeting_id: str) -> list:
@@ -224,6 +228,7 @@ class TestUtteranceMode:
         assert all(caption.await_args_list[i].kwargs["audio_bytes"] == _speech() for i in range(3))
         assert [r["transcript"] for r in replies] == ["chunk text"] * 3
         assert len({r["message_id"] for r in replies}) == 3
+        assert not any(r["is_interim"] for r in replies)
 
     def test_transcript_gets_one_line_per_utterance(self, test_client: TestClient, pipeline, meeting_id):
         SessionManager.add_participants(
@@ -315,6 +320,139 @@ class TestUtteranceMode:
         assert _lines(meeting_id) == []
 
 
+class TestFinalCaption:
+    @pytest.fixture(autouse=True)
+    def final_caption(self, utterance_mode, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "asr_utterance_final_caption", True)
+
+    def test_chunks_are_interim_and_the_utterance_is_final(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            first = ws.receive_json()
+            ws.send_text(_message(meeting_id, _speech()))
+            second = ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            final = ws.receive_json()
+            ws.send_text(_message(meeting_id, _speech()))
+            next_one = ws.receive_json()
+            _sync(ws)
+
+        assert (first["is_interim"], first["transcript"]) == (True, "chunk text")
+        assert (second["is_interim"], second["transcript"]) == (True, "chunk text chunk text")
+        assert final["is_interim"] is False
+        assert final["transcript"] == "utterance of 4 s"
+        assert (final["participant_id"], final["language"], final["meeting_id"]) == ("p1", "en-US", meeting_id)
+        # One message id and one timestamp, the first chunk's, for the whole utterance.
+        assert first["message_id"] == second["message_id"] == final["message_id"]
+        assert first["timestamp"] == second["timestamp"] == final["timestamp"] == _lines(meeting_id)[0].timestamp
+        assert next_one["is_interim"] is True
+        assert next_one["message_id"] != final["message_id"]
+
+    def test_final_comes_when_the_speaker_goes_quiet(self, test_client: TestClient, pipeline, meeting_id, monkeypatch):
+        monkeypatch.setattr(settings, "asr_utterance_idle_s", 0.05)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            interim = ws.receive_json()
+            final = ws.receive_json()
+
+        assert interim["is_interim"] is True
+        assert (final["is_interim"], final["transcript"]) == (False, "utterance of 2 s")
+        assert final["message_id"] == interim["message_id"]
+
+    def test_final_waits_for_the_interim_of_the_chunk_that_hit_the_cap(
+        self, test_client: TestClient, pipeline, meeting_id, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_utterance_max_s", 4.0)
+        caption, transcribe = pipeline
+        fake_caption = caption.side_effect
+
+        async def slow_caption(*args, **kwargs):
+            # The utterance closes before this chunk's caption call; its transcription is faster.
+            await asyncio.sleep(0.05)
+            return await fake_caption(*args, **kwargs)
+
+        caption.side_effect = slow_caption
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            ws.send_text(_message(meeting_id, _speech()))
+            replies = [ws.receive_json() for _ in range(3)]
+
+        assert [(r["is_interim"], r["transcript"]) for r in replies] == [
+            (True, "chunk text"),
+            (True, "chunk text chunk text"),
+            (False, "utterance of 4 s"),
+        ]
+        assert len({r["message_id"] for r in replies}) == 1
+
+    def test_final_carries_the_joined_translations(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            for _ in range(2):
+                ws.send_text(_message(meeting_id, _speech(), language="en-US", target_languages=["de"]))
+                interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence(), language="en-US", target_languages=["de"]))
+            final = ws.receive_json()
+
+        # Each interim keeps its own 2 s translation; Jigasi relays translations of finals only.
+        assert interim["translations"] == [{"target_language": "de", "text": "hallo"}]
+        assert final["translations"] == [{"target_language": "de", "text": "hallo hallo"}]
+
+    def test_dropped_utterance_ends_with_its_captions(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _tail(300)))
+            interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            final = ws.receive_json()
+            _sync(ws)
+
+        assert transcribe.await_count == 0
+        assert _lines(meeting_id) == []
+        assert (final["is_interim"], final["transcript"]) == (False, "chunk text")
+        assert final["message_id"] == interim["message_id"]
+
+    def test_failed_transcription_ends_with_its_captions(self, test_client: TestClient, pipeline, meeting_id):
+        caption, transcribe = pipeline
+        transcribe.side_effect = RuntimeError("triton down")
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            final = ws.receive_json()
+
+        assert _lines(meeting_id) == []
+        assert (final["is_interim"], final["transcript"], final["message_id"]) == (
+            False, "chunk text", interim["message_id"],
+        )
+
+    def test_final_is_skipped_once_the_socket_is_closed(
+        self, test_client: TestClient, pipeline, meeting_id, caplog
+    ):
+        caption, transcribe = pipeline
+        with caplog.at_level(logging.INFO, logger="api.routes.websocket"):
+            with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+                ws.send_text(_message(meeting_id, _speech()))
+                ws.receive_json()
+
+        # The open utterance is still transcribed and stored on close; only its caption has nowhere to go.
+        assert [e.text for e in _lines(meeting_id)] == ["utterance of 2 s"]
+        assert "Final caption not sent, socket closed" in caplog.text
+        assert "Final caption not sent: " not in caplog.text
+
+    def test_end_signal_sends_no_final(self, test_client: TestClient, pipeline, meeting_id, monkeypatch):
+        monkeypatch.setattr(settings, "enable_auth", True)
+        monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            ws.receive_json()
+            test_client.post(f"/meetings/{meeting_id}/ended", headers={"Authorization": f"Bearer {JIGASI_KEY}"})
+
+        assert transcribe.await_count == 0
+
+
 class TestUtteranceModeOff:
     def test_mode_off_stores_one_line_per_caption_chunk(
         self, test_client: TestClient, pipeline, meeting_id, monkeypatch
@@ -342,3 +480,4 @@ def test_utterance_defaults():
     assert fresh.asr_utterance_max_s == 10.0
     assert fresh.asr_utterance_idle_s == 3.0
     assert fresh.asr_utterance_min_speech_ms == 500
+    assert fresh.asr_utterance_final_caption is True

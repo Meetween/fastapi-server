@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import time
-from typing import Dict, Optional, Set
+from typing import Awaitable, Callable, Dict, Optional, Set
 
 from butler import transcribe_audio
 from core.engine_manager import EngineManager
@@ -26,13 +26,25 @@ class UtteranceCollector:
     understand the question") instead of transcribing it. Jigasi drops non-speech audio with its own VAD,
     so the chunks of a speaker who stops talking usually just stop instead of turning silent.
     Transcription runs in the background so live captions never wait for it.
+
+    `on_close`, when given, is awaited once for every utterance that closes, with its text, or None
+    when it was dropped or its transcription failed. The caption websocket sends it as the final caption.
     """
 
-    def __init__(self, meeting_id: str, *, max_s: float, idle_s: float, min_speech_ms: int):
+    def __init__(
+        self,
+        meeting_id: str,
+        *,
+        max_s: float,
+        idle_s: float,
+        min_speech_ms: int,
+        on_close: Optional[Callable[[UtteranceBuffer, Optional[str]], Awaitable[None]]] = None,
+    ):
         self.meeting_id = meeting_id
         self.max_s = max_s
         self.idle_s = idle_s
         self.min_speech_ms = min_speech_ms
+        self.on_close = on_close
         self.room_name: Optional[str] = None
         self._open: Dict[Optional[str], UtteranceBuffer] = {}
         self._timers: Dict[Optional[str], asyncio.TimerHandle] = {}
@@ -46,11 +58,12 @@ class UtteranceCollector:
         room_name: Optional[str],
         audio: bytes,
         has_speech: bool,
-    ) -> None:
+    ) -> Optional[UtteranceBuffer]:
+        """Add a chunk. Returns the utterance a speech chunk joined, which may already be closed by the cap."""
         self.room_name = room_name
         if not has_speech:
             self._close(participant_id)
-            return
+            return None
 
         utterance = self._open.get(participant_id)
         if utterance is None:
@@ -69,6 +82,7 @@ class UtteranceCollector:
             self._timers[participant_id] = asyncio.get_running_loop().call_later(
                 self.idle_s, self._close, participant_id
             )
+        return utterance
 
     async def flush(self) -> None:
         """Close every open utterance and wait for every transcription in flight."""
@@ -91,8 +105,13 @@ class UtteranceCollector:
                 "Dropping short utterance: meeting=%s participant=%s speech_ms=%d",
                 self.meeting_id, utterance.participant_id, utterance.speech_ms,
             )
+            if self.on_close is not None:
+                self._spawn(self._finish(utterance, None))
             return
-        task = asyncio.create_task(self._store(utterance, self.room_name))
+        self._spawn(self._store(utterance, self.room_name))
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
@@ -118,6 +137,7 @@ class UtteranceCollector:
                 "Utterance transcription failed: meeting=%s participant=%s seconds=%.1f: %s",
                 self.meeting_id, utterance.participant_id, utterance.duration_s, e,
             )
+            await self._finish(utterance, None)
             return
 
         SessionManager.update_transcript(
@@ -127,3 +147,16 @@ class UtteranceCollector:
             participant_id=utterance.participant_id,
             timestamp=utterance.timestamp,
         )
+        # Stored first, so a question asked on this caption finds its line in the transcript.
+        await self._finish(utterance, result.text)
+
+    async def _finish(self, utterance: UtteranceBuffer, text: Optional[str]) -> None:
+        if self.on_close is None:
+            return
+        try:
+            await self.on_close(utterance, text)
+        except Exception as e:
+            logger.warning(
+                "Final caption not sent: meeting=%s participant=%s: %s",
+                self.meeting_id, utterance.participant_id, e,
+            )

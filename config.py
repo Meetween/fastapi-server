@@ -191,7 +191,7 @@ class Settings(BaseSettings):
     # Total time at or above that RMS (20 ms frames) a chunk needs to count as speech.
     asr_silence_min_active_ms: int = Field(default=100, env="ASR_SILENCE_MIN_ACTIVE_MS")
     # Utterance mode: speech chunks of a participant are joined until a pause or the cap,
-    # transcribed once, and that text is the transcript line. Live captions stay per chunk.
+    # transcribed once, and that text is the transcript line. Live captions keep their 2 s pace.
     # Off keeps one transcript line per 2 s caption chunk.
     asr_utterance_mode: bool = Field(default=False, env="ASR_UTTERANCE_MODE")
     # Longest utterance in seconds. Also bounds the buffer: about 32 KB per second per speaker.
@@ -202,6 +202,10 @@ class Settings(BaseSettings):
     # An utterance with less speech than this (frames above ASR_SILENCE_RMS) is dropped, not
     # transcribed: alone, a fragment comes back as a chatbot reply rather than as speech.
     asr_utterance_min_speech_ms: int = Field(default=500, env="ASR_UTTERANCE_MIN_SPEECH_MS")
+    # In utterance mode, the 2 s captions go out as interim and the utterance text as the final
+    # caption, so the room and the virtual participant read whole sentences. Off keeps every 2 s
+    # caption final. Direct translations ride on finals only in Jigasi, so they then come per utterance.
+    asr_utterance_final_caption: bool = Field(default=True, env="ASR_UTTERANCE_FINAL_CAPTION")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
