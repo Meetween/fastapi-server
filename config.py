@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     # An utterance also closes when its speaker sends nothing for this long. Jigasi drops silence
     # with its own VAD, so chunks stop rather than turn silent. 0 turns the timer off.
     asr_utterance_idle_s: float = Field(default=3.0, env="ASR_UTTERANCE_IDLE_S")
+    # A chunk that ends with at least this much non speech (Silero VAD windows) closes its speaker's
+    # utterance at once, without waiting for the next chunk or the idle timer. 0 turns it off. Needs ASR_VAD.
+    asr_utterance_end_silence_ms: int = Field(default=0, env="ASR_UTTERANCE_END_SILENCE_MS")
     # An utterance with less speech than this (VAD windows with ASR_VAD, else frames above
     # ASR_SILENCE_RMS) is dropped, not transcribed: alone, a fragment comes back as a chatbot reply.
     asr_utterance_min_speech_ms: int = Field(default=500, env="ASR_UTTERANCE_MIN_SPEECH_MS")
@@ -259,6 +262,10 @@ class Settings(BaseSettings):
     @property
     def asr_vad_enabled(self) -> bool:
         return self.asr_utterance_mode if self.asr_vad is None else self.asr_vad
+
+    @property
+    def asr_utterance_end_silence_enabled(self) -> bool:
+        return self.asr_utterance_mode and self.asr_vad_enabled and self.asr_utterance_end_silence_ms > 0
 
     @property
     def asr_output_guard_enabled(self) -> bool:

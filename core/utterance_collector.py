@@ -39,17 +39,21 @@ class UtteranceCollector:
         max_s: float,
         idle_s: float,
         min_speech_ms: int,
+        end_silence_ms: int = 0,
         on_close: Optional[Callable[[UtteranceBuffer, Optional[str]], Awaitable[None]]] = None,
     ):
         self.meeting_id = meeting_id
         self.max_s = max_s
         self.idle_s = idle_s
         self.min_speech_ms = min_speech_ms
+        self.end_silence_ms = end_silence_ms
         self.on_close = on_close
         self.room_name: Optional[str] = None
         self._open: Dict[Optional[str], UtteranceBuffer] = {}
         self._timers: Dict[Optional[str], asyncio.TimerHandle] = {}
         self._tasks: Set[asyncio.Task] = set()
+        # Non speech at the end of each participant's latest speech chunk, ms.
+        self._trailing: Dict[Optional[str], int] = {}
 
     def feed(
         self,
@@ -60,10 +64,12 @@ class UtteranceCollector:
         audio: bytes,
         has_speech: bool,
         speech_ms: int = 0,
+        leading_silence_ms: int = 0,
+        trailing_silence_ms: int = 0,
     ) -> Optional[UtteranceBuffer]:
         """
-        Add a chunk with its measured speech. Returns the utterance a speech chunk joined, which may
-        already be closed by the cap.
+        Add a chunk with its measured speech and the non speech it starts and ends with. Returns the
+        utterance a speech chunk joined, which may already be closed by the cap or by the end silence.
         """
         self.room_name = room_name
         if not has_speech:
@@ -71,6 +77,10 @@ class UtteranceCollector:
             return None
 
         utterance = self._open.get(participant_id)
+        if utterance is not None and self._pause_ended(utterance, participant_id, leading_silence_ms):
+            # The pause straddled the chunk boundary: this chunk opens the next utterance.
+            self._close(participant_id)
+            utterance = None
         if utterance is None:
             utterance = UtteranceBuffer(
                 participant_id=participant_id,
@@ -79,8 +89,11 @@ class UtteranceCollector:
             )
             self._open[participant_id] = utterance
         utterance.append(audio, speech_ms)
+        self._trailing[participant_id] = trailing_silence_ms
 
         if utterance.duration_s >= self.max_s:
+            self._close(participant_id)
+        elif self._speaker_finished(utterance, trailing_silence_ms):
             self._close(participant_id)
         elif self.idle_s > 0:
             self._cancel_timer(participant_id)
@@ -88,6 +101,19 @@ class UtteranceCollector:
                 self.idle_s, self._close, participant_id
             )
         return utterance
+
+    def _speaker_finished(self, utterance: UtteranceBuffer, trailing_silence_ms: int) -> bool:
+        # Under the speech minimum a lone fragment would be dropped at close, and the words that
+        # follow the pause would lose their first half. It waits for the next chunk or the idle timer.
+        return (
+            self.end_silence_ms > 0
+            and trailing_silence_ms >= self.end_silence_ms
+            and utterance.speech_ms >= self.min_speech_ms
+        )
+
+    def _pause_ended(self, utterance: UtteranceBuffer, participant_id: Optional[str], leading_silence_ms: int) -> bool:
+        # Silence at the end of the previous chunk plus silence at the start of this one.
+        return self._speaker_finished(utterance, self._trailing.get(participant_id, 0) + leading_silence_ms)
 
     async def flush(self) -> None:
         """Close every open utterance and wait for every transcription in flight."""

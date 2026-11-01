@@ -17,6 +17,7 @@ from utils import (
     pcm16_active_ms,
     pcm16_has_speech,
     pcm16_speech_ms,
+    pcm16_speech_profile,
 )
 from pydantic import ValidationError
 
@@ -107,6 +108,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
             max_s=settings.asr_utterance_max_s,
             idle_s=settings.asr_utterance_idle_s,
             min_speech_ms=settings.asr_utterance_min_speech_ms,
+            end_silence_ms=settings.asr_utterance_end_silence_ms if settings.asr_utterance_end_silence_enabled else 0,
             on_close=send_final if final_caption else None,
         )
         if settings.asr_utterance_mode
@@ -161,7 +163,7 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
 
                         # Silence goes to the model as a chatbot prompt and comes back as text,
                         # so a chunk without speech is dropped before any model call.
-                        has_speech, speech_ms = await _measure_speech(audio_data)
+                        has_speech, speech_ms, leading_silence_ms, trailing_silence_ms = await _measure_speech(audio_data)
                         utterance = None
                         if utterances is not None:
                             utterance = utterances.feed(
@@ -171,6 +173,8 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 audio=audio_data,
                                 has_speech=has_speech,
                                 speech_ms=speech_ms,
+                                leading_silence_ms=leading_silence_ms,
+                                trailing_silence_ms=trailing_silence_ms,
                             )
                         if not has_speech:
                             logger.debug(
@@ -284,9 +288,10 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
         logger.info(f"WebSocket session closed: {meeting_id}")
 
 
-async def _measure_speech(audio_data: bytes) -> tuple[bool, int]:
+async def _measure_speech(audio_data: bytes) -> tuple[bool, int, int, int]:
     """
-    Whether a chunk holds speech, and how many ms of it. The RMS gate is the loudness floor; with
+    Whether a chunk holds speech, how many ms of it, and how many ms of non speech it starts and ends with
+    (0 unless ASR_UTTERANCE_END_SILENCE_MS is set). The RMS gate is the loudness floor; with
     ASR_VAD the speech detector then decides whether a loud enough chunk holds voice, so a quiet echo
     stays out by the floor and a loud fan or breath by the detector.
     """
@@ -296,11 +301,17 @@ async def _measure_speech(audio_data: bytes) -> tuple[bool, int]:
         min_active_ms=settings.asr_silence_min_active_ms,
     )
     if not settings.asr_vad_enabled:
-        return loud, pcm16_active_ms(audio_data, rms_threshold=settings.asr_silence_rms)
+        return loud, pcm16_active_ms(audio_data, rms_threshold=settings.asr_silence_rms), 0, 0
     if not loud:
-        return False, 0
-    speech_ms = await asyncio.to_thread(pcm16_speech_ms, audio_data, threshold=settings.asr_vad_threshold)
-    return speech_ms >= settings.asr_vad_min_speech_ms, speech_ms
+        return False, 0, 0, 0
+    if settings.asr_utterance_end_silence_enabled:
+        speech_ms, leading_ms, trailing_ms = await asyncio.to_thread(
+            pcm16_speech_profile, audio_data, threshold=settings.asr_vad_threshold
+        )
+    else:
+        speech_ms = await asyncio.to_thread(pcm16_speech_ms, audio_data, threshold=settings.asr_vad_threshold)
+        leading_ms = trailing_ms = 0
+    return speech_ms >= settings.asr_vad_min_speech_ms, speech_ms, leading_ms, trailing_ms
 
 
 async def _get_translations(
