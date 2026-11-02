@@ -5,7 +5,7 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
-from api.routes.chat import NOT_MENTIONED, _build_chat_prompt, _guard_example_leak
+from api.routes.chat import NOT_MENTIONED, _build_chat_prompt, _guard_example_leak, _strip_speaker_prefix
 from core import SessionManager
 from models import HistoryEntry, TaskType
 from tests.utils.assertions import assert_successful_response
@@ -254,6 +254,18 @@ def test_example_leak_guard_replaces_an_answer_from_the_example_meeting():
 def test_example_leak_guard_keeps_a_grounded_answer():
     assert _guard_example_leak("The demo is on Friday.", "Maria: The demo is on Friday.") == "The demo is on Friday."
     assert _guard_example_leak("The van leaves at noon.", "Tom: The van leaves at noon.") == "The van leaves at noon."
+
+
+def test_speaker_prefix_is_dropped_from_a_spoken_answer():
+    transcript = "Luca: Priya owns the cost report.\nMaria: The demo is on Friday."
+    assert _strip_speaker_prefix("Luca: Priya owns the cost report.", transcript) == "Priya owns the cost report."
+    assert _strip_speaker_prefix("luca: the report is due.", transcript) == "The report is due."
+
+
+def test_a_leading_label_that_is_not_a_speaker_is_kept():
+    transcript = "Luca: Priya owns the cost report."
+    assert _strip_speaker_prefix("Note: the report is due.", transcript) == "Note: the report is due."
+    assert _strip_speaker_prefix("The time is 10:30.", transcript) == "The time is 10:30."
 
 
 def test_chat_endpoint_guards_the_virtual_participant_only(

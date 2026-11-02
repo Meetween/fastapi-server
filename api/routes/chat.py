@@ -61,6 +61,22 @@ def _guard_example_leak(answer: str, transcript: str) -> str:
     return answer
 
 
+_LEADING_LABEL = re.compile(r"^\s*([^:\n]{1,40}):\s+")
+
+
+def _strip_speaker_prefix(answer: str, transcript: str) -> str:
+    """Drop a leading "Name:" copied from a transcript line, so the bot does not read the label aloud."""
+    match = _LEADING_LABEL.match(answer)
+    if not match:
+        return answer
+    label = match.group(1).strip().lower()
+    speakers = {line.split(":", 1)[0].strip().lower() for line in transcript.splitlines() if ":" in line}
+    if label not in speakers:
+        return answer
+    rest = answer[match.end():]
+    return rest[:1].upper() + rest[1:]
+
+
 def _build_chat_prompt(
     query: str,
     context: str | None,
@@ -180,7 +196,7 @@ async def chat(request: MeetweenTaskRequest = Body(...)):
         )
 
         if participant_id.startswith(VP_PARTICIPANT_PREFIX):
-            result = _guard_example_leak(result, transcript)
+            result = _guard_example_leak(_strip_speaker_prefix(result, transcript), transcript)
 
         async with SessionManager.participant_history_mutex(
             meeting_id=request.meeting_id,
