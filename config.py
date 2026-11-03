@@ -199,13 +199,21 @@ class Settings(BaseSettings):
     # An utterance also closes when its speaker sends nothing for this long. Jigasi drops silence
     # with its own VAD, so chunks stop rather than turn silent. 0 turns the timer off.
     asr_utterance_idle_s: float = Field(default=3.0, env="ASR_UTTERANCE_IDLE_S")
-    # An utterance with less speech than this (frames above ASR_SILENCE_RMS) is dropped, not
-    # transcribed: alone, a fragment comes back as a chatbot reply rather than as speech.
+    # An utterance with less speech than this (VAD windows with ASR_VAD, else frames above
+    # ASR_SILENCE_RMS) is dropped, not transcribed: alone, a fragment comes back as a chatbot reply.
     asr_utterance_min_speech_ms: int = Field(default=500, env="ASR_UTTERANCE_MIN_SPEECH_MS")
     # In utterance mode, the 2 s captions go out as interim and the utterance text as the final
     # caption, so the room and the virtual participant read whole sentences. Off keeps every 2 s
     # caption final. Direct translations ride on finals only in Jigasi, so they then come per utterance.
     asr_utterance_final_caption: bool = Field(default=True, env="ASR_UTTERANCE_FINAL_CAPTION")
+    # Speech detector: of the chunks loud enough for the RMS gate, Silero VAD decides which hold
+    # voice and so reach the model, and how much speech an utterance holds. The RMS gate alone
+    # passes a fan, a breath, or the echo of another speaker. Unset follows ASR_UTTERANCE_MODE.
+    asr_vad: Optional[bool] = Field(default=None, env="ASR_VAD")
+    # Speech probability at or above which a 32 ms window counts as voice.
+    asr_vad_threshold: float = Field(default=0.5, env="ASR_VAD_THRESHOLD")
+    # Voice a chunk needs, in ms of such windows, to reach the model and to join an utterance.
+    asr_vad_min_speech_ms: int = Field(default=96, env="ASR_VAD_MIN_SPEECH_MS")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
@@ -244,6 +252,10 @@ class Settings(BaseSettings):
             users_collection=self.mongo_users_collection,
             meeting_context_collection=self.mongo_meeting_context_collection,
         )
+
+    @property
+    def asr_vad_enabled(self) -> bool:
+        return self.asr_utterance_mode if self.asr_vad is None else self.asr_vad
 
     @property
     def app_jwt(self) -> AppJwtSettings:
