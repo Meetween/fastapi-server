@@ -14,6 +14,9 @@ from models import HistoryEntry
 
 logger = logging.getLogger(__name__)
 
+SOURCE_SPEECH = "speech"
+SOURCE_CHAT = "chat"
+
 
 @dataclass
 class TranscriptEntry:
@@ -22,6 +25,14 @@ class TranscriptEntry:
     username: str
     text: str
     timestamp: Optional[float] = None
+    # SOURCE_SPEECH for an ASR line, SOURCE_CHAT for a message typed in the meeting chat.
+    source: str = SOURCE_SPEECH
+
+    def as_line(self) -> str:
+        """The entry as the model reads it. Chat lines are marked so they are not taken for speech."""
+        if self.source == SOURCE_CHAT:
+            return f"{self.username} (chat): {self.text}"
+        return f"{self.username}: {self.text}"
 
 
 @dataclass
@@ -303,11 +314,14 @@ class SessionManager:
         transcript: Optional[str],
         participant_id: Optional[str] = None,
         timestamp: Optional[float] = None,
+        username: Optional[str] = None,
+        source: str = SOURCE_SPEECH,
     ) -> None:
         """
         Append transcript entry for a meeting.
 
-        Requires participant_id and timestamp to store entry.
+        Requires participant_id and timestamp to store entry. The name is `username` when given,
+        else the usermap name of the participant.
         """
         # In-flight websocket messages can outlive the end signal; never recreate state for them.
         if cls.is_meeting_ended(meeting_id):
@@ -321,12 +335,13 @@ class SessionManager:
                 "Missing attribution for meeting_id=%s: participant_id=%s timestamp=%s",
                 meeting_id, participant_id, timestamp,
             )
-        username = session.usermap.get(participant_id, "Unknown")
+        username = username or session.usermap.get(participant_id, "Unknown")
         entry = TranscriptEntry(
             participant_id=participant_id,
             username=username,
             text=transcript,
             timestamp=timestamp,
+            source=source,
         )
         session.transcript.append(entry)
 
@@ -334,7 +349,7 @@ class SessionManager:
         keep_idx = 0
         for i in range(len(session.transcript) - 1, -1, -1):
             e = session.transcript[i]
-            total += len(e.username) + len(e.text) + 2
+            total += len(e.as_line())
             if total > cls.TRANSCRIPT_CHARS_LIMIT:
                 keep_idx = i + 1
                 break
@@ -349,7 +364,7 @@ class SessionManager:
         """
         Return transcript formatted as dialogue for LLM context.
 
-        Format: "John Doe: Hello everyone\nJane Smith: Hi John\n..."
+        Format: "John Doe: Hello everyone\nJane Smith (chat): Hi John\n..."
         Returns None if no transcript entries exist.
         Read-only: never creates a session, so reads cannot revive an ended or swept meeting.
         """
@@ -358,10 +373,7 @@ class SessionManager:
         if not session or not session.transcript:
             return None
 
-        dialogue_lines = []
-        for entry in session.transcript:
-            dialogue_lines.append(f"{entry.username}: {entry.text}")
-        return "\n".join(dialogue_lines)
+        return "\n".join(entry.as_line() for entry in session.transcript)
 
     @classmethod
     def is_virtual_participant(cls, meeting_id: str, participant_id: Optional[str]) -> bool:

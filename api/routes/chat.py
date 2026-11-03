@@ -6,9 +6,9 @@ comes from SessionManager (caption WebSocket transcript).
 """
 import logging
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException, Body
 
-from api.deps.auth import REQUIRE_AUTH
+from api.deps.auth import Caller, enforce_participant_namespace, require_user_or_vp_worker
 from api.deps.meeting_ended import reject_if_meeting_ended
 
 from core import EngineManager, SessionManager
@@ -18,7 +18,6 @@ from utils.prompt_template import format_template
 router = APIRouter(
     prefix="/api",
     tags=["chat"],
-    dependencies=REQUIRE_AUTH,
 )
 logger = logging.getLogger(__name__)
 
@@ -51,13 +50,20 @@ def _build_chat_prompt(
 
 
 @router.post("/chat", response_model=MeetweenTaskResponse)
-async def chat(request: MeetweenTaskRequest = Body(...)):
+async def chat(
+    request: MeetweenTaskRequest = Body(...),
+    caller: Caller = Depends(require_user_or_vp_worker),
+):
     """
     Question and answer endpoint for a meeting participant.
+
+    - Accepts a user access token, or the virtual participant worker key with a participant_id
+      of the form vp:<bot id>.
 
     - Uses server-side transcript built from the caption WebSocket as `context`.
     - Uses server-side per-participant history stored in `SessionManager`.
     """
+    enforce_participant_namespace(caller, request.participant_id)
     engine = EngineManager.get_lmm()
     if not engine:
         raise HTTPException(
