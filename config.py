@@ -149,6 +149,10 @@ class Settings(BaseSettings):
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.
     jigasi_meetween_api_key: str = Field(default="", env="JIGASI_MEETWEEN_API_KEY")
+    # Display name suffix that marks a virtual participant, the worker's VP_BOT_NAME_SUFFIX.
+    # Audio of a participant whose name ends with it is not transcribed, so the bot's own
+    # answers never enter the transcript. Empty transcribes everyone.
+    vp_bot_name_suffix: str = Field(default="", env="VP_BOT_NAME_SUFFIX")
 
     jwt_secret_key: str = Field(default="change-me-in-production", env="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")

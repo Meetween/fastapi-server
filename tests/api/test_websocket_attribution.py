@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from api.routes import websocket as ws_route
 from butler import ResultType
 from butler.jitsi_api_functions import TranscriptionResult
+from config import settings
 from core import SessionManager
 
 MEETING_ID = "6f0c1b52-3c1a-4d0e-9a55-2f4f1d1a9b11"
@@ -91,3 +92,45 @@ class TestWebsocketAttribution:
 
         session = SessionManager._sessions.get(MEETING_ID)
         assert session is None or session.transcript == []
+
+
+@pytest.mark.integration
+class TestWebsocketVirtualParticipant:
+    @pytest.fixture(autouse=True)
+    def _participants(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "vp_bot_name_suffix", "(bot)")
+        SessionManager.add_participants(
+            meeting_id=MEETING_ID,
+            room_name=ROOM,
+            participants=[
+                {"participant_id": "p1", "username": "Ada"},
+                {"participant_id": "bot1", "username": "Agentar (bot)"},
+            ],
+        )
+
+    def test_bot_audio_is_neither_transcribed_nor_stored(self, test_client: TestClient):
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+            ws.send_json(_audio_message("bot1"))
+            ws.send_json(_audio_message("p1"))
+            # Only the human chunk is answered: the bot chunk produced no message before it.
+            assert ws.receive_json()["participant_id"] == "p1"
+
+        assert ws_route.caption_audio.await_count == 1
+        assert ws_route.AudioRecorder.save_chunk.await_count == 2
+        assert SessionManager.get_transcript(MEETING_ID, ROOM) == "Ada: hello there"
+
+    def test_unset_suffix_transcribes_the_bot(self, test_client: TestClient, monkeypatch):
+        monkeypatch.setattr(settings, "vp_bot_name_suffix", "")
+
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+            ws.send_json(_audio_message("bot1"))
+            assert ws.receive_json()["participant_id"] == "bot1"
+
+        assert SessionManager.get_transcript(MEETING_ID, ROOM) == "Agentar (bot): hello there"
+
+    def test_participant_missing_from_the_list_is_transcribed(self, test_client: TestClient):
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+            ws.send_json(_audio_message("late"))
+            assert ws.receive_json()["participant_id"] == "late"
+
+        assert SessionManager.get_transcript(MEETING_ID, ROOM) == "Unknown: hello there"
