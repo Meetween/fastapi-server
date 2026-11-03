@@ -76,6 +76,7 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `ASR_VAD` | unset, follows `ASR_UTTERANCE_MODE` | caption websocket: of the chunks that pass the RMS gate, only those Silero VAD hears voice in reach the model, so a fan, a breath or another speaker's faint echo never becomes a caption |
 | `ASR_VAD_THRESHOLD` | `0.5` | caption websocket: speech probability at or above which a 32 ms window counts as voice |
 | `ASR_VAD_MIN_SPEECH_MS` | `96` | caption websocket: voice a chunk needs, in ms of such windows, to reach the model and to join an utterance |
+| `ASR_OUTPUT_GUARD` | unset, follows `ASR_UTTERANCE_MODE` | caption websocket: a caption or utterance text that is a model reply rather than speech ("I'm sorry", "could you please repeat", "the audio is silent", a lone "Okay.") is neither sent nor stored; a dropped utterance ends with its remaining captions |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),

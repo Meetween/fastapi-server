@@ -214,6 +214,9 @@ class Settings(BaseSettings):
     asr_vad_threshold: float = Field(default=0.5, env="ASR_VAD_THRESHOLD")
     # Voice a chunk needs, in ms of such windows, to reach the model and to join an utterance.
     asr_vad_min_speech_ms: int = Field(default=96, env="ASR_VAD_MIN_SPEECH_MS")
+    # Output guard: a caption or utterance text that is a model reply ("I'm sorry, could you
+    # please repeat") rather than speech is neither sent nor stored. Unset follows ASR_UTTERANCE_MODE.
+    asr_output_guard: Optional[bool] = Field(default=None, env="ASR_OUTPUT_GUARD")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
@@ -256,6 +259,10 @@ class Settings(BaseSettings):
     @property
     def asr_vad_enabled(self) -> bool:
         return self.asr_utterance_mode if self.asr_vad is None else self.asr_vad
+
+    @property
+    def asr_output_guard_enabled(self) -> bool:
+        return self.asr_utterance_mode if self.asr_output_guard is None else self.asr_output_guard
 
     @property
     def app_jwt(self) -> AppJwtSettings:

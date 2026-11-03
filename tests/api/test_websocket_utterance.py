@@ -457,13 +457,14 @@ class TestFinalCaption:
 
 
 class TestCleanAsr:
-    """Speech detector in front of the model."""
+    """Speech detector in front of the model, output guard behind it."""
 
     @pytest.fixture(autouse=True)
     def clean_asr(self, utterance_mode, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(settings, "asr_vad", None)
         monkeypatch.setattr(settings, "asr_vad_threshold", 0.5)
         monkeypatch.setattr(settings, "asr_vad_min_speech_ms", 96)
+        monkeypatch.setattr(settings, "asr_output_guard", None)
         monkeypatch.setattr(settings, "asr_utterance_final_caption", True)
 
     @pytest.fixture
@@ -473,6 +474,17 @@ class TestCleanAsr:
         detector = MagicMock(side_effect=lambda audio, threshold: rated.get(audio, 0))
         with patch("api.routes.websocket.pcm16_speech_ms", detector):
             yield detector
+
+    @staticmethod
+    def _captions(caption, texts):
+        """The caption call answers with these texts in turn."""
+        texts = iter(texts)
+
+        async def fake_caption(*args, **kwargs):
+            _, _, message_id = kwargs["caption_handler"].process_chunk("unused")
+            return _result(next(texts), message_id=message_id, timestamp=kwargs["timestamp"])
+
+        caption.side_effect = fake_caption
 
     def test_detector_is_on_in_utterance_mode(self, test_client: TestClient, pipeline, meeting_id, vad):
         caption, transcribe = pipeline
@@ -547,6 +559,71 @@ class TestCleanAsr:
         assert vad.call_count == 0
         assert caption.await_count == 1
 
+    def test_model_reply_caption_is_not_sent(self, test_client: TestClient, pipeline, meeting_id, vad):
+        caption, transcribe = pipeline
+        self._captions(caption, ["Agentar, when do we ship", "I'm sorry.", "the MVP?"])
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            for _ in range(3):
+                ws.send_text(_message(meeting_id, _speech()))
+            first, second = ws.receive_json(), ws.receive_json()
+            _sync(ws)
+
+        assert caption.await_count == 3
+        assert second["transcript"] == "Agentar, when do we ship the MVP?"
+        assert first["message_id"] == second["message_id"]
+
+    def test_model_reply_utterance_ends_with_its_clean_captions(
+        self, test_client: TestClient, pipeline, meeting_id, vad
+    ):
+        caption, transcribe = pipeline
+        self._captions(caption, ["Who will review", "Sorry."])
+        transcribe.side_effect = None
+        transcribe.return_value = _result(
+            "I'm sorry, but I can't understand that. Could you please repeat or clarify your request?"
+        )
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _speech()))
+            ws.send_text(_message(meeting_id, _silence()))
+            final = ws.receive_json()
+            _sync(ws)
+
+        assert _lines(meeting_id) == []
+        assert (final["is_interim"], final["transcript"], final["message_id"]) == (
+            False, "Who will review", interim["message_id"],
+        )
+
+    def test_model_reply_utterance_of_model_reply_captions_sends_nothing(
+        self, test_client: TestClient, pipeline, meeting_id, vad
+    ):
+        caption, transcribe = pipeline
+        self._captions(caption, ["I'm sorry.", "."])
+        transcribe.side_effect = None
+        transcribe.return_value = _result("I'm sorry, I didn't quite catch that.")
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            for audio in (_speech(), _speech(), _silence()):
+                ws.send_text(_message(meeting_id, audio))
+            _sync(ws)
+
+        assert transcribe.await_count == 1
+        assert _lines(meeting_id) == []
+
+    def test_guard_off_keeps_every_text(self, test_client: TestClient, pipeline, meeting_id, vad, monkeypatch):
+        monkeypatch.setattr(settings, "asr_output_guard", False)
+        caption, transcribe = pipeline
+        self._captions(caption, ["I'm sorry."])
+        transcribe.side_effect = None
+        transcribe.return_value = _result("I'm sorry.")
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _silence()))
+            final = ws.receive_json()
+
+        assert (interim["transcript"], final["transcript"]) == ("I'm sorry.", "I'm sorry.")
+        assert [e.text for e in _lines(meeting_id)] == ["I'm sorry."]
+
 
 class TestUtteranceModeOff:
     def test_mode_off_stores_one_line_per_caption_chunk(
@@ -579,13 +656,15 @@ def test_utterance_defaults():
     assert fresh.asr_vad is None
     assert fresh.asr_vad_threshold == 0.5
     assert fresh.asr_vad_min_speech_ms == 96
+    assert fresh.asr_output_guard is None
 
 
 @pytest.mark.parametrize("mode, setting, enabled", [
     (False, None, False), (True, None, True), (True, False, False), (False, True, True),
 ])
-def test_detector_follows_utterance_mode_unless_set(mode, setting, enabled):
+def test_detector_and_guard_follow_utterance_mode_unless_set(mode, setting, enabled):
     from config import Settings
 
-    fresh = Settings(asr_utterance_mode=mode, asr_vad=setting)
+    fresh = Settings(asr_utterance_mode=mode, asr_vad=setting, asr_output_guard=setting)
     assert fresh.asr_vad_enabled is enabled
+    assert fresh.asr_output_guard_enabled is enabled

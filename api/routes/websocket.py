@@ -13,6 +13,7 @@ from utils import (
     AudioRecorder,
     UUIDHelper,
     UtteranceBuffer,
+    is_model_reply,
     pcm16_active_ms,
     pcm16_has_speech,
     pcm16_speech_ms,
@@ -194,6 +195,15 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                 )
 
                                 if getattr(result, "result_type", None) == ResultType.NO_RESULT:
+                                    continue
+
+                                if settings.asr_output_guard_enabled and is_model_reply(result.text):
+                                    # Not speech: the model answered noise or echo. Nothing is sent,
+                                    # and the utterance's interim caption does not carry it.
+                                    logger.debug(
+                                        "Dropping model reply caption: meeting=%s participant=%s text=%r",
+                                        meeting_id, request.participant_id, result.text,
+                                    )
                                     continue
 
                                 # In utterance mode the transcript line comes from the joined utterance.
