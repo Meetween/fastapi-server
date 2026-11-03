@@ -45,3 +45,15 @@ def test_short_or_odd_input():
     assert pcm16_speech_ms(b"", threshold=0.5) == 0
     assert pcm16_speech_ms(b"\x01", threshold=0.5) == 0
     assert SileroVad().probabilities(_pcm(np.zeros(600))).shape == (1,)
+
+
+def test_profile_gives_voice_and_the_silence_at_both_ends(monkeypatch):
+    # 62 windows: 10 silent, 20 voiced, 5 silent, 7 voiced, 20 silent.
+    probabilities = np.array([0.0] * 10 + [0.9] * 20 + [0.1] * 5 + [0.8] * 7 + [0.0] * 20, dtype=np.float32)
+    monkeypatch.setattr(SileroVad, "probabilities", lambda self, audio: probabilities)
+
+    assert SileroVad().profile(b"", threshold=0.5) == (27 * WINDOW_MS, 10 * WINDOW_MS, 20 * WINDOW_MS)
+
+
+def test_profile_of_a_chunk_without_voice_is_silent_at_both_ends():
+    assert SileroVad().profile(_pcm(np.zeros(SR * 2)), threshold=0.5) == (0, 62 * WINDOW_MS, 62 * WINDOW_MS)

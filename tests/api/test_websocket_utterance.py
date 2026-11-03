@@ -42,6 +42,14 @@ def _tail(speech_ms: int = 300) -> bytes:
     return _pcm(tone)
 
 
+def _lead(speech_ms: int = 1000) -> bytes:
+    """A 2 s chunk that is silent first and holds `speech_ms` of tone at its end, the start of a line."""
+    t = np.arange(SR * 2) / SR
+    tone = 2500 * np.sin(2 * np.pi * 200 * t)
+    tone[: SR * 2 - SR * speech_ms // 1000] = 0
+    return _pcm(tone)
+
+
 def _message(meeting_id: str, audio: bytes, participant_id: str = "p1", **extra) -> str:
     return json.dumps(
         {
@@ -625,6 +633,142 @@ class TestCleanAsr:
         assert [e.text for e in _lines(meeting_id)] == ["I'm sorry."]
 
 
+class TestEndSilence:
+    """A pause of ASR_UTTERANCE_END_SILENCE_MS closes the utterance without waiting for the next chunk or the idle timer."""
+
+    @pytest.fixture(autouse=True)
+    def end_silence(self, utterance_mode, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "asr_vad", None)
+        monkeypatch.setattr(settings, "asr_output_guard", False)
+        monkeypatch.setattr(settings, "asr_utterance_end_silence_ms", 1000)
+
+    @pytest.fixture
+    def profile(self):
+        """(voice, leading silence, trailing silence) in ms by chunk."""
+        rated = {
+            _speech(): (2000, 0, 0),
+            _tail(600): (600, 0, 1400),
+            _tail(300): (300, 0, 1700),
+            _tail(1600): (1600, 0, 400),
+            _lead(1000): (1000, 1000, 0),
+        }
+        detector = MagicMock(side_effect=lambda audio, threshold: rated.get(audio, (0, 2000, 2000)))
+        with (
+            patch("api.routes.websocket.pcm16_speech_profile", detector),
+            # The path taken when the setting is off: every chunk holds voice.
+            patch("api.routes.websocket.pcm16_speech_ms", MagicMock(return_value=2000)),
+        ):
+            yield detector
+
+    @staticmethod
+    def _send(ws, meeting_id, *chunks):
+        for chunk in chunks:
+            ws.send_text(_message(meeting_id, chunk))
+            ws.receive_json()
+        _sync(ws)
+
+    def test_chunk_that_ends_in_a_pause_closes_the_utterance_at_once(
+        self, test_client: TestClient, pipeline, meeting_id, profile
+    ):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            self._send(ws, meeting_id, _speech(), _speech(), _tail(600))
+
+        # No silent chunk followed and the idle timer is 60 s.
+        assert [_seconds(c) for c in transcribe.await_args_list] == [6.0]
+        assert [e.text for e in _lines(meeting_id)] == ["utterance of 6 s"]
+
+    def test_pause_shorter_than_the_setting_keeps_the_utterance_open(
+        self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
+    ):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            self._send(ws, meeting_id, _speech(), _tail(1600))
+            assert transcribe.await_count == 0
+            self._send(ws, meeting_id, _speech())
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [6.0]
+
+    def test_pause_across_two_chunks_splits_between_them(
+        self, test_client: TestClient, pipeline, meeting_id, profile
+    ):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            # 400 ms of silence ends the first chunk and 1000 ms starts the second: a 1.4 s pause.
+            self._send(ws, meeting_id, _speech(), _tail(1600), _lead(1000))
+            assert [_seconds(c) for c in transcribe.await_args_list] == [4.0]
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [4.0, 2.0]
+
+    def test_shorter_pause_across_two_chunks_keeps_one_utterance(
+        self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_utterance_end_silence_ms", 1500)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            self._send(ws, meeting_id, _tail(1600), _lead(1000))
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [4.0]
+
+    def test_fragment_under_the_speech_minimum_waits_for_more(
+        self, test_client: TestClient, pipeline, meeting_id, profile
+    ):
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            # 300 ms of voice and 1.7 s of pause: closing would drop the fragment's words.
+            self._send(ws, meeting_id, _tail(300))
+            assert transcribe.await_count == 0
+            self._send(ws, meeting_id, _lead(1000))
+            ws.send_text(_message(meeting_id, _silence()))
+            _sync(ws)
+
+        assert [_seconds(c) for c in transcribe.await_args_list] == [4.0]
+
+    def test_setting_zero_keeps_today_behaviour(
+        self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_utterance_end_silence_ms", 0)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            self._send(ws, meeting_id, _speech(), _tail(600), _lead(1000))
+
+        assert profile.call_count == 0
+        assert transcribe.await_count == 1  # the socket close flushes the one utterance
+
+    def test_detector_off_ignores_the_setting(
+        self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_vad", False)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            self._send(ws, meeting_id, _speech(), _tail(600))
+            assert transcribe.await_count == 0
+
+        assert profile.call_count == 0
+
+    def test_final_caption_follows_the_early_close(
+        self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "asr_utterance_final_caption", True)
+        caption, transcribe = pipeline
+        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            ws.send_text(_message(meeting_id, _speech()))
+            interim = ws.receive_json()
+            ws.send_text(_message(meeting_id, _tail(600)))
+            ws.receive_json()
+            final = ws.receive_json()
+
+        assert (final["is_interim"], final["transcript"], final["message_id"]) == (
+            False, "utterance of 4 s", interim["message_id"],
+        )
+
+
 class TestUtteranceModeOff:
     def test_mode_off_stores_one_line_per_caption_chunk(
         self, test_client: TestClient, pipeline, meeting_id, monkeypatch
@@ -652,6 +796,7 @@ def test_utterance_defaults():
     assert fresh.asr_utterance_max_s == 10.0
     assert fresh.asr_utterance_idle_s == 3.0
     assert fresh.asr_utterance_min_speech_ms == 500
+    assert fresh.asr_utterance_end_silence_ms == 0
     assert fresh.asr_utterance_final_caption is True
     assert fresh.asr_vad is None
     assert fresh.asr_vad_threshold == 0.5
@@ -668,3 +813,13 @@ def test_detector_and_guard_follow_utterance_mode_unless_set(mode, setting, enab
     fresh = Settings(asr_utterance_mode=mode, asr_vad=setting, asr_output_guard=setting)
     assert fresh.asr_vad_enabled is enabled
     assert fresh.asr_output_guard_enabled is enabled
+
+
+@pytest.mark.parametrize("mode, vad, end_silence, enabled", [
+    (True, None, 0, False), (True, None, 1500, True), (True, False, 1500, False), (False, True, 1500, False),
+])
+def test_end_silence_needs_utterance_mode_the_detector_and_a_value(mode, vad, end_silence, enabled):
+    from config import Settings
+
+    fresh = Settings(asr_utterance_mode=mode, asr_vad=vad, asr_utterance_end_silence_ms=end_silence)
+    assert fresh.asr_utterance_end_silence_enabled is enabled

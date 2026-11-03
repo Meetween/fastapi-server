@@ -62,6 +62,19 @@ class SileroVad:
         """Time in ms of the 32 ms windows whose speech probability is at or above ``threshold``."""
         return int(np.count_nonzero(self.probabilities(audio_bytes) >= threshold)) * WINDOW_MS
 
+    def profile(self, audio_bytes: bytes, *, threshold: float) -> tuple[int, int, int]:
+        """
+        ``speech_ms`` with the silence at both ends of the chunk: ms of 32 ms windows before the first and
+        after the last one at or above ``threshold``. A chunk with no voice is all silence at both ends.
+        """
+        voiced = self.probabilities(audio_bytes) >= threshold
+        indices = np.flatnonzero(voiced)
+        if indices.size == 0:
+            return 0, voiced.size * WINDOW_MS, voiced.size * WINDOW_MS
+        leading = int(indices[0])
+        trailing = voiced.size - 1 - int(indices[-1])
+        return int(indices.size) * WINDOW_MS, leading * WINDOW_MS, trailing * WINDOW_MS
+
 
 _vad: Optional[SileroVad] = None
 _vad_lock = threading.Lock()
@@ -79,3 +92,8 @@ def get_vad() -> SileroVad:
 def pcm16_speech_ms(audio_bytes: bytes, *, threshold: float) -> int:
     """Time in ms of voice in a chunk, by Silero VAD windows at or above ``threshold``."""
     return get_vad().speech_ms(audio_bytes, threshold=threshold)
+
+
+def pcm16_speech_profile(audio_bytes: bytes, *, threshold: float) -> tuple[int, int, int]:
+    """Voice, leading silence and trailing silence of a chunk in ms, one pass of the detector."""
+    return get_vad().profile(audio_bytes, threshold=threshold)

@@ -6,7 +6,7 @@ from .prompt_template import get_task_prompt
 from .prompt_template import PromptLoader
 from .audio import pydub_to_pcm16, pcm16_active_ms, pcm16_has_speech
 from .utterance import UtteranceBuffer
-from .vad import pcm16_speech_ms
+from .vad import pcm16_speech_ms, pcm16_speech_profile
 from .asr_guard import is_model_reply
 
 __all__ = [
@@ -22,5 +22,6 @@ __all__ = [
     "pcm16_has_speech",
     "UtteranceBuffer",
     "pcm16_speech_ms",
+    "pcm16_speech_profile",
     "is_model_reply",
 ]
