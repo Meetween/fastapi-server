@@ -125,6 +125,17 @@ class PromptLoader:
         return str(lang_prompts)
 
 
+def with_vocabulary(prompt: str, vocabulary: str) -> str:
+    """Append the names in a comma separated `vocabulary` to a transcription prompt.
+
+    Empty or blank vocabulary returns `prompt` unchanged.
+    """
+    names = [name.strip() for name in (vocabulary or "").split(",") if name.strip()]
+    if not names:
+        return prompt
+    return f"{prompt} The speakers may say these names: {', '.join(names)}. Spell them exactly like this."
+
+
 def format_template(template_name: str, filename: str | None = None, **kwargs: Any) -> str:
     return PromptLoader.format_template(template_name, filename=filename, **kwargs)
 
