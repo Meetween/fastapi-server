@@ -5,8 +5,9 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
+from api.routes.chat import _build_chat_prompt
 from core import SessionManager
-from models import TaskType
+from models import HistoryEntry, TaskType
 from tests.utils.assertions import assert_successful_response
 
 
@@ -193,3 +194,85 @@ def test_chat_with_transcript_has_no_error_field_set(
     data = assert_successful_response(response)
     assert data["result"] == "Mock chat response text for testing"
     assert data["error"] is None
+
+
+def _prompt(**overrides) -> str:
+    args = dict(
+        query="How are you?",
+        context="Alice: the deadline is June 15.",
+        history=None,
+        max_context_chars=300_000,
+        max_history_chars=600_000,
+    )
+    args.update(overrides)
+    return _build_chat_prompt(**args)
+
+
+def test_chat_prompt_answers_directly_without_a_transcript_preamble():
+    prompt = _prompt()
+    assert "Never open with a preamble" in prompt
+    assert "small talk" in prompt
+    assert "one plain" in prompt
+    assert 'you may say things like "Based on the meeting' not in prompt
+
+
+def test_chat_prompt_keeps_markdown_and_length_for_web_participants():
+    for participant_id in (None, "user-123", "jitsi-abc"):
+        prompt = _prompt(participant_id=participant_id)
+        assert "Use bullet points" in prompt
+        assert "read aloud" not in prompt
+        assert "two short sentences" not in prompt
+
+
+def test_chat_prompt_adds_spoken_style_for_the_virtual_participant():
+    prompt = _prompt(participant_id="vp:bot1-3")
+    assert "will be read aloud" in prompt
+    assert "at most two short sentences" in prompt
+    assert "no bullet points, headings, markdown or emoji" in prompt
+
+
+def test_chat_endpoint_passes_participant_id_to_the_prompt(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Alice: the deadline is June 15.",
+    )
+    seen: list[str] = []
+
+    async def mock_generate_text(*args, **kwargs):
+        seen.append(kwargs["prompt"])
+        return "June 15."
+
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+    mock_engine._generate_text = mock_generate_text
+    try:
+        with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+            for pid in ("vp:bot1-1", "user-web"):
+                payload = _chat_payload(test_meeting_id, test_room_name)
+                payload["participant_id"] = pid
+                assert_successful_response(client.post("/api/chat", json=payload))
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            force=True,
+        )
+    assert "will be read aloud" in seen[0]
+    assert "will be read aloud" not in seen[1]
+
+
+def test_chat_prompt_carries_transcript_history_and_question():
+    history = [
+        HistoryEntry(role="user", content="Hello"),
+        HistoryEntry(role="assistant", content="Hi there"),
+    ]
+    prompt = _prompt(history=history)
+    assert "<context>\nAlice: the deadline is June 15.\n</context>" in prompt
+    assert "User: Hello\nAssistant: Hi there" in prompt
+    assert "<question>\nHow are you?\n</question>" in prompt
