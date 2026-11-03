@@ -68,6 +68,10 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `TRITON_TIMEOUT` | `1800` | inference timeout in seconds |
 | `ASR_SILENCE_RMS` | `150` | caption websocket: chunks whose 20 ms frames all stay below this RMS (raw int16 units, 0 to 32767, 150 is about -47 dBFS) are not sent to the model; `0` turns the gate off |
 | `ASR_SILENCE_MIN_ACTIVE_MS` | `100` | caption websocket: time at or above `ASR_SILENCE_RMS` a chunk needs to count as speech |
+| `ASR_UTTERANCE_MODE` | `false` | caption websocket: join a participant's speech chunks until a pause, transcribe them once and store that as the transcript line; live captions stay per chunk. Off stores one line per caption chunk |
+| `ASR_UTTERANCE_MAX_S` | `10` | caption websocket: an utterance is closed and transcribed at this length; it also caps the buffer at about 32 KB per second per speaker |
+| `ASR_UTTERANCE_IDLE_S` | `3` | caption websocket: an utterance is also closed when its speaker sends no chunk for this long, since Jigasi stops sending during silence; `0` turns the timer off |
+| `ASR_UTTERANCE_MIN_SPEECH_MS` | `500` | caption websocket: an utterance with less speech than this (20 ms frames at or above `ASR_SILENCE_RMS`) is dropped instead of transcribed alone; its caption is still sent |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),

@@ -4,7 +4,8 @@ from .uuid_helper import UUIDHelper, new_meeting_id
 from .prompt_template import format_template
 from .prompt_template import get_task_prompt
 from .prompt_template import PromptLoader
-from .audio import pydub_to_pcm16, pcm16_has_speech
+from .audio import pydub_to_pcm16, pcm16_active_ms, pcm16_has_speech
+from .utterance import UtteranceBuffer
 
 __all__ = [
     "StorageManager",
@@ -15,5 +16,7 @@ __all__ = [
     "get_task_prompt",
     "PromptLoader",
     "pydub_to_pcm16",
+    "pcm16_active_ms",
     "pcm16_has_speech",
+    "UtteranceBuffer",
 ]

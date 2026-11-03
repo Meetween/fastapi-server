@@ -34,6 +34,26 @@ def pydub_to_pcm16(audio_segment: AudioSegment) -> bytes:
 
 
 
+def pcm16_active_ms(
+    audio_bytes: bytes,
+    *,
+    rms_threshold: float,
+    sample_rate: int = 16000,
+    frame_ms: int = 20,
+) -> int:
+    """
+    Time in ms of the 20 ms frames whose RMS is at or above ``rms_threshold``, same measure as
+    ``pcm16_has_speech``. A threshold of 0 or less counts every frame.
+    """
+    samples = np.frombuffer(audio_bytes[: len(audio_bytes) // 2 * 2], dtype="<i2")
+    frame_len = max(1, sample_rate * frame_ms // 1000)
+    frames = samples[: samples.size // frame_len * frame_len].reshape(-1, frame_len)
+    if rms_threshold <= 0:
+        return frames.shape[0] * frame_ms
+    rms = np.sqrt(np.mean(np.square(frames.astype(np.float32)), axis=1))
+    return int(np.count_nonzero(rms >= rms_threshold)) * frame_ms
+
+
 def pcm16_has_speech(
     audio_bytes: bytes,
     *,
