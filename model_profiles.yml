@@ -1,20 +1,12 @@
 profiles:
   speechlmm:
     triton:
-      url: "http://localhost:9100"
-      model_name: "speechlmm"
-      prompt_protocol: "speechlmm_plain"
-
-  qwen25_omni:
-    triton:
-      url: "http://localhost:9000"
-      model_name: "qwen25_omni"
+      url: "http://localhost:9120"
+      model_name: "speechlmm_v2_l"
       prompt_protocol: "general_json"
-      # Caption formatting (Qwen backend supports this)
-      caption_chars: 60
 
-  voxtral_mini_3b_2507:
+  speechlmm-2:
     triton:
-      url: "http://localhost:9000"
-      model_name: "voxtral_mini_3b_2507"
+      url: "http://localhost:9100"
+      model_name: "speechlmm_v2_l"
       prompt_protocol: "general_json"
