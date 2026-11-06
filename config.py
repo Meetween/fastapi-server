@@ -98,6 +98,20 @@ def _load_triton_profile_overrides(
     return merged
 
 
+def _profile_exists(*, model_profile: str, profiles_path: Path) -> bool:
+    """True when `model_profile` is a `triton` profile entry in the YAML file."""
+    try:
+        path = _resolve_profiles_path(profiles_path)
+        if not path.is_file():
+            return False
+        with open(path, encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return False
+    prof = (data.get("profiles") or {}).get(model_profile)
+    return isinstance(prof, dict) and isinstance(prof.get("triton"), dict)
+
+
 def _build_triton_settings(
     *,
     profile: dict[str, Any],
@@ -173,6 +187,11 @@ class Settings(BaseSettings):
 
     model_profile: str = Field(default="speechlmm", env="MODEL_PROFILE")
     model_profiles_path: Path = Field(default=Path("model_profiles.yml"), env="MODEL_PROFILES_PATH")
+    # Optional second engine for the websocket caption path (ASR + speech translation).
+    # Unset means the caption path uses the primary engine.
+    closed_caption_model_profile: Optional[str] = Field(
+        default=None, env="CLOSED_CAPTION_MODEL_PROFILE"
+    )
 
     triton_timeout: int = Field(default=1800, env="TRITON_TIMEOUT")
     triton_max_context_chars: int = Field(default=300_000, env="TRITON_MAX_CONTEXT_CHARS")
@@ -181,6 +200,7 @@ class Settings(BaseSettings):
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
 
     _triton: TritonSettings = PrivateAttr()
+    _closed_caption_triton: Optional[TritonSettings] = PrivateAttr(default=None)
     _app_jwt: AppJwtSettings = PrivateAttr()
     _meeting_jwt: MeetingJwtSettings = PrivateAttr()
     _mongo: MongoSettings = PrivateAttr()
@@ -198,6 +218,28 @@ class Settings(BaseSettings):
             max_history_chars=self.triton_max_history_chars,
             caption_chars_default=self.triton_caption_chars,
         )
+        if self.closed_caption_model_profile:
+            # A named profile must exist; a typo must not silently point at the default URL.
+            if not _profile_exists(
+                model_profile=self.closed_caption_model_profile,
+                profiles_path=self.model_profiles_path,
+            ):
+                raise ValueError(
+                    f"CLOSED_CAPTION_MODEL_PROFILE={self.closed_caption_model_profile!r} "
+                    f"is not a triton profile in {self.model_profiles_path}"
+                )
+            cc_profile = _load_triton_profile_overrides(
+                model_profile=self.closed_caption_model_profile,
+                profiles_path=self.model_profiles_path,
+            )
+            self._closed_caption_triton = _build_triton_settings(
+                profile=cc_profile,
+                timeout=self.triton_timeout,
+                max_context_chars=self.triton_max_context_chars,
+                max_history_turns=self.triton_max_history_turns,
+                max_history_chars=self.triton_max_history_chars,
+                caption_chars_default=self.triton_caption_chars,
+            )
         self._app_jwt = AppJwtSettings(
             secret_key=self.jwt_secret_key,
             algorithm=self.jwt_algorithm,
@@ -229,6 +271,11 @@ class Settings(BaseSettings):
     @property
     def triton(self) -> TritonSettings:
         return self._triton
+
+    @property
+    def closed_caption_triton(self) -> Optional[TritonSettings]:
+        """Settings for the closed-caption engine, or None when not configured."""
+        return self._closed_caption_triton
 
     @property
     def mongo(self) -> MongoSettings:

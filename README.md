@@ -57,6 +57,7 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | --- | --- | --- |
 | `MODEL_PROFILE` | `speechlmm` | profile in `model_profiles.yml`: Triton URL, model name, prompt protocol |
 | `MODEL_PROFILES_PATH` | `model_profiles.yml` | where the profiles are read from |
+| `CLOSED_CAPTION_MODEL_PROFILE` | unset | optional second profile for the websocket caption path (ASR and speech translation). Unset: captions use the `MODEL_PROFILE` engine. Set to a name that exists in `model_profiles.yml`, or startup fails |
 | `PORT` | `8000` | port used by `uv run main.py` |
 | `ENABLE_AUTH` | `true` | bearer authentication on `/api/*` |
 | `JWT_SECRET_KEY` | `change-me-in-production` | HS256 secret for access, refresh and Jitsi tokens |
