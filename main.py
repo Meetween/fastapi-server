@@ -13,6 +13,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import settings
 from core import EngineManager, SessionManager
 from src.database import async_mongo_manager
+from utils.startup_checks import unsafe_settings
 from utils.storage import StorageManager
 
 from api.routes import (
@@ -25,11 +26,18 @@ from api.routes import (
     chat_messages,
     agenda,
     auth,
+    auth_signup,
     translation,
     participants,
     virtual_participants,
+    agentar_events,
+    agentar_files,
+    agentar_meetings,
+    agentar_profile,
+    agentar_reports,
 )
 
+from api.errors import AgentarError, agentar_error_handler
 from fastapi import FastAPI
 
 
@@ -45,6 +53,8 @@ app = FastAPI(
     version=settings.app_version,
     description="SpeechLMM-powered transcription, captioning, and summarization API"
 )
+
+app.add_exception_handler(AgentarError, agentar_error_handler)
 
 # Scheduler for periodic tasks
 scheduler = AsyncIOScheduler()
@@ -66,6 +76,12 @@ async def startup_event():
     """Initialize server and load SpeechLMM model"""
 
     logger.info("Server starting up...")
+
+    problems = unsafe_settings(settings)
+    if problems:
+        for problem in problems:
+            logger.critical("Unsafe configuration: %s", problem)
+        raise RuntimeError("Unsafe configuration, refusing to start: " + "; ".join(problems))
 
     EngineManager.initialize()
     await async_mongo_manager.connect()
@@ -136,6 +152,12 @@ app.include_router(auth.protected_router)
 app.include_router(translation.router)
 app.include_router(participants.router)
 app.include_router(virtual_participants.router)
+app.include_router(auth_signup.router)
+app.include_router(agentar_profile.router)
+app.include_router(agentar_files.router)
+app.include_router(agentar_meetings.router)
+app.include_router(agentar_reports.router)
+app.include_router(agentar_events.router)
 
 
 if __name__ == "__main__":

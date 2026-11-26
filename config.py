@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
@@ -86,6 +86,60 @@ class VirtualParticipantSettings(BaseModel):
     service_names: frozenset[str] = Field(
         default_factory=lambda: _service_name_set(DEFAULT_VP_SERVICE_NAMES)
     )
+
+
+def _csv_tuple(raw: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in raw.split(",") if item.strip())
+
+
+class ObjectStoreSettings(BaseModel):
+    """S3 compatible object store for Agentar files, pictures and report exports."""
+
+    model_config = ConfigDict(frozen=True)
+    backend: Literal["s3", "memory"]
+    endpoint_url: str
+    region: str
+    bucket: str
+    prefix: str
+    addressing_style: Literal["auto", "path", "virtual"]
+    access_key_id: str = Field(repr=False)
+    secret_access_key: str = Field(repr=False)
+
+    @property
+    def configured(self) -> bool:
+        """True when the store can be used. An empty bucket or key answers 503 `storage_unavailable`."""
+        if self.backend == "memory":
+            return True
+        return bool(self.bucket and self.access_key_id and self.secret_access_key)
+
+
+class AgentarSettings(BaseModel):
+    """Agentar quotas, caps and lifecycle timing. Defaults follow the Agentar API contract."""
+
+    model_config = ConfigDict(frozen=True)
+    file_max_bytes: int
+    user_max_files: int
+    user_max_bytes: int
+    picture_max_bytes: int
+    text_max_chars: int
+    chunk_tokens: int
+    meetings_per_day: int
+    schedule_horizon_days: int
+    grace_minutes_default: int
+    tick_seconds: int
+    voices: tuple[str, ...]
+    default_voice: str
+    worker_events_base_url: str
+    signup_rate_per_ip: int
+    signup_rate_per_email: int
+    login_fail_limit: int
+    login_fail_window_minutes: int
+    login_fail_ip_limit: int
+    trusted_proxy_ips: tuple[str, ...]
+    room_claims_per_day: int
+    max_live_total: int
+    event_max_skew_seconds: int
+    event_left_grace_seconds: int
 
 
 def _resolve_profiles_path(path: Path) -> Path:
@@ -199,6 +253,74 @@ class Settings(BaseSettings):
     jwt_jitsi_expire_minutes: int = Field(default=15, env="JWT_JITSI_EXPIRE_MINUTES")
     jitsi_meet_base_url: Optional[str] = Field(default=None, env="JITSI_MEET_BASE_URL")
 
+    # Agentar feature flags, served by GET /api/auth/config. Off by default so an upgrade never
+    # opens registration; the demo env file turns SIGNUP_ENABLED on.
+    signup_enabled: bool = Field(default=False, env="SIGNUP_ENABLED")
+    email_enabled: bool = Field(default=False, env="EMAIL_ENABLED")
+    calendar_enabled: bool = Field(default=False, env="CALENDAR_ENABLED")
+    # This deployment runs Agentar. Routes are always registered and each answers 503 for a missing
+    # dependency; this switch makes startup refuse a configuration that cannot work (empty worker key).
+    agentar_enabled: bool = Field(default=False, env="AGENTAR_ENABLED")
+    # Sign up attempts per hour allowed by the throttle.
+    signup_rate_per_ip: int = Field(default=5, ge=1, env="SIGNUP_RATE_PER_IP")
+    signup_rate_per_email: int = Field(default=3, ge=1, env="SIGNUP_RATE_PER_EMAIL")
+    # Failed logins: LOGIN_FAIL_LIMIT per window per client address and per email, and
+    # LOGIN_FAIL_IP_LIMIT per address over all emails.
+    login_fail_limit: int = Field(default=10, ge=1, env="LOGIN_FAIL_LIMIT")
+    login_fail_window_minutes: int = Field(default=15, ge=1, env="LOGIN_FAIL_WINDOW_MINUTES")
+    login_fail_ip_limit: int = Field(default=50, ge=1, env="LOGIN_FAIL_IP_LIMIT")
+    # Comma separated addresses of the reverse proxy. X-Real-IP is the client address only when the
+    # TCP peer is one of them, otherwise the peer is. Never the leftmost X-Forwarded-For.
+    trusted_proxy_ips: str = Field(default="", env="TRUSTED_PROXY_IPS")
+    # First claims of a new room per user and UTC day.
+    room_claims_per_day: int = Field(default=20, ge=1, env="ROOM_CLAIMS_PER_DAY")
+
+    # Signs Jitsi room tokens and is shared with Prosody as JWT_APP_SECRET. Never falls back to
+    # JWT_SECRET_KEY: empty means the token routes answer 503 `jitsi_key_missing`.
+    jwt_jitsi_secret_key: str = Field(default="", env="JWT_JITSI_SECRET_KEY")
+
+    # Object store. The Agentar routes answer 503 `storage_unavailable` until the bucket and both
+    # keys are set. An empty endpoint means AWS. "memory" is for tests only.
+    agentar_object_store: Literal["s3", "memory"] = Field(default="s3", env="AGENTAR_OBJECT_STORE")
+    s3_endpoint_url: str = Field(default="", env="S3_ENDPOINT_URL")
+    s3_region: str = Field(default="us-east-1", env="S3_REGION")
+    s3_bucket: str = Field(default="", env="S3_BUCKET")
+    s3_prefix: str = Field(default="", env="S3_PREFIX")
+    s3_addressing_style: Literal["auto", "path", "virtual"] = Field(
+        default="path", env="S3_ADDRESSING_STYLE"
+    )
+    s3_access_key_id: str = Field(default="", env="S3_ACCESS_KEY_ID")
+    s3_secret_access_key: str = Field(default="", env="S3_SECRET_ACCESS_KEY")
+
+    # Agentar quotas and caps per user. Text per file and chunk size are in characters and tokens.
+    agentar_file_max_bytes: int = Field(default=10 * 1024 * 1024, ge=1, env="AGENTAR_FILE_MAX_BYTES")
+    agentar_user_max_files: int = Field(default=20, ge=1, env="AGENTAR_USER_MAX_FILES")
+    agentar_user_max_bytes: int = Field(default=100 * 1024 * 1024, ge=1, env="AGENTAR_USER_MAX_BYTES")
+    agentar_picture_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1, env="AGENTAR_PICTURE_MAX_BYTES")
+    agentar_text_max_chars: int = Field(default=200_000, ge=1, env="AGENTAR_TEXT_MAX_CHARS")
+    agentar_chunk_tokens: int = Field(default=150, ge=1, env="AGENTAR_CHUNK_TOKENS")
+    agentar_meetings_per_day: int = Field(default=10, ge=1, env="AGENTAR_MEETINGS_PER_DAY")
+    agentar_schedule_horizon_days: int = Field(default=30, ge=1, env="AGENTAR_SCHEDULE_HORIZON_DAYS")
+    # Agentars live at once across all users. The demo GPU renders one Ditto session.
+    agentar_max_live_total: int = Field(default=1, ge=1, env="AGENTAR_MAX_LIVE_TOTAL")
+    # Worker event checks: `at` may differ from server time by this much, and a `left` event is
+    # still accepted this long after the meeting ended.
+    agentar_event_max_skew_seconds: int = Field(default=600, ge=1, env="AGENTAR_EVENT_MAX_SKEW_SECONDS")
+    agentar_event_left_grace_seconds: int = Field(default=300, ge=0, env="AGENTAR_EVENT_LEFT_GRACE_SECONDS")
+    # Lifecycle tick: claims due scheduled meetings and reconciles live ones.
+    agentar_tick_seconds: int = Field(default=30, ge=1, env="AGENTAR_TICK_SECONDS")
+    # Minutes a waiting meeting stays open after start_at before it is marked missed (1 to 60).
+    agentar_grace_minutes_default: int = Field(
+        default=15, ge=1, le=60, env="AGENTAR_GRACE_MINUTES_DEFAULT"
+    )
+    # Kokoro voice ids offered in onboarding, the first is the default. Each id must be in the
+    # worker's VP_TTS_VOICES.
+    agentar_voices: str = Field(default="af_heart,af_bella,am_fenrir,am_michael", env="AGENTAR_VOICES")
+    # How the worker reaches this API, the same value as the worker's VP_MEETWEEN_API_URL. Used to
+    # build the events_url sent at dispatch. Empty: dispatch answers 503 `worker_unavailable`.
+    # The worker authenticates its events with VP_MEETWEEN_API_KEY, there is no separate key.
+    vp_meetween_api_url: str = Field(default="", env="VP_MEETWEEN_API_URL")
+
     mongo_uri: str = Field(default="mongodb://localhost:27017", env="MONGO_URI")
     mongo_db_name: str = Field(default="meetween", env="MONGO_DB_NAME")
     mongo_users_collection: str = Field(default="users", env="MONGO_USERS_COLLECTION")
@@ -271,6 +393,8 @@ class Settings(BaseSettings):
     _meeting_jwt: MeetingJwtSettings = PrivateAttr()
     _mongo: MongoSettings = PrivateAttr()
     _virtual_participants: VirtualParticipantSettings = PrivateAttr()
+    _object_store: ObjectStoreSettings = PrivateAttr()
+    _agentar: AgentarSettings = PrivateAttr()
 
     def model_post_init(self, __context) -> None:
         profile = _load_triton_profile_overrides(
@@ -314,6 +438,44 @@ class Settings(BaseSettings):
             request_timeout_s=self.vp_request_timeout_s,
             service_names=_service_name_set(self.vp_service_names),
         )
+        self._object_store = ObjectStoreSettings(
+            backend=self.agentar_object_store,
+            endpoint_url=self.s3_endpoint_url,
+            region=self.s3_region,
+            bucket=self.s3_bucket,
+            prefix=self.s3_prefix.strip("/"),
+            addressing_style=self.s3_addressing_style,
+            access_key_id=self.s3_access_key_id,
+            secret_access_key=self.s3_secret_access_key,
+        )
+        voices = _csv_tuple(self.agentar_voices)
+        if not voices:
+            raise ValueError("AGENTAR_VOICES must list at least one voice id")
+        self._agentar = AgentarSettings(
+            file_max_bytes=self.agentar_file_max_bytes,
+            user_max_files=self.agentar_user_max_files,
+            user_max_bytes=self.agentar_user_max_bytes,
+            picture_max_bytes=self.agentar_picture_max_bytes,
+            text_max_chars=self.agentar_text_max_chars,
+            chunk_tokens=self.agentar_chunk_tokens,
+            meetings_per_day=self.agentar_meetings_per_day,
+            schedule_horizon_days=self.agentar_schedule_horizon_days,
+            grace_minutes_default=self.agentar_grace_minutes_default,
+            tick_seconds=self.agentar_tick_seconds,
+            voices=voices,
+            default_voice=voices[0],
+            worker_events_base_url=self.vp_meetween_api_url.rstrip("/"),
+            signup_rate_per_ip=self.signup_rate_per_ip,
+            signup_rate_per_email=self.signup_rate_per_email,
+            login_fail_limit=self.login_fail_limit,
+            login_fail_window_minutes=self.login_fail_window_minutes,
+            login_fail_ip_limit=self.login_fail_ip_limit,
+            trusted_proxy_ips=_csv_tuple(self.trusted_proxy_ips),
+            room_claims_per_day=self.room_claims_per_day,
+            max_live_total=self.agentar_max_live_total,
+            event_max_skew_seconds=self.agentar_event_max_skew_seconds,
+            event_left_grace_seconds=self.agentar_event_left_grace_seconds,
+        )
 
     @property
     def asr_vad_enabled(self) -> bool:
@@ -346,6 +508,14 @@ class Settings(BaseSettings):
     @property
     def virtual_participants(self) -> VirtualParticipantSettings:
         return self._virtual_participants
+
+    @property
+    def object_store(self) -> ObjectStoreSettings:
+        return self._object_store
+
+    @property
+    def agentar(self) -> AgentarSettings:
+        return self._agentar
 
 
 settings = Settings()

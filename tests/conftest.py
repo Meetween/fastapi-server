@@ -18,6 +18,8 @@ from main import app
 from core import EngineManager
 from src.database import mongo as mongo_module
 
+pytest_plugins = ["tests.fixtures_agentar"]
+
 
 # ============================================================================
 # Test Configuration Fixtures (Session-scoped)
@@ -180,9 +182,9 @@ def mock_mongo_client():
 def _clear_mongo_collections(mock_mongo_client):
     """Reset Mongo state between tests to keep them independent."""
     yield
-    from src.database.models import MeetingContext, User
+    from src.database.models import ALL_MODELS
 
-    for model in (User, MeetingContext):
+    for model in ALL_MODELS:
         asyncio.run(model.get_collection().delete_many({}))
 
 
