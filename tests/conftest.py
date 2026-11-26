@@ -14,12 +14,19 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 from pydub import AudioSegment
-from main import app
+from config import settings as app_settings
+from main import app, include_agentar_routers
 from core import EngineManager
 from src.database import mongo as mongo_module
 from utils.rate_limit import limiter as rate_limiter
 
 pytest_plugins = ["tests.fixtures_agentar"]
+
+# The suite covers the Agentar routes, which main mounts only with AGENTAR_ENABLED. The flag stays
+# unset here so Settings() in tests keeps its defaults; tests/unit/test_agentar_gate.py checks the
+# mounting itself in a fresh interpreter.
+if not app_settings.agentar_enabled:
+    include_agentar_routers(app)
 
 
 @pytest.fixture(autouse=True)
