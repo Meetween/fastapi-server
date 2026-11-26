@@ -64,7 +64,10 @@ class TestGetReport:
         assert "Lyon will sign" in body["summary"]
         assert [a["status"] for a in body["answers"]] == ["answered", "answered"]
         assert body["answers"][0]["transcript_refs"] == [7]
-        assert set(body["action_items"][0]) == {"text", "owner", "due", "transcript_refs"}
+        assert set(body["action_items"][0]) == {"text", "owner", "due", "quote", "transcript_refs"}
+        for item in body["action_items"]:
+            cited = body["transcript"][item["transcript_refs"][0] - 1]["text"]
+            assert item["quote"] and item["quote"].casefold() in cited.casefold()
         # The owner of this account is Alice, so "Laura" in the transcript is not the meeting owner.
         assert [p["kind"] for p in body["open_points"]] == ["escalation"]
         assert len(parsed.transcript) == 18 and body["transcript"][5]["source"] == "agentar"

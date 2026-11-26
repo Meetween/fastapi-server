@@ -48,7 +48,7 @@ async def skip_onboarding(user: CurrentUser):
     "/me/picture",
     response_model=Picture,
     dependencies=[Depends(require_content_length)],
-    responses=error_responses(401, 411, 413, 415, 422, 503),
+    responses=error_responses(401, 411, 413, 415, 422, 429, 503),
     openapi_extra=multipart_openapi({"file": FILE_PART}, ["file"]),
 )
 async def put_my_picture(request: Request, user: CurrentUser, store: ObjectStoreDep):
@@ -57,7 +57,7 @@ async def put_my_picture(request: Request, user: CurrentUser, store: ObjectStore
     try:
         normalised = await normalise_picture(upload.data)
     except PictureError as exc:
-        raise AgentarError(415 if exc.code == "unsupported_type" else 422, exc.code, exc.message) from exc
+        raise AgentarError(exc.status_code, exc.code, exc.message) from exc
     return await profiles.set_picture(user, store, normalised)
 
 

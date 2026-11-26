@@ -16,7 +16,6 @@ Order of checks, all before the pixels are decoded:
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import io
 import warnings
@@ -24,6 +23,8 @@ from dataclasses import dataclass
 from typing import Literal
 
 from PIL import Image, ImageOps
+
+from utils.bounded_executor import BoundedExecutor
 
 SIDE = 512
 MIN_INPUT_SIDE = 256
@@ -49,6 +50,11 @@ class PictureError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+    @property
+    def status_code(self) -> int:
+        """415 for a file that is no PNG or JPEG, 422 for one that cannot be used."""
+        return 415 if self.code == "unsupported_type" else 422
 
 
 @dataclass(frozen=True)
@@ -125,6 +131,11 @@ def normalise_picture_sync(data: bytes) -> NormalisedPicture:
     return NormalisedPicture(data=encoded, sha256=hashlib.sha256(encoded).hexdigest())
 
 
+# A 4096x4096 decode costs about 150 MB of copies: two at a time, two more may wait, then 429.
+POOL = BoundedExecutor("agentar-picture", max_workers=2, max_waiting=2)
+
+
 async def normalise_picture(data: bytes) -> NormalisedPicture:
-    """Same as `normalise_picture_sync`, off the event loop."""
-    return await asyncio.to_thread(normalise_picture_sync, data)
+    """Same as `normalise_picture_sync`, on the picture executor. 429 `rate_limited` when it is
+    full."""
+    return await POOL.run(normalise_picture_sync, data)

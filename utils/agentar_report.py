@@ -32,16 +32,18 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable, Iterable, Optional, TypeVar
 
 from bson import ObjectId
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+import core
 from config import settings
+from models import TaskType
 from src.database.models.agentar_event import AgentarEvent
 from src.database.models.agentar_meeting import AgentarMeeting
 from src.database.models.agentar_report import AgentarReport
 from src.database.models.user import User
-from utils import clock
+from utils import agentar_events, clock
 from utils.object_store import ObjectStore, ObjectStoreError, get_configured_object_store
 
 logger = logging.getLogger(__name__)
@@ -55,8 +57,14 @@ CALL_TIMEOUT_S = 20.0
 STALE_PENDING_S = 300
 # One prompt carries at most about 3k tokens of transcript, well under the 8k of the model.
 WINDOW_CHARS = 9000
-# Window of one script question: from its marker to the next marker, 2,500 tokens at most.
+# Window of one script question: from its marker to the next marker, at most ANSWER_WINDOW_S
+# after the marker and 2,500 tokens.
 ANSWER_WINDOW_CHARS = 8000
+ANSWER_WINDOW_S = 120.0
+# Captions come in fragments of 0.5 to 2 s. Lines of one speaker that start within MERGE_GAP_S of
+# the previous one are one turn for the answer call, up to MERGE_MAX_CHARS.
+MERGE_GAP_S = 3.0
+MERGE_MAX_CHARS = 600
 MAX_ACTION_ITEMS = 20
 MIN_QUOTE_CHARS = 6
 # generation_ms counts from the end of the meeting when the job runs within this time of it.
@@ -65,6 +73,7 @@ MEASURE_FROM_END_S = 600
 SOURCE_AGENTAR = "agentar"
 NO_ANSWER = "no answer captured"
 EMPTY_SUMMARY = "No speech was captured in this meeting."
+SUMMARY_UNAVAILABLE = "The summary could not be written for this meeting. The answers and open points below are complete."
 
 ModelCall = Callable[[str, int], Awaitable[str]]
 """`await model(prompt, max_new_tokens)` returns the raw text of one SpeechLMM call."""
@@ -218,6 +227,10 @@ def grounded_due(due: Optional[str], line_text: str) -> Optional[str]:
 
 _MARKER_SPEAKER = re.compile(r"^agentar\s*\(asked\s+(q\d{1,2})\)$", re.IGNORECASE)
 _VALID_SOURCES = {"speech", "chat", SOURCE_AGENTAR}
+# Sources only server code writes: `agentar_marker` from a worker question_asked event, and
+# `agentar` in the contract shape this module emits. Speech and chat lines never become markers,
+# whatever the speaker is called.
+_MARKER_SOURCES = {"agentar_marker", SOURCE_AGENTAR}
 
 
 def _as_datetime(value: Any) -> Optional[datetime]:
@@ -244,9 +257,11 @@ def normalise_transcript(raw: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     """Snapshot entries as the contract `TranscriptLine`, numbered from 1 in order.
 
     Accepted input: the contract shape (`speaker`, `text`, `at`, `source`) and the stored
-    session entry (`username`, `timestamp`). A line from the Agentar (source `agentar`, or the
-    older `agentar_marker`, or the speaker `Agentar (asked Qn)`) is an asked question and keeps
-    its `question_id` when one is known. Entries without text are skipped.
+    session entry (`username`, `timestamp`). A line the server wrote for an asked question
+    (source `agentar_marker`, or `agentar` in the contract shape) is an asked question and keeps
+    its `question_id`, read from the entry or from the speaker `Agentar (asked Qn)`. The speaker
+    name alone never makes a marker: a guest may call themselves that. Entries without text are
+    skipped.
     """
     lines: list[dict[str, Any]] = []
     for entry in raw or []:
@@ -258,11 +273,11 @@ def normalise_transcript(raw: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         speaker = _one_line(str(entry.get("speaker") or entry.get("username") or "")) or "Unknown"
         source = str(entry.get("source") or "speech")
         question_id = entry.get("question_id")
-        marker = _MARKER_SPEAKER.match(speaker)
-        if marker:
-            source, question_id = SOURCE_AGENTAR, question_id or marker.group(1)
-        elif source == "agentar_marker":
-            source = SOURCE_AGENTAR
+        if source in _MARKER_SOURCES:
+            marker = _MARKER_SPEAKER.match(speaker)
+            source, question_id = SOURCE_AGENTAR, question_id or (marker.group(1) if marker else None)
+        else:
+            question_id = None
         if source not in _VALID_SOURCES:
             source = "speech"
         if source == SOURCE_AGENTAR:
@@ -276,6 +291,10 @@ def normalise_transcript(raw: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         if source == SOURCE_AGENTAR and question_id:
             line["question_id"] = str(question_id).lower()
+        if source == "chat" and (
+            entry.get("relayed") is True or str(entry.get("participant_id") or "").startswith(agentar_events.VP_PARTICIPANT_PREFIX)
+        ):
+            line["relayed"] = True
         lines.append(line)
     return lines
 
@@ -324,6 +343,17 @@ def _is_request_to_agentar(line: dict[str, Any]) -> bool:
     return line["source"] == "chat" and fold(line["text"]).startswith("agentar")
 
 
+def _is_relayed(line: dict[str, Any]) -> bool:
+    """A chat line the server wrote for the bot from a worker event: the asker's question and the
+    Agentar's reply. Never a guest's answer to a script question, whatever its text says."""
+    return bool(line.get("relayed"))
+
+
+def _is_agentar_chat(line: dict[str, Any]) -> bool:
+    """The Agentar's own chat reply, written by the server for an `answer_given` event."""
+    return _is_relayed(line) and fold(line["speaker"]) == fold(agentar_events.AGENTAR_CHAT_SPEAKER)
+
+
 # Model calls ------------------------------------------------------------------------------------
 
 
@@ -359,7 +389,9 @@ _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 
 def parse_json_object(raw: str) -> dict[str, Any]:
     """Strict JSON object from a model reply. Repairs only what is certain: a Markdown fence,
-    text around the outermost braces, a trailing comma. Anything else raises ValueError."""
+    text around the outermost braces, a trailing comma, and one missing closing brace at the very
+    end of an object that is otherwise complete (SpeechLMM v2 L sometimes stops right before it,
+    K/R1 run 5). Anything else raises ValueError."""
     text = _FENCE.sub("", (raw or "").strip()).strip()
     if not text:
         raise ValueError("empty reply")
@@ -375,6 +407,14 @@ def parse_json_object(raw: str) -> dict[str, Any]:
                 continue
             if isinstance(value, dict):
                 return value
+    if start != -1 and not text.endswith("}"):
+        # No trailing comma repair here: "{"a": 1," was cut before its next key.
+        try:
+            value = json.loads(text[start:] + "}")
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict):
+            return value
     raise ValueError("reply is not a JSON object")
 
 
@@ -394,13 +434,15 @@ async def _ask(
     schema: type[_Out],
     part: str,
     max_new_tokens: int,
+    parse: Optional[Callable[[str], dict[str, Any]]] = None,
 ) -> _Out:
     """One call, strict parse and schema check, one retry with a short reminder."""
+    parse = parse or parse_json_object
     for attempt in (1, 2):
         text = prompt if attempt == 1 else prompt + _RETRY_NOTE
         raw = await _call(model, budget, text, max_new_tokens, part)
         try:
-            return schema.model_validate(parse_json_object(raw))
+            return schema.model_validate(parse(raw))
         except (ValueError, ValidationError) as exc:
             logger.warning("Report part=%s attempt=%d unusable reply (%s)", part, attempt, type(exc).__name__)
     raise ReportFailure("model_output_invalid", part)
@@ -413,9 +455,42 @@ class _Lenient(BaseModel):
 class _SummaryOut(_Lenient):
     summary: str = Field(..., min_length=1)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _other_key(cls, value: Any) -> Any:
+        """SpeechLMM v2 L sometimes names the key otherwise ("meeting_minutes") or returns a list of
+        sentences (K/D3 northwind-weekly). The one text value of the object is the summary."""
+        if not isinstance(value, dict) or isinstance(value.get("summary"), str):
+            return value
+        texts = [v for v in value.values() if isinstance(v, str) and v.strip()]
+        lists = [v for v in value.values() if isinstance(v, list) and v and all(isinstance(i, str) for i in v)]
+        if len(texts) + len(lists) != 1:
+            return value
+        return {"summary": texts[0] if texts else " ".join(i.strip() for i in lists[0])}
+
+
+def parse_summary_reply(raw: str) -> dict[str, Any]:
+    """`parse_json_object`, plus a reply that is only the summary as a JSON string, quotes included
+    (SpeechLMM v2 L, K/D3 northwind-weekly). Unquoted prose such as "Sure! Here are the minutes" is
+    still rejected. Grounding runs on the text as on any summary."""
+    try:
+        return parse_json_object(raw)
+    except ValueError:
+        text = _FENCE.sub("", (raw or "").strip()).strip()
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            raise ValueError("reply is not a JSON object") from None
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("reply is not a JSON object") from None
+        return {"summary": value.strip()}
+
 
 class _ActionsOut(_Lenient):
     items: list[Any]
+
+
+_NOT_AN_ANSWER = frozenset({"", "unanswerable", "none", "null", "n/a", "no answer", "not answered"})
 
 
 class _AnswerOut(_Lenient):
@@ -423,6 +498,18 @@ class _AnswerOut(_Lenient):
     answer: Optional[str] = None
     line: Optional[int] = None
     quote: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _answered_from_answer(cls, value: Any) -> Any:
+        """SpeechLMM v2 L sometimes drops "answered" and keeps answer, line and quote (K/D3
+        northwind-weekly). The answer then says it: a real sentence is answered, "unanswerable" is not.
+        `validate_answer` still requires a quote held by a line of the window."""
+        if not isinstance(value, dict) or "answered" in value:
+            return value
+        answer = value.get("answer")
+        text = answer.strip().strip(".").casefold() if isinstance(answer, str) else ""
+        return {**value, "answered": text not in _NOT_AN_ANSWER}
 
 
 class _ItemOut(_Lenient):
@@ -520,14 +607,25 @@ async def build_summary(
     if not _evidence(lines).strip():
         return EMPTY_SUMMARY
     parts: list[str] = []
-    for window in _windows(_model_lines(lines), WINDOW_CHARS):
-        out = await _ask(model, budget, summary_prompt(purpose, window), _SummaryOut, "summary", 300)
-        parts.append(out.summary)
-    if len(parts) > 1:
-        merged = await _ask(model, budget, merge_summary_prompt(purpose, parts), _SummaryOut, "summary", 300)
-        summary = merged.summary
-    else:
-        summary = parts[0]
+    try:
+        for window in _windows(_model_lines(lines), WINDOW_CHARS):
+            out = await _ask(
+                model, budget, summary_prompt(purpose, window), _SummaryOut, "summary", 300, parse_summary_reply
+            )
+            parts.append(out.summary)
+        if len(parts) > 1:
+            merged = await _ask(
+                model, budget, merge_summary_prompt(purpose, parts), _SummaryOut, "summary", 300, parse_summary_reply
+            )
+            summary = merged.summary
+        else:
+            summary = parts[0]
+    except ReportFailure as exc:
+        if exc.code != "model_output_invalid":
+            raise
+        # Same rule as an answer: a part the model cannot state is never the loss of the whole report.
+        logger.warning("Report summary unusable after the retry, report kept without it")
+        return SUMMARY_UNAVAILABLE
     cleaned = _drop_ungrounded_sentences(summary, evidence)
     return cleaned or EMPTY_SUMMARY
 
@@ -605,7 +703,13 @@ async def build_action_items(
     items: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
     for window in _windows(spoken, WINDOW_CHARS):
-        out = await _ask(model, budget, actions_prompt(window), _ActionsOut, "action_items", 500)
+        try:
+            out = await _ask(model, budget, actions_prompt(window), _ActionsOut, "action_items", 500)
+        except ReportFailure as exc:
+            if exc.code != "model_output_invalid":
+                raise
+            logger.warning("Report action items of one window unusable after the retry, window skipped")
+            continue
         for raw in out.items:
             item = validate_action_item(raw, lines, people, evidence)
             if item is None:
@@ -633,6 +737,8 @@ def _marker_for(question: dict[str, Any], lines: list[dict[str, Any]]) -> Option
 
 
 def _answer_window(marker: dict[str, Any], lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Lines after the marker up to the next marker, at most ANSWER_WINDOW_S after it (when both
+    times are known) and ANSWER_WINDOW_CHARS."""
     window: list[dict[str, Any]] = []
     size = 0
     for line in lines:
@@ -640,13 +746,55 @@ def _answer_window(marker: dict[str, Any], lines: list[dict[str, Any]]) -> list[
             continue
         if line["source"] == SOURCE_AGENTAR:
             break
-        if _is_request_to_agentar(line) or is_junk(line):
+        if marker.get("at") and line.get("at") and (line["at"] - marker["at"]).total_seconds() > ANSWER_WINDOW_S:
+            break
+        if _is_request_to_agentar(line) or _is_relayed(line) or is_junk(line):
             continue
         size += len(render_line(line)) + 1
         if size > ANSWER_WINDOW_CHARS:
             break
         window.append(line)
     return window
+
+
+def _mergeable(prev: dict[str, Any], line: dict[str, Any]) -> bool:
+    if prev["speaker"] != line["speaker"] or prev["source"] != "speech" or line["source"] != "speech":
+        return False
+    if len(prev["text"]) + 1 + len(line["text"]) > MERGE_MAX_CHARS:
+        return False
+    last, start = prev.get("last_at"), line.get("at")
+    return last is None or start is None or (start - last).total_seconds() <= MERGE_GAP_S
+
+
+def merge_fragments(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Consecutive speech lines of one speaker, each starting within MERGE_GAP_S of the one before,
+    as one turn: numbered by its first line, `refs` lists every line it holds, `parts` their texts.
+    Chat lines and lines of another speaker start a new turn. The transcript is not changed."""
+    turns: list[dict[str, Any]] = []
+    for line in lines:
+        if turns and _mergeable(turns[-1], line):
+            turn = turns[-1]
+            turn["text"] = f"{turn['text']} {line['text']}"
+            turn["refs"].append(line["n"])
+            turn["parts"].append(line["text"])
+            turn["last_at"] = line.get("at")
+            continue
+        turns.append({**line, "refs": [line["n"]], "parts": [line["text"]], "last_at": line.get("at")})
+    return turns
+
+
+def quote_refs(turn: dict[str, Any], quote: str) -> list[int]:
+    """The lines of `turn` that the quote spans, by folded words. The whole turn when the quote is
+    not found word aligned."""
+    words = fold(quote).split()
+    parts = [fold(part).split() for part in turn.get("parts", [turn["text"]])]
+    refs = turn.get("refs", [turn["n"]])
+    flat = [word for part in parts for word in part]
+    owner = [ref for ref, part in zip(refs, parts) for _ in part]
+    for start in range(len(flat) - len(words) + 1):
+        if words and flat[start : start + len(words)] == words:
+            return sorted(set(owner[start : start + len(words)]))
+    return list(refs)
 
 
 def _no_answer(question: dict[str, Any], status: str = "no_answer_captured") -> dict[str, Any]:
@@ -661,21 +809,49 @@ def _no_answer(question: dict[str, Any], status: str = "no_answer_captured") -> 
     }
 
 
+def _without_label(quote: str, window: list[dict[str, Any]]) -> str:
+    """The quote without a leading "<speaker>:" or "<speaker> (chat):" of a line in the window: the
+    model sometimes copies the label that `render_line` writes before the text (K/R1 run 3)."""
+    text = _one_line(quote)
+    for line in window:
+        for label in (f"{line['speaker']} (chat):", f"{line['speaker']}:"):
+            if text.casefold().startswith(label.casefold()):
+                return text[len(label) :].strip()
+    return text
+
+
+def _holds_quote(line: dict[str, Any], quote: str) -> bool:
+    """`contains_quote`, or a quote shorter than MIN_QUOTE_CHARS that is the whole text of one caption
+    line of the turn: a one word answer such as "Marco." is evidence, a short piece of a line is not."""
+    if contains_quote(line["text"], quote):
+        return True
+    folded = fold(quote)
+    return bool(folded) and any(fold(part) == folded for part in line.get("parts", [line["text"]]))
+
+
 def validate_answer(
     question: dict[str, Any], out: _AnswerOut, window: list[dict[str, Any]], evidence: str
 ) -> dict[str, Any]:
-    """`answered` only with a quote that a line of the window holds. The speaker is the speaker of
-    that line, whatever the model wrote. Anything else is `no answer captured`."""
+    """`answered` only with a quote that a line of the window holds. The window may hold merged
+    turns (`merge_fragments`); a cited number of any of its lines finds the turn, and the refs are
+    the lines the quote spans. The speaker is the speaker of that line, whatever the model wrote.
+    Anything else is `no answer captured`."""
     if not out.answered or not out.quote or not (out.answer or "").strip():
         return _no_answer(question)
-    by_n = {line["n"]: line for line in window}
-    cited = by_n.get(out.line) if out.line is not None else None
-    if cited is None or not contains_quote(cited["text"], out.quote):
-        holders = [line for line in window if contains_quote(line["text"], out.quote)]
-        if len(holders) != 1:
-            logger.warning("Report answer %s unverified, its quote is not in its window", question["id"])
-            return _no_answer(question)
-        cited = holders[0]
+    by_n = {n: line for line in window for n in line.get("refs", [line["n"]])}
+    cited, quote = None, ""
+    if out.quote:
+        text = _without_label(out.quote, window)
+        line = by_n.get(out.line) if out.line is not None else None
+        if line is not None and _holds_quote(line, text):
+            cited, quote = line, text
+        else:
+            holders = [line for line in window if _holds_quote(line, text)]
+            if len(holders) == 1:
+                cited, quote = holders[0], text
+    if cited is None:
+        logger.warning("Report answer %s unverified, its quote is not in its window", question["id"])
+        return _no_answer(question)
     answer = _one_line(out.answer or "")
     names = ungrounded_names(answer, evidence + " " + question["text"])
     if ungrounded_figures(answer, cited["text"]) or names:
@@ -687,8 +863,8 @@ def validate_answer(
         "status": "answered",
         "answer": answer,
         "speaker": cited["speaker"],
-        "quote": _one_line(out.quote),
-        "transcript_refs": [cited["n"]],
+        "quote": quote,
+        "transcript_refs": quote_refs(cited, quote),
     }
 
 
@@ -709,13 +885,60 @@ async def build_answers(
             asked = str(question["id"]).lower() in asked_ids
             answers.append(_no_answer(question, "no_answer_captured" if asked else "not_asked"))
             continue
-        window = _answer_window(marker, lines)
+        window = merge_fragments(_answer_window(marker, lines))
         if not window:
             answers.append(_no_answer(question))
             continue
-        out = await _ask(model, budget, answer_prompt(question["text"], window), _AnswerOut, f"answer_{question['id']}", 200)
-        answers.append(validate_answer(question, out, window, evidence))
+        # The first turns after the question first: SpeechLMM v2 L misses an answer in the first line
+        # of a long window (K/D3 northwind-weekly). Then the whole window.
+        result = _no_answer(question)
+        for i, part in enumerate(_answer_passes(window)):
+            if i and budget.remaining() < EXTRA_CALL_RESERVE_S:
+                break
+            result = await _answer_once(model, budget, question, part, evidence)
+            if result["status"] == "answered":
+                break
+        answers.append(result)
     return answers
+
+
+FIRST_PASS_TURNS = 3
+# A second pass or a quote retry runs only with this much of the model budget left, so the extra
+# calls never turn a report with answers into a report_timeout.
+EXTRA_CALL_RESERVE_S = 15.0
+
+
+async def _answer_once(
+    model: ModelCall, budget: _Budget, question: dict[str, Any], window: list[dict[str, Any]], evidence: str
+) -> dict[str, Any]:
+    """One answer pass. A reply that claims an answer with a quote no line holds is asked once more
+    with the retry note, like a reply that is not JSON (K/D3 northwind-weekly: the first reply quoted
+    the question, the second the answering line)."""
+    prompt = answer_prompt(question["text"], window)
+    for attempt in (1, 2):
+        try:
+            out = await _ask(model, budget, prompt, _AnswerOut, f"answer_{question['id']}", 200)
+        except ReportFailure as exc:
+            if exc.code != "model_output_invalid":
+                raise
+            # An answer the model cannot state in the format is an answer we cannot check: the rule
+            # is "no answer captured", never a guess, and never the loss of the whole report.
+            logger.warning("Report answer %s unusable after the retry, no answer captured", question["id"])
+            return _no_answer(question)
+        result = validate_answer(question, out, window, evidence)
+        if result["status"] == "answered" or not out.answered or attempt == 2:
+            return result
+        if budget.remaining() < EXTRA_CALL_RESERVE_S:
+            return result
+        prompt = answer_prompt(question["text"], window) + _RETRY_NOTE
+    return _no_answer(question)
+
+
+def _answer_passes(window: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """The first FIRST_PASS_TURNS turns of the window, then the whole window when it is longer."""
+    if len(window) <= FIRST_PASS_TURNS:
+        return [window]
+    return [window[:FIRST_PASS_TURNS], window]
 
 
 # Open points ------------------------------------------------------------------------------------
@@ -734,7 +957,7 @@ def _escalation_refs(question: str, asker: Optional[str], lines: list[dict[str, 
     hits = [
         line["n"]
         for line in lines
-        if line["source"] != SOURCE_AGENTAR and target in fold(line["text"]) and (not asker or fold(line["speaker"]) == fold(asker))
+        if line["source"] != SOURCE_AGENTAR and not _is_agentar_chat(line) and target in fold(line["text"]) and (not asker or fold(line["speaker"]) == fold(asker))
     ]
     return hits[:1]
 
@@ -913,10 +1136,7 @@ def _default_store() -> Optional[ObjectStore]:
 
 def _default_model() -> ModelCall:
     """SpeechLMM through the engine manager, in chat mode, greedy."""
-    from core import EngineManager
-    from models import TaskType
-
-    engine = EngineManager.get_lmm()
+    engine = core.EngineManager.get_lmm()
     if engine is None:
         raise ReportFailure("model_unavailable", "SpeechLMM model not loaded")
 
@@ -1002,12 +1222,7 @@ async def _notify_ready(report_id: str, meeting: AgentarMeeting) -> None:
     """Dashboard notification `report_ready`, through the event helper of the events module (B10).
     The event id is stable, so a second run of the same report adds nothing. Never fails the job."""
     try:
-        from utils.agentar_events import record_server_event
-    except ImportError:
-        logger.warning("report_ready notification skipped, utils.agentar_events is not available")
-        return
-    try:
-        await record_server_event(
+        await agentar_events.record_server_event(
             owner=meeting.owner,
             meeting_id=meeting.id,
             type="report_ready",

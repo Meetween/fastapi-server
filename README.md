@@ -60,6 +60,22 @@ argon2id hash at its next login. With `EMAIL_ENABLED=false` there is no "forgot 
 so `reset-password` is how a user gets back in. It prints the email only, and sessions opened
 before the reset stay valid until their refresh token expires.
 
+### Rotating JWT_SECRET_KEY
+
+Legacy digests are `sha256(<pepper>:password)`, and the pepper is `JWT_SECRET_KEY` unless
+`LEGACY_PASSWORD_PEPPER` is set. Startup refuses a `JWT_SECRET_KEY` under 32 bytes, so a short
+key must be rotated without locking out the users still on a legacy digest:
+
+1. Set `LEGACY_PASSWORD_PEPPER` to the current (old) `JWT_SECRET_KEY`.
+2. Set `JWT_SECRET_KEY` to a new value of 32 bytes or more (`openssl rand -hex 32`).
+3. Restart, then run `uv run cli.py migrate-hashes`.
+
+Users keep their passwords. Each legacy account is rehashed to argon2id at its next login and
+then no longer needs the pepper; `LEGACY_PASSWORD_PEPPER` can be removed once
+`migrate-hashes --dry-run` and the database show no `legacy$` or 64 character hex hash left.
+Access and refresh tokens signed with the old key stop working, so everyone logs in again.
+A pepper equal to `JWT_SECRET_KEY` has no effect and startup logs a warning.
+
 ## Configuration
 
 Every field of `Settings` in `config.py` is an environment variable, read from the environment
@@ -72,6 +88,7 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `PORT` | `8000` | port used by `uv run main.py` |
 | `ENABLE_AUTH` | `true` | bearer authentication on `/api/*` |
 | `JWT_SECRET_KEY` | `change-me-in-production` | HS256 secret for access and refresh tokens; never leaves this service |
+| `LEGACY_PASSWORD_PEPPER` | empty | the previous `JWT_SECRET_KEY` after a rotation; verifies legacy sha256 password digests only, empty uses `JWT_SECRET_KEY`. See [Rotating JWT_SECRET_KEY](#rotating-jwt_secret_key) |
 | `JWT_JITSI_SECRET_KEY` | empty | HS256 secret for Jitsi room tokens, the value Prosody holds as `JWT_APP_SECRET`; never the same as `JWT_SECRET_KEY`. While it is empty `/api/auth/jitsi/issue` and the bot route answer `503` |
 | `ROOM_CLAIMS_PER_DAY` | `20` | new rooms a user may claim per UTC day; the first user to claim a room owns it and moderates it |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | access token lifetime; an expired token gets `401` with `Access token expired` |
@@ -110,7 +127,7 @@ cannot identify a meeting: rooms are reused.
 | --- | --- | --- |
 | `VP_WORKER_URL` | `http://vp-worker:8000` | base URL of the worker service |
 | `VP_WORKER_SECRET` | empty | shared secret sent as `X-VP-Secret`; the route answers `503` while it is unset |
-| `VP_REQUIRE_HUMAN` | `true` | query Prosody before sending a bot into a room |
+| `VP_REQUIRE_HUMAN` | `true` | query Prosody before sending a Butler panel bot into a room. Agentar meetings ignore it: the bot opens the room at the start, and with no human `grace_minutes` after it went live it says goodbye and the meeting is missed (`no_human_joined`) |
 | `VP_MAX_BOTS_PER_ROOM` | `2` | active bots allowed per room |
 | `VP_PROSODY_HTTP_URL` | `http://xmpp.meet.jitsi:5280` | Prosody HTTP port; needs `mod_muc_size`, set `XMPP_MODULES=muc_size` |
 | `VP_XMPP_DOMAIN` | `meet.jitsi` | XMPP domain for the room lookup |

@@ -19,9 +19,9 @@ from config import settings
 from src.database.models.agentar_file import AgentarFile
 from src.database.models.agentar_meeting import AgentarMeeting, MeetingQuestion
 from src.database.models.user import User, UserProfile
-from tests.seams import install_bot_token
 from tests.worker_schema import SCHEMA, check_create_bot, violations
 from utils import agentar_worker as worker
+from utils.agentar_profile import effective_agent_name
 from utils.agentar_worker import (
     WorkerDispatchError,
     build_worker_bot,
@@ -36,11 +36,6 @@ from utils.object_store import MemoryObjectStore, ObjectStoreError
 MEETING_ID = "0123456789abcdef01234567"
 JPEG = b"\xff\xd8\xff\xe0" + b"j" * 64
 EVENTS_BASE = "http://fastapi:8000"
-
-
-@pytest.fixture(autouse=True)
-def bot_token_seam(monkeypatch):
-    install_bot_token(monkeypatch)
 
 
 @pytest.fixture(autouse=True)
@@ -128,6 +123,19 @@ class TestFields:
         assert opener == "The purpose of this meeting, as Laura gave it to me, is: Agree the release date"
         assert "PRIVATE" not in opener
 
+    def test_the_meeting_opener_wins_over_the_purpose(self) -> None:
+        opener = build(make_meeting(opener="Atlas goes live on 1 December 2026.")).opener
+        assert opener == "Atlas goes live on 1 December 2026."
+
+    def test_a_blank_meeting_opener_falls_back_to_the_purpose(self) -> None:
+        opener = build(make_meeting(opener="   ")).opener
+        assert opener == "The purpose of this meeting, as Laura gave it to me, is: Agree the release date"
+
+    def test_the_meeting_opener_payload_is_valid(self) -> None:
+        bot = build(make_meeting(opener="Atlas goes live on 1 December 2026. " * 13))
+        assert check_create_bot(body_of(bot)) == []
+        assert len(bot.opener) <= 500
+
     def test_no_purpose_means_no_opener(self) -> None:
         assert build(make_meeting(purpose="   ")).opener is None
 
@@ -174,10 +182,10 @@ class TestFields:
 
 
 class TestSkippedOnboarding:
-    def test_no_profile_uses_first_name_and_default_voice_and_no_picture(self) -> None:
+    def test_no_profile_uses_the_full_name_and_default_voice_and_no_picture(self) -> None:
         owner = make_user(profile=None)
         bot = build(owner=owner)
-        assert bot.display_name == "Laura Agentar"
+        assert bot.display_name == "Laura Rossi Agentar"
         assert bot.voice == settings.agentar.default_voice
         assert bot.avatar_jpeg_b64 is None
 
@@ -191,6 +199,44 @@ class TestSkippedOnboarding:
     def test_a_voice_no_longer_offered_falls_back(self) -> None:
         owner = make_user(profile=UserProfile(voice="bf_old"))
         assert build(owner=owner).voice == settings.agentar.default_voice
+
+
+class TestOwnerFirstName:
+    """C3.3: the worker answers chat messages that start with "Agentar" or the owner's first name."""
+
+    def test_the_profile_first_name_is_sent_not_the_agent_name(self) -> None:
+        body = body_of(build())
+        assert body["owner_first_name"] == "Laura"
+        assert body["display_name"] == "Lia Agentar"
+        assert check_create_bot(body) == []
+
+    @pytest.mark.parametrize("first_name", [None, "", "   ", "!!!", "Agentar"])
+    def test_an_empty_first_name_is_null_and_left_out_of_the_body(self, first_name) -> None:
+        bot = build(owner=make_user(first_name=first_name))
+        assert bot.owner_first_name is None
+        body = body_of(bot)
+        assert "owner_first_name" not in body
+        assert check_create_bot(body) == []
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("  Zoë  ", "Zoë"),
+            ("Laura\n(boss)", "Laura boss"),
+            ("Anne-Marie", "Anne-Marie"),
+            ("--Laura--", "Laura"),
+            ("L" * 80, "L" * 32),
+        ],
+    )
+    def test_the_first_name_is_cleaned_to_what_the_worker_accepts(self, raw, expected) -> None:
+        body = body_of(build(owner=make_user(first_name=raw)))
+        assert body["owner_first_name"] == expected
+        assert check_create_bot(body) == []
+
+    def test_the_checker_refuses_a_first_name_the_worker_refuses(self) -> None:
+        good = body_of(build())
+        assert check_create_bot({**good, "owner_first_name": "Laura (AI)"})
+        assert check_create_bot({**good, "owner_first_name": "L" * 33})
 
 
 class TestNames:
@@ -210,14 +256,18 @@ class TestNames:
         ],
     )
     def test_agent_name_is_reduced_to_a_valid_display_name(self, raw, expected) -> None:
-        owner = make_user(first_name=None, profile=UserProfile(agent_name=raw))
+        owner = make_user(first_name=None, last_name=None, profile=UserProfile(agent_name=raw))
         bot = build(owner=owner)
         assert bot.display_name == expected
         assert check_create_bot(body_of(bot)) == []
 
-    def test_a_blank_agent_name_falls_through_to_the_first_name(self) -> None:
+    def test_a_blank_agent_name_falls_through_to_the_full_name(self) -> None:
         owner = make_user(profile=UserProfile(agent_name="!!!"))
-        assert build(owner=owner).display_name == "Laura Agentar"
+        assert build(owner=owner).display_name == "Laura Rossi Agentar"
+
+    def test_the_display_name_is_the_name_the_profile_page_shows(self) -> None:
+        for owner in (make_user(), make_user(profile=None), make_user(last_name=None, profile=None)):
+            assert build(owner=owner).display_name == f"{effective_agent_name(owner)} Agentar"
 
     def test_owner_names_with_symbols_are_spoken_clean(self) -> None:
         owner = make_user(first_name="Laura\n(boss)", last_name="Rossi; DROP")
@@ -363,6 +413,7 @@ class TestDispatchBot:
         assert base64.b64decode(body["avatar_jpeg_b64"]) == JPEG
         assert body["jwt"] and body["jwt"].count(".") == 2
         assert body["voice"] == "am_fenrir"
+        assert body["owner_first_name"] == "Laura"
         assert bot["id"] == "bot-1"
         assert bot["display_name"] == "Lia Agentar (AI)"
         assert bot["state"] == "joining"
@@ -463,6 +514,22 @@ class TestDispatchBot:
         assert "TOKEN-ECHO-VALUE" not in caplog.text
         assert "TOKEN-ECHO-VALUE" not in str(raised.value)
         assert "body.jwt" in raised.value.detail
+
+    def test_a_policy_refusal_keeps_the_workers_sentence(self, vp_configured) -> None:
+        sentence = "an Agentar bot is refused: VP_BOT_NAME_SUFFIX must contain (AI), now ''"
+        response = httpx.Response(422, json={"detail": sentence})
+        with pytest.raises(WorkerDispatchError) as raised:
+            run_dispatch(lambda request: response)
+        assert raised.value.reason == "worker_error"
+        assert raised.value.detail == f"status 422 refused: {sentence}"
+
+    def test_a_policy_refusal_is_one_bounded_line(self, vp_configured) -> None:
+        response = httpx.Response(422, json={"detail": "voice\nrefused " + "x" * 500})
+        with pytest.raises(WorkerDispatchError) as raised:
+            run_dispatch(lambda request: response)
+        reason = raised.value.detail.removeprefix("status 422 refused: ")
+        assert "\n" not in reason
+        assert len(reason) == worker.WORKER_REFUSAL_MAX_CHARS
 
 
 class TestRecallBot:

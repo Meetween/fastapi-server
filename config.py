@@ -127,6 +127,7 @@ class AgentarSettings(BaseModel):
     schedule_horizon_days: int
     grace_minutes_default: int
     tick_seconds: int
+    join_timeout_seconds: int
     voices: tuple[str, ...]
     default_voice: str
     worker_events_base_url: str
@@ -137,6 +138,8 @@ class AgentarSettings(BaseModel):
     login_fail_ip_limit: int
     trusted_proxy_ips: tuple[str, ...]
     room_claims_per_day: int
+    any_room: bool
+    opener_drafts_per_minute: int
     max_live_total: int
     event_max_skew_seconds: int
     event_left_grace_seconds: int
@@ -240,6 +243,10 @@ class Settings(BaseSettings):
     vp_bot_name_suffix: str = Field(default="", env="VP_BOT_NAME_SUFFIX")
 
     jwt_secret_key: str = Field(default="change-me-in-production", env="JWT_SECRET_KEY")
+    # The JWT_SECRET_KEY the legacy sha256 password digests were made with, kept after that key
+    # is rotated. Only verifies those digests, which are replaced with argon2id at the next
+    # login; it signs nothing. Empty verifies them with JWT_SECRET_KEY.
+    legacy_password_pepper: str = Field(default="", env="LEGACY_PASSWORD_PEPPER")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
     jwt_access_token_expire_minutes: int = Field(
         default=60, env="JWT_ACCESS_TOKEN_EXPIRE_MINUTES"
@@ -274,6 +281,11 @@ class Settings(BaseSettings):
     trusted_proxy_ips: str = Field(default="", env="TRUSTED_PROXY_IPS")
     # First claims of a new room per user and UTC day.
     room_claims_per_day: int = Field(default=20, ge=1, env="ROOM_CLAIMS_PER_DAY")
+    # Demo only: an Agentar may be sent into a room another user holds. Off by default; an invite
+    # or host consent flow replaces it.
+    agentar_any_room: bool = Field(default=False, env="AGENTAR_ANY_ROOM")
+    # Opener drafts per owner per minute: each one is a model call on the shared SpeechLMM.
+    agentar_opener_drafts_per_minute: int = Field(default=6, ge=1, env="AGENTAR_OPENER_DRAFTS_PER_MINUTE")
 
     # Signs Jitsi room tokens and is shared with Prosody as JWT_APP_SECRET. Never falls back to
     # JWT_SECRET_KEY: empty means the token routes answer 503 `jitsi_key_missing`.
@@ -309,6 +321,9 @@ class Settings(BaseSettings):
     agentar_event_left_grace_seconds: int = Field(default=300, ge=0, env="AGENTAR_EVENT_LEFT_GRACE_SECONDS")
     # Lifecycle tick: claims due scheduled meetings and reconciles live ones.
     agentar_tick_seconds: int = Field(default=30, ge=1, env="AGENTAR_TICK_SECONDS")
+    # A bot still joining this long after dispatch fails with join_timeout. The worker gives up on
+    # its own after VP_JOIN_TIMEOUT_S (45 s) plus the Ditto setup (60 s); this is the backstop.
+    agentar_join_timeout_seconds: int = Field(default=180, ge=30, env="AGENTAR_JOIN_TIMEOUT_SECONDS")
     # Minutes a waiting meeting stays open after start_at before it is marked missed (1 to 60).
     agentar_grace_minutes_default: int = Field(
         default=15, ge=1, le=60, env="AGENTAR_GRACE_MINUTES_DEFAULT"
@@ -389,6 +404,11 @@ class Settings(BaseSettings):
     # Output guard: a caption or utterance text that is a model reply ("I'm sorry, could you
     # please repeat") rather than speech is neither sent nor stored. Unset follows ASR_UTTERANCE_MODE.
     asr_output_guard: Optional[bool] = Field(default=None, env="ASR_OUTPUT_GUARD")
+    # Plausibility cap: a caption or utterance text longer than this many characters per second of
+    # its audio, plus the slack, is a model that kept talking, not speech. It is neither sent nor
+    # stored. Fast speech is about 20 characters a second. 0 turns the cap off.
+    asr_caption_max_chars_per_s: float = Field(default=25.0, ge=0, env="ASR_CAPTION_MAX_CHARS_PER_S")
+    asr_caption_chars_slack: int = Field(default=20, ge=0, env="ASR_CAPTION_CHARS_SLACK")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
@@ -464,6 +484,7 @@ class Settings(BaseSettings):
             schedule_horizon_days=self.agentar_schedule_horizon_days,
             grace_minutes_default=self.agentar_grace_minutes_default,
             tick_seconds=self.agentar_tick_seconds,
+            join_timeout_seconds=self.agentar_join_timeout_seconds,
             voices=voices,
             default_voice=voices[0],
             worker_events_base_url=self.vp_meetween_api_url.rstrip("/"),
@@ -474,6 +495,8 @@ class Settings(BaseSettings):
             login_fail_ip_limit=self.login_fail_ip_limit,
             trusted_proxy_ips=_csv_tuple(self.trusted_proxy_ips),
             room_claims_per_day=self.room_claims_per_day,
+            any_room=self.agentar_any_room,
+            opener_drafts_per_minute=self.agentar_opener_drafts_per_minute,
             max_live_total=self.agentar_max_live_total,
             event_max_skew_seconds=self.agentar_event_max_skew_seconds,
             event_left_grace_seconds=self.agentar_event_left_grace_seconds,

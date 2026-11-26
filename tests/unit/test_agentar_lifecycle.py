@@ -1,4 +1,4 @@
-"""Agentar lifecycle tick: claim, wait for a human, join, follow the bot, snapshot, end."""
+"""Agentar lifecycle tick: claim, open the room, follow the bot, wait for a human, snapshot, end."""
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
@@ -11,6 +11,7 @@ from core import SessionManager
 from src.database.models import ALL_MODELS, AgentarMeeting
 from utils import agentar_lifecycle as lifecycle
 from utils import clock
+from utils.agentar_worker import WorkerDispatchError
 
 OWNER = "agentar-a@meetween.test"
 OTHER = "agentar-b@meetween.test"
@@ -29,12 +30,16 @@ class FakeDeps:
         self.bots: dict[str, Optional[dict[str, Any]]] = {}
         self.dispatched: list[str] = []
         self.removed: list[str] = []
+        self.farewells: list[str] = []
+        self.farewell_error: Optional[Exception] = None
+        self.presence_checks: list[str] = []
         self.reports: list[str] = []
         self.events: list[dict[str, Any]] = []
         self.ownership_checks = 0
 
     async def human_in_room(self, room: str) -> Optional[bool]:
         await asyncio.sleep(0)
+        self.presence_checks.append(room)
         return self.humans.get(room, False)
 
     async def owns_room(self, meeting: AgentarMeeting) -> bool:
@@ -59,6 +64,11 @@ class FakeDeps:
     async def remove_bot(self, bot_id: str) -> None:
         self.removed.append(bot_id)
 
+    async def farewell_bot(self, bot_id: str) -> None:
+        if self.farewell_error is not None:
+            raise self.farewell_error
+        self.farewells.append(bot_id)
+
     async def enqueue_report(self, meeting_id: str) -> None:
         self.reports.append(meeting_id)
 
@@ -75,6 +85,7 @@ class FakeDeps:
             dispatch_bot=self.dispatch_bot,
             get_bot=self.get_bot,
             remove_bot=self.remove_bot,
+            farewell_bot=self.farewell_bot,
             enqueue_report=self.enqueue_report,
             record_event=self.record_event,
         )
@@ -161,48 +172,137 @@ async def test_meeting_not_yet_due_is_not_claimed(frozen_clock, fake):
     assert (await _load(meeting)).status == "scheduled"
 
 
-# Nobody in the room ------------------------------------------------------------------------------
+# The Agentar opens the room ----------------------------------------------------------------------
 
 
-async def test_empty_room_waits_through_the_grace_window_then_missed(frozen_clock, fake):
+async def test_guests_waiting_for_a_host_the_bot_opens_the_room(frozen_clock, fake):
+    """Under JWT auth guests wait for a host outside the MUC, so Prosody counts nobody. The bot
+    is sent at the start anyway, as host, and the guests are admitted once it is in."""
     meeting = await _meeting(start_at=clock.utcnow(), grace_minutes=10)
+    fake.humans[ROOM] = False
 
     await lifecycle.tick()
-    assert (await _load(meeting)).status == "waiting_for_human"
+    joining = await _load(meeting)
+    assert joining.status == "joining"
+    assert fake.dispatched == [meeting.id]
+    assert fake.presence_checks == [], "presence is not asked before the bot is in"
 
+    frozen_clock.advance(seconds=30)
+    fake.set_bot("bot1", state="joined", meeting_id=JITSI_ID, joined_at=2.0)
+    fake.humans[ROOM] = True
+    await lifecycle.tick()
+    live = await _load(meeting)
+    assert live.status == "live"
+    assert live.human_joined_at == clock.utcnow()
+    assert fake.farewells == []
+
+
+async def test_waiting_meeting_with_an_empty_room_is_sent_at_once(frozen_clock, fake):
+    """The inline first step of a mode now dispatch: no human gate, only the free slot."""
+    meeting = await _meeting(mode="now", status="waiting_for_human", live_lock=True, start_at=clock.utcnow())
+    fake.humans[ROOM] = False
+    sent = await lifecycle.advance_waiting(meeting.id, fake.deps())
+    assert sent.status == "joining"
+    assert sent.bot_id == "bot1"
+    assert fake.dispatched == [meeting.id]
+
+
+async def test_nobody_joins_in_the_grace_window_the_bot_says_goodbye_and_the_meeting_is_missed(frozen_clock, fake):
+    meeting = await _meeting(start_at=clock.utcnow(), grace_minutes=10)
+    await lifecycle.tick()
+    frozen_clock.advance(seconds=30)
+    fake.set_bot("bot1", state="joined", meeting_id=JITSI_ID, joined_at=2.0)
+    await lifecycle.tick()
+    live = await _load(meeting)
+    assert live.status == "live"
+    assert live.human_joined_at is None
+
+    # The window runs from the moment the bot is in, not from the scheduled start.
     frozen_clock.advance(minutes=10)
     await lifecycle.tick()
-    assert (await _load(meeting)).status == "waiting_for_human"
+    assert (await _load(meeting)).status == "live"
+    assert fake.farewells == []
 
     frozen_clock.advance(seconds=30)
     await lifecycle.tick()
     missed = await _load(meeting)
-    assert missed.status == "missed"
-    assert missed.status_reason == lifecycle.ROOM_STAYED_EMPTY
+    assert (missed.status, missed.status_reason) == ("missed", lifecycle.NO_HUMAN_JOINED)
     assert missed.live_lock is None
-    assert fake.dispatched == []
+    assert fake.farewells == ["bot1"]
+    assert fake.removed == []
+    assert fake.reports == []
     assert fake.events == [{
         "owner": OWNER, "meeting_id": meeting.id, "type": "missed",
-        "data": {"reason": "room_stayed_empty"},
+        "data": {"reason": "no_human_joined"},
         "event_id": f"{meeting.id}:missed:{int(meeting.start_at.timestamp())}",
     }]
 
-
-async def test_human_arriving_inside_the_window_joins(frozen_clock, fake):
-    meeting = await _meeting(start_at=clock.utcnow())
+    # The bot leaves after its goodbye: a missed meeting stays missed and gets no report.
+    fake.set_bot("bot1", state="left")
     await lifecycle.tick()
-    frozen_clock.advance(minutes=7)
+    assert (await _load(meeting)).status == "missed"
+    assert fake.reports == []
+    assert fake.farewells == ["bot1"]
+
+
+async def test_human_joining_inside_the_grace_window_keeps_the_bot_live(frozen_clock, fake):
+    meeting = await _live_meeting(fake, grace_minutes=10)
+    await lifecycle.tick()
+    assert (await _load(meeting)).human_joined_at is None
+
+    frozen_clock.advance(minutes=6)
     fake.humans[ROOM] = True
     await lifecycle.tick()
-    assert (await _load(meeting)).status == "joining"
+    seen = await _load(meeting)
+    assert seen.status == "live"
+    assert seen.human_joined_at == clock.utcnow()
 
-
-async def test_unknown_presence_counts_as_empty(frozen_clock, fake):
-    meeting = await _meeting(start_at=clock.utcnow())
-    fake.humans[ROOM] = None
+    # The human leaves again: that is the worker's alone timeout, never a missed meeting.
+    fake.humans[ROOM] = False
+    frozen_clock.advance(minutes=10)
     await lifecycle.tick()
-    assert (await _load(meeting)).status == "waiting_for_human"
-    assert fake.dispatched == []
+    still = await _load(meeting)
+    assert still.status == "live"
+    assert still.human_joined_at == seen.human_joined_at
+    assert fake.farewells == []
+
+
+async def test_unknown_presence_past_the_window_never_recalls_the_bot(frozen_clock, fake):
+    meeting = await _live_meeting(fake, grace_minutes=1)
+    fake.humans[ROOM] = None
+    frozen_clock.advance(minutes=2)
+    await lifecycle.tick()
+    assert (await _load(meeting)).status == "live"
+    assert fake.farewells == []
+
+    fake.humans[ROOM] = False
+    await lifecycle.tick()
+    assert (await _load(meeting)).status_reason == lifecycle.NO_HUMAN_JOINED
+    assert fake.farewells == ["bot9"]
+
+
+async def test_worker_unreachable_on_the_goodbye_keeps_the_meeting_live_for_the_next_tick(frozen_clock, fake):
+    meeting = await _live_meeting(fake, grace_minutes=1)
+    frozen_clock.advance(minutes=2)
+    fake.farewell_error = WorkerDispatchError("worker_error", "unreachable ConnectError")
+    await lifecycle.tick()
+    assert (await _load(meeting)).status == "live"
+    assert fake.events == []
+
+    fake.farewell_error = None
+    await lifecycle.tick()
+    assert (await _load(meeting)).status == "missed"
+    assert fake.farewells == ["bot9"]
+
+
+async def test_worker_no_longer_knowing_the_bot_ends_the_meeting_not_missed(frozen_clock, fake):
+    """A bot gone before the window closed is a normal end, as before."""
+    meeting = await _live_meeting(fake, grace_minutes=1)
+    fake.bots["bot9"] = None
+    frozen_clock.advance(minutes=2)
+    await lifecycle.tick()
+    assert (await _load(meeting)).status == "ended"
+    assert fake.farewells == []
 
 
 async def test_full_capacity_keeps_waiting_then_missed_with_capacity(frozen_clock, fake):
@@ -210,7 +310,7 @@ async def test_full_capacity_keeps_waiting_then_missed_with_capacity(frozen_cloc
     await _meeting(owner=OTHER, room_name="other", status="live", live_lock=True, bot_id="botx")
     fake.set_bot("botx", state="joined")
     meeting = await _meeting(start_at=clock.utcnow(), grace_minutes=1)
-    fake.humans[ROOM] = True
+    fake.humans[ROOM] = False
 
     await lifecycle.tick()
     assert (await _load(meeting)).status == "waiting_for_human"
@@ -239,7 +339,7 @@ async def test_owner_with_another_live_agentar_is_missed_after_grace(frozen_cloc
 
 async def test_room_owned_by_another_user_at_claim_fails(frozen_clock, fake):
     meeting = await _meeting(start_at=clock.utcnow())
-    fake.humans[ROOM] = True
+    fake.humans[ROOM] = False
     fake.owned = False
 
     await lifecycle.tick()
@@ -252,7 +352,6 @@ async def test_room_owned_by_another_user_at_claim_fails(frozen_clock, fake):
 
 async def test_ownership_check_error_hands_the_meeting_back(frozen_clock, fake):
     meeting = await _meeting(start_at=clock.utcnow())
-    fake.humans[ROOM] = True
 
     async def broken(_meeting):
         raise RuntimeError("mongo down")
@@ -280,6 +379,18 @@ async def test_worker_dispatch_error_fails_the_meeting(frozen_clock, fake):
     assert failed.bot_id is None
 
 
+@pytest.mark.parametrize("reason", ["worker_error", "storage_unavailable", "jitsi_key_missing"])
+async def test_dispatch_error_reason_becomes_the_status_reason(frozen_clock, fake, reason):
+    meeting = await _meeting(start_at=clock.utcnow())
+    fake.humans[ROOM] = True
+    fake.dispatch_error = WorkerDispatchError(reason, "detail for the log only")
+
+    await lifecycle.tick()
+    failed = await _load(meeting)
+    assert (failed.status, failed.status_reason) == ("failed", reason)
+    assert failed.live_lock is None
+
+
 @pytest.mark.parametrize(
     "bot_state, reason",
     [("error", lifecycle.WORKER_ERROR), ("lost", lifecycle.BOT_LOST), (None, lifecycle.BOT_LOST)],
@@ -305,7 +416,7 @@ async def test_stuck_joining_times_out_and_removes_the_bot(frozen_clock, fake):
     fake.humans[ROOM] = True
     await lifecycle.tick()
 
-    frozen_clock.advance(seconds=lifecycle.JOIN_TIMEOUT_SECONDS)
+    frozen_clock.advance(seconds=settings.agentar.join_timeout_seconds)
     await lifecycle.tick()
     assert (await _load(meeting)).status == "joining"
 
@@ -450,8 +561,9 @@ async def test_jigasi_end_flushes_the_transcript_before_clearing(frozen_clock, f
         tasks.append(task)
         return task
 
+    assert real_hook in SessionManager._meeting_ended_hooks
     lifecycle_module_hook = pytest.MonkeyPatch()
-    lifecycle_module_hook.setattr(lifecycle, "on_meeting_ended", spy)
+    lifecycle_module_hook.setattr(SessionManager, "_meeting_ended_hooks", [spy])
     try:
         assert await SessionManager.mark_meeting_ended(JITSI_ID) is True
         assert SessionManager.get_transcript(JITSI_ID, ROOM) is None
@@ -520,8 +632,11 @@ async def test_report_queue_failure_marks_the_report_failed(frozen_clock, fake):
 
 
 async def test_one_failing_meeting_does_not_stop_the_tick(frozen_clock, fake):
-    bad = await _meeting(room_name="bad", start_at=clock.utcnow())
-    good = await _meeting(owner=OTHER, room_name="good", start_at=clock.utcnow())
+    fake.set_bot("botbad", state="joined", meeting_id="jm-bad")
+    fake.set_bot("botgood", state="joined", meeting_id="jm-good")
+    common = dict(status="live", live_lock=True, start_at=clock.utcnow(), joined_at=clock.utcnow())
+    bad = await _meeting(room_name="bad", bot_id="botbad", jitsi_meeting_id="jm-bad", **common)
+    good = await _meeting(owner=OTHER, room_name="good", bot_id="botgood", jitsi_meeting_id="jm-good", **common)
     fake.humans["good"] = True
 
     async def human_in_room(room):
@@ -531,8 +646,8 @@ async def test_one_failing_meeting_does_not_stop_the_tick(frozen_clock, fake):
 
     deps = replace(fake.deps(), human_in_room=human_in_room)
     await lifecycle.tick(deps)
-    assert (await _load(bad)).status == "waiting_for_human"
-    assert (await _load(good)).status == "joining"
+    assert (await _load(bad)).status == "live"
+    assert (await _load(good)).human_joined_at == clock.utcnow()
 
 
 # Human in the room through the virtual participant route ---------------------------------------
@@ -580,11 +695,24 @@ async def test_human_in_room_is_unknown_when_prosody_fails(monkeypatch, vp_route
     assert await lifecycle._human_in_room(ROOM) is None
 
 
-async def test_human_in_room_is_skipped_without_vp_require_human(monkeypatch, vp_route):
+async def test_human_in_room_asks_prosody_even_without_vp_require_human(monkeypatch, vp_route):
+    """VP_REQUIRE_HUMAN gates Butler panel bots only. The Agentar always counts the audience."""
     _require_human(monkeypatch, False)
 
     async def count(client, vp, room):
-        raise AssertionError("Prosody must not be asked")
+        return 0
 
     monkeypatch.setattr(vp_route, "_count_humans", count)
-    assert await lifecycle._human_in_room(ROOM) is True
+    assert await lifecycle._human_in_room(ROOM) is False
+
+
+async def test_farewell_bot_asks_the_worker_for_the_goodbye(monkeypatch):
+    calls = []
+
+    async def recall_bot(bot_id, farewell=False, **kw):
+        calls.append((bot_id, farewell))
+        return {"id": bot_id, "state": "leaving"}
+
+    monkeypatch.setattr(lifecycle.agentar_worker, "recall_bot", recall_bot)
+    await lifecycle._farewell_bot("bot7")
+    assert calls == [("bot7", True)]

@@ -26,7 +26,7 @@ _BYTES = {200: {"content": {"application/octet-stream": {"schema": {"type": "str
     status_code=201,
     response_model=AgentarFile,
     dependencies=[Depends(require_content_length)],
-    responses=error_responses(401, 404, 409, 411, 413, 415, 422, 503),
+    responses=error_responses(401, 404, 409, 411, 413, 415, 422, 429, 503),
     openapi_extra=multipart_openapi(
         {
             "file": FILE_PART,

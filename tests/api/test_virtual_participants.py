@@ -814,3 +814,66 @@ class TestBotOwnerScoping:
         listed = test_client.get(BASE, headers=admin_headers).json()
         assert [bot["id"] for bot in listed] == ["bot-1", "bot-nobody"]
         assert test_client.get(f"{BASE}/bot-nobody", headers=admin_headers).status_code == 200
+
+
+@pytest.mark.integration
+class TestPanelBotsWhileAgentarIsEnabled:
+    """With Agentar on, a panel bot competes for the worker and Ditto with the Agentar, so only an
+    admin adds one, and only while the global cap `AGENTAR_MAX_LIVE_TOTAL` has room."""
+
+    @pytest.fixture(autouse=True)
+    def agentar_on(self, monkeypatch):
+        monkeypatch.setattr(settings, "agentar_enabled", True)
+        monkeypatch.setattr(settings, "_agentar", settings.agentar.model_copy(update={"max_live_total": 1}))
+
+    def _agentar_meeting(self, status: str, bot_id: str | None = None) -> None:
+        asyncio.run(
+            AgentarMeeting(owner="someone@meetween.test", room_name="elsewhere", status=status, bot_id=bot_id).save()
+        )
+
+    def test_a_room_owner_who_is_not_admin_is_refused(self, client: TestClient, upstream: FakeUpstream):
+        response = client.post(BASE, json={"room_name": ROOM})
+
+        assert response.status_code == 403
+        assert upstream.requests == []
+
+    def test_an_admin_adds_a_bot_while_the_cap_has_room(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers
+    ):
+        self._agentar_meeting("waiting_for_human")
+
+        assert test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers).status_code == 202
+
+    @pytest.mark.parametrize("status", ["joining", "live", "leaving"])
+    def test_an_active_agentar_holds_the_cap(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers, status
+    ):
+        self._agentar_meeting(status, bot_id="agentar-bot")
+        upstream.bots = [bot_view("agentar-bot", room="elsewhere", state="joined")]
+
+        response = test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers)
+
+        assert response.status_code == 409
+        assert upstream.calls("POST", "/bots") == []
+
+    def test_a_live_panel_bot_in_another_room_holds_the_cap(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers
+    ):
+        upstream.bots = [bot_view("panel-bot", room="other-room", state="speaking")]
+
+        response = test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers)
+
+        assert response.status_code == 409
+        assert upstream.calls("POST", "/bots") == []
+
+    def test_a_bot_that_left_does_not_count(self, test_client: TestClient, upstream: FakeUpstream, admin_headers):
+        upstream.bots = [bot_view("panel-bot", room="other-room", state="left")]
+
+        assert test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers).status_code == 202
+
+    def test_with_agentar_off_the_room_owner_still_adds_a_bot(
+        self, client: TestClient, upstream: FakeUpstream, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "agentar_enabled", False)
+
+        assert client.post(BASE, json={"room_name": ROOM}).status_code == 202

@@ -363,3 +363,34 @@ def test_chat_prompt_carries_transcript_history_and_question():
     assert "<context>\nAlice: the deadline is June 15.\n</context>" in prompt
     assert "User: Hello\nAssistant: Hi there" in prompt
     assert "<question>\nHow are you?\n</question>" in prompt
+
+
+def test_a_model_failure_is_a_500_that_does_not_echo_the_exception(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Server transcript says budget was approved.",
+        participant_id="p1",
+        timestamp=1.0,
+    )
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+
+    async def failing_generate_text(*args, **kwargs):
+        raise RuntimeError("mongodb://admin:hunter2@db:27017 refused")
+
+    mock_engine._generate_text = failing_generate_text
+    try:
+        with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+            response = client.post("/api/chat", json=_chat_payload(test_meeting_id, test_room_name))
+    finally:
+        SessionManager.clear_session(meeting_id=test_meeting_id, room_name=test_room_name, force=True)
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Chat failed"
+    assert "hunter2" not in response.text and "mongodb" not in response.text

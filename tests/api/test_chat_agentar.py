@@ -1,6 +1,6 @@
 """POST /api/chat for a vp: bot bound to an Agentar meeting, and the Butler path left alone."""
 import asyncio
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,7 +14,8 @@ from src.database.models.agentar_file import FileChunk
 KEY = "vp-test-key"
 MEETING = "ws_agentar_chat_1"
 ROOM = "atlas"
-BOT = "vp:bot-atlas-1"
+# Worker bot ids are uuid4 hex; the worker adds "-<n>" per question (see test_a_numbered_question_...).
+BOT = "vp:b0a71a5"
 SENTINEL = "I do not have that, I will check with Laura Bianchi and report back"
 
 
@@ -34,7 +35,7 @@ def _worker_key(monkeypatch: pytest.MonkeyPatch):
 def atlas():
     run(User.create(email="laura@x.test", password_hash="x", first_name="Laura", last_name="Bianchi"))
     meeting = run(AgentarMeeting.create(
-        owner="laura@x.test", room_name=ROOM, status="live", bot_id="bot-atlas-1",
+        owner="laura@x.test", room_name=ROOM, status="live", bot_id="b0a71a5",
         purpose="Present Atlas", relevant_info="Deputy Marco Ferri",
     ))
     run(AgentarFile.create(
@@ -111,6 +112,14 @@ def test_the_transcript_tail_reaches_the_prompt_and_old_lines_do_not(test_client
     assert "filler line 3\n" not in engine.prompts[0]
 
 
+def test_a_numbered_question_from_the_worker_gets_the_agentar_prompt(test_client, atlas):
+    # VP_CHAT_FRESH_HISTORY (the worker default) asks as vp:<bot id>-<n>. C2 run 2 got the Butler prompt.
+    engine = Engine("Go live is planned on 1 December 2026.")
+    body = ask(test_client, engine, "Laura, when does Atlas go live?", participant_id=BOT + "-2")
+    assert body["answer_kind"] == "answer"
+    assert "Present Atlas" in engine.prompts[0] and "Deputy Marco Ferri" in engine.prompts[0]
+
+
 def test_the_turn_is_stored_under_the_bot_participant(test_client, atlas):
     ask(test_client, Engine("Go live is planned on 1 December 2026."), "Agentar, when does Atlas go live?")
     history = SessionManager.get_participant_history(MEETING, ROOM, BOT)
@@ -132,7 +141,7 @@ def test_butler_with_no_transcript_still_skips_the_model(test_client):
 
 
 def test_an_ended_meeting_does_not_steer_a_late_request(test_client, atlas):
-    run(AgentarMeeting.get_collection().update_one({"bot_id": "bot-atlas-1"}, {"$set": {"status": "ended"}}))
+    run(AgentarMeeting.get_collection().update_one({"bot_id": "b0a71a5"}, {"$set": {"status": "ended"}}))
     body = ask(test_client, Engine("x"), "Agentar, when does Atlas go live?")
     assert body["error"] == "no_transcript" and body["answer_kind"] is None
 

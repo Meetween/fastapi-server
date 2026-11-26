@@ -12,6 +12,7 @@ from starlette.websockets import WebSocketState
 from api.deps.service_token import token_matches
 from src.schemas.virtual_participants import ROOM_PATTERN
 from utils.storage import UnsafePathError
+from utils import caption_plausibility
 from core import EngineManager, SessionManager
 from core.utterance_collector import UtteranceCollector
 from butler import caption_audio, translate_audio, ResultType
@@ -288,6 +289,21 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                                     logger.debug(
                                         "Dropping model reply caption: meeting=%s participant=%s text=%r",
                                         meeting_id, request.participant_id, result.text,
+                                    )
+                                    caption_plausibility.record_drop(
+                                        caption_plausibility.MODEL_REPLY, meeting_id=meeting_id,
+                                        participant_id=request.participant_id, chars=len(result.text or ""),
+                                        seconds=caption_plausibility.audio_seconds(audio_data),
+                                    )
+                                    continue
+
+                                # Too long for its audio, or a word loop: the model kept talking.
+                                seconds = caption_plausibility.audio_seconds(audio_data)
+                                reason = caption_plausibility.drop_reason(result.text, seconds)
+                                if reason is not None:
+                                    caption_plausibility.record_drop(
+                                        reason, meeting_id=meeting_id, participant_id=request.participant_id,
+                                        chars=len(result.text or ""), seconds=seconds,
                                     )
                                     continue
 

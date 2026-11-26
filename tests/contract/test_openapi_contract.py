@@ -32,7 +32,7 @@ def app_paths() -> dict:
 
 
 def test_contract_copy_has_the_expected_size() -> None:
-    assert len(OPERATIONS) == 37
+    assert len(OPERATIONS) == 39
 
 
 @pytest.mark.parametrize(("path", "method"), OPERATIONS, ids=[f"{m.upper()} {p}" for p, m in OPERATIONS])
@@ -57,10 +57,12 @@ def test_documented_statuses_match(app_paths: dict, path: str, method: str) -> N
 
 # Contract schema name -> pydantic model. The property names must be identical.
 def _schema_models() -> dict:
+    import models
     from src.schemas import agentar as a
     from src.schemas import auth as au
 
     return {
+        "MeetweenTaskResponse": models.MeetweenTaskResponse,
         "AuthConfig": au.AuthConfig,
         "SignupRequest": au.SignupRequest,
         "Error": a.Error,
@@ -76,6 +78,7 @@ def _schema_models() -> dict:
         "Question": a.Question,
         "Meeting": a.Meeting,
         "MeetingList": a.MeetingList,
+        "OpenerDraft": a.OpenerDraft,
         "WorkerEvent": a.WorkerEvent,
         "EventJoined": a.EventJoined,
         "EventQuestionAsked": a.EventQuestionAsked,

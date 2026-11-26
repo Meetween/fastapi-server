@@ -25,6 +25,8 @@ from bson.errors import InvalidId
 from src.database.models.agentar_file import AgentarFile
 from src.database.models.agentar_meeting import BOT_PRESENT_STATUSES, AgentarMeeting
 from src.database.models.user import User
+from utils import agentar_names as names
+from utils.agentar_names import FALLBACK_OWNER, OWNER_FULL_CHARS
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +44,7 @@ MAX_TAIL_CHARS = 700
 MAX_QUESTION_CHARS = 300
 MAX_PURPOSE_CHARS = 500
 MAX_INFO_CHARS = 400
-MAX_NAME_CHARS = 80
+MAX_NAME_CHARS = OWNER_FULL_CHARS
 MAX_PROMPT_CHARS = 4_800
 # Two short sentences are about 40 tokens. A cap stops a rambling answer from costing seconds.
 MAX_NEW_TOKENS = 96
@@ -51,14 +53,14 @@ MAX_ANSWER_SENTENCES = 2
 # A chunk scoring under this share of the best one is noise and is not sent.
 MIN_RELATIVE_SCORE = 0.25
 
-ESCALATION_TEMPLATE = "I do not have that, I will check with {owner} and report back"
 DISCLOSURE_TEMPLATE = "I am Agentar, an AI assistant attending this meeting for {owner}."
-UNKNOWN_OWNER = "the owner"
+UNKNOWN_OWNER = FALLBACK_OWNER
 
 
 def escalation_line(owner: str) -> str:
-    """The fixed sentence for a commitment and for a fact that no source states."""
-    return ESCALATION_TEMPLATE.format(owner=owner)
+    """The fixed sentence for a commitment and for a fact that no source states. The same text
+    the worker got at dispatch (`utils.agentar_names`)."""
+    return names.escalation_line(owner)
 
 
 def disclosure_line(owner: str) -> str:
@@ -429,10 +431,18 @@ async def answer_agentar_question(
 # --- Lookup ----------------------------------------------------------------------------------
 
 
+# The worker numbers its questions when VP_CHAT_FRESH_HISTORY is on (the default): `vp:<bot id>-<n>`,
+# so each answer gets the transcript and no history. Bot ids are uuid4 hex and carry no dash.
+_QUESTION_SEQ = re.compile(r"-\d+$")
+
+
 def bot_id_of(participant_id: str | None) -> str | None:
-    """`vp:<bot id>` gives the bot id, anything else None."""
+    """`vp:<bot id>` or `vp:<bot id>-<question number>` gives the bot id, anything else None."""
     value = participant_id or ""
-    return value[len(VP_PREFIX):] if value.startswith(VP_PREFIX) and len(value) > len(VP_PREFIX) else None
+    if not value.startswith(VP_PREFIX):
+        return None
+    bot_id = _QUESTION_SEQ.sub("", value[len(VP_PREFIX):])
+    return bot_id or None
 
 
 def _object_ids(ids: Iterable[str]) -> list[ObjectId]:
@@ -443,6 +453,27 @@ def _object_ids(ids: Iterable[str]) -> list[ObjectId]:
         except (InvalidId, TypeError):
             logger.warning("Agentar meeting lists a malformed file id, skipped")
     return out
+
+
+async def meeting_chunks(meeting: AgentarMeeting) -> tuple[Chunk, ...]:
+    """Chunks of the owner's documents with usable text that the meeting may use: the ones scoped
+    to it, plus the general ones named in `file_ids`, or every general one with `use_general_kb`.
+    Files of another owner never match."""
+    scopes: list[dict] = [{"scope": "meeting", "meeting_id": meeting.id}]
+    if meeting.use_general_kb:
+        scopes.append({"scope": "general"})
+    elif meeting.file_ids:
+        scopes.append({"scope": "general", "_id": {"$in": _object_ids(meeting.file_ids)}})
+    files = await AgentarFile.find_all(
+        limit=100,
+        filter_dict={
+            "owner": meeting.owner,
+            "kind": "document",
+            "text_status": {"$in": ["ok", "truncated"]},
+            "$or": scopes,
+        },
+    )
+    return tuple(Chunk(text=c.text, page=c.page) for f in files for c in f.chunks)
 
 
 async def load_agentar_context(participant_id: str | None) -> AgentarContext | None:
@@ -461,23 +492,9 @@ async def load_agentar_context(participant_id: str | None) -> AgentarContext | N
     if meeting is None:
         return None
     owner = await User.find_by_email(meeting.owner)
-    name = " ".join(part for part in (owner.first_name, owner.last_name) if part) if owner else ""
-
-    scopes: list[dict] = [{"scope": "meeting", "meeting_id": meeting.id}]
-    if meeting.use_general_kb:
-        scopes.append({"scope": "general"})
-    elif meeting.file_ids:
-        scopes.append({"scope": "general", "_id": {"$in": _object_ids(meeting.file_ids)}})
-    files = await AgentarFile.find_all(
-        limit=100,
-        filter_dict={
-            "owner": meeting.owner,
-            "kind": "document",
-            "text_status": {"$in": ["ok", "truncated"]},
-            "$or": scopes,
-        },
-    )
-    chunks = tuple(Chunk(text=c.text, page=c.page) for f in files for c in f.chunks)
+    # Spoken exactly as in the dispatch payload, so the escalation line matches the worker's.
+    name = names.owner_names(owner.first_name, owner.last_name)[0] if owner else FALLBACK_OWNER
+    chunks = await meeting_chunks(meeting)
     return AgentarContext(
         owner_name=name or UNKNOWN_OWNER,
         purpose=meeting.purpose,

@@ -1,4 +1,4 @@
-# The worker's POST /bots body (CreateBot, version 0.2.0-agentar.1), rules only.
+# The worker's POST /bots body (CreateBot, version 0.2.0-agentar.1 plus owner_first_name of C3.3), rules only.
 # Refresh this copy when the worker's CreateBot changes.
 type: object
 additionalProperties: false
@@ -92,3 +92,9 @@ properties:
     - 'null'
     format: uri
     maxLength: 512
+  owner_first_name:
+    type:
+    - string
+    - 'null'
+    maxLength: 32
+    pattern: ^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 _.'-]{0,31}$

@@ -1,45 +1,42 @@
-"""Scaffold behaviour: auth on every new route, 501 bodies, fixtures, error model.
-
-Real tests replace the 501 expectations of a route when it is built; delete its rows below.
-"""
+"""Scaffold behaviour: auth on every Agentar route, upload framing, fixtures, error model."""
 import pytest
 from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from api.errors import AgentarError, agentar_error_handler, object_id_or_404
-from config import settings
 from main import app
 
 ID = "0123456789abcdef01234567"
 
-# (method, path, body). Routes that need a user token.
-USER_ROUTES = [
-]
-PUBLIC_ROUTES = [
-]
+# Routes of the contract that do not take a user token: the worker key, and a static sample.
+NOT_USER_ROUTES = {("POST", "/api/agentar/events"), ("GET", "/api/agentar/voices/{voice_id}/sample")}
 
 
-def _ids(routes):
-    return [f"{m.upper()} {p}" for m, p, _ in routes]
+def _user_routes() -> list[tuple[str, str]]:
+    """Every /api/me and /api/agentar operation of the app, so a new route is covered by default."""
+    found = []
+    for path, operations in app.openapi()["paths"].items():
+        if not (path == "/api/me" or path.startswith(("/api/me/", "/api/agentar"))):
+            continue
+        for method in operations:
+            if (method.upper(), path) not in NOT_USER_ROUTES:
+                found.append((method.upper(), path))
+    return found
 
 
-@pytest.mark.parametrize(("method", "path", "body"), USER_ROUTES, ids=_ids(USER_ROUTES))
-def test_user_routes_need_a_token(test_client: TestClient, method, path, body) -> None:
-    response = test_client.request(method, path, json=body, headers={})
+USER_ROUTES = _user_routes()
+
+
+def test_the_route_table_has_the_agentar_routes() -> None:
+    assert len(USER_ROUTES) >= 20
+
+
+@pytest.mark.parametrize(("method", "path"), USER_ROUTES, ids=[f"{m} {p}" for m, p in USER_ROUTES])
+def test_user_routes_need_a_token(test_client: TestClient, method, path) -> None:
+    url = path.replace("{meeting_id}", ID).replace("{file_id}", ID).replace("{voice_id}", "af_heart")
+    response = test_client.request(method, url, json={}, headers={})
     assert response.status_code == 401
     assert response.headers["www-authenticate"].startswith("Bearer")
-
-
-@pytest.mark.parametrize(("method", "path", "body"), USER_ROUTES, ids=_ids(USER_ROUTES))
-def test_user_routes_are_stubs(test_client: TestClient, user_a, object_store, method, path, body) -> None:
-    response = test_client.request(method, path, json=body, headers=user_a.headers)
-    assert response.status_code == 501
-    assert response.json() == {"detail": "not implemented"}
-
-
-@pytest.mark.parametrize(("method", "path", "body"), PUBLIC_ROUTES, ids=_ids(PUBLIC_ROUTES))
-def test_public_routes_are_stubs_without_a_token(test_client: TestClient, method, path, body) -> None:
-    assert test_client.request(method, path, json=body, headers={}).status_code == 501
 
 
 @pytest.mark.parametrize(

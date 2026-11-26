@@ -27,11 +27,10 @@ import the `utils` package, which loads audio and model libraries.
 """
 from __future__ import annotations
 
-import asyncio
+import functools
 import io
 import json
 import logging
-import os
 import re
 import struct
 import subprocess
@@ -467,16 +466,24 @@ def run_isolated(
 _KINDS = {PDF: "pdf", DOCX: "docx"}
 
 
+@functools.lru_cache(maxsize=1)
+def pool():
+    """The extraction executor. Built on first use: the child process imports only the standard
+    library. A thread that waits for `_SLOT` waits here, never on the default executor."""
+    from utils.bounded_executor import BoundedExecutor
+
+    return BoundedExecutor("agentar-extract", max_workers=2, max_waiting=2)
+
+
 async def extract_text(content_type: str, data: bytes, *, max_chars: int) -> Extraction:
-    """Text of a stored file. txt and md are read here; pdf and docx in a limited process."""
+    """Text of a stored file. txt and md are read here; pdf and docx in a limited process. Both
+    run on the extraction executor; 429 `rate_limited` when it is full, before anything is stored."""
     if content_type in (TEXT, MARKDOWN):
-        return await asyncio.to_thread(
-            extract_plain, data, markdown=content_type == MARKDOWN, max_chars=max_chars
-        )
+        return await pool().run(extract_plain, data, markdown=content_type == MARKDOWN, max_chars=max_chars)
     kind = _KINDS.get(content_type)
     if kind is None:
         return _failed("Unsupported type")
-    return await asyncio.to_thread(run_isolated, kind, data, max_chars=max_chars)
+    return await pool().run(run_isolated, kind, data, max_chars=max_chars)
 
 
 if __name__ == "__main__":

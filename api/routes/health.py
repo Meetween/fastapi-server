@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 from core import EngineManager
 from config import settings
+from utils import caption_plausibility
 
 router = APIRouter(tags=["health"])
 
@@ -33,4 +34,6 @@ async def health_check():
         "model_profile": settings.model_profile,
         "triton_url": settings.triton.url,
         "triton_model_name": settings.triton.model_name,
+        # ASR texts dropped since start, by reason (utils.caption_plausibility).
+        "captions_dropped": caption_plausibility.dropped_counts(),
     }
