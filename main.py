@@ -13,6 +13,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from config import settings
 from core import EngineManager, SessionManager
 from src.database import async_mongo_manager
+from utils import agentar_lifecycle
 from utils.startup_checks import unsafe_settings
 from utils.storage import StorageManager
 
@@ -114,6 +115,16 @@ async def startup_event():
         trigger=IntervalTrigger(minutes=15),
         id="sweep_idle_meetings",
         name="Sweep idle meetings",
+        replace_existing=True,
+    )
+    # Agentar lifecycle: claims due scheduled meetings, reconciles live ones with the worker.
+    scheduler.add_job(
+        agentar_lifecycle.tick,
+        trigger=IntervalTrigger(seconds=settings.agentar.tick_seconds),
+        id="agentar_lifecycle_tick",
+        name="Agentar lifecycle tick",
+        max_instances=1,
+        coalesce=True,
         replace_existing=True,
     )
     scheduler.start()

@@ -348,6 +348,8 @@ class Settings(BaseSettings):
     vp_prosody_http_url: str = "http://xmpp.meet.jitsi:5280"
     vp_xmpp_domain: str = "meet.jitsi"
     vp_request_timeout_s: float = 10.0
+    # The worker's VP_MAX_LIFETIME_S, same value: a bot's room token lives exactly as long as the bot.
+    vp_max_lifetime_s: float = Field(default=7200.0, gt=0)
     # Comma separated display names that must not count as a human in the room.
     vp_service_names: str = DEFAULT_VP_SERVICE_NAMES
 

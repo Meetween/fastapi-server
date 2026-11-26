@@ -13,6 +13,18 @@ from config import settings
 from core import SessionManager
 from utils import new_meeting_id
 
+
+JIGASI_KEY = "jigasi-test-key"
+JIGASI_AUTH = {"Authorization": f"Bearer {JIGASI_KEY}"}
+
+
+@pytest.fixture(autouse=True)
+def _jigasi_key(monkeypatch: pytest.MonkeyPatch):
+    """/ws requires the Jigasi service key on the handshake."""
+    monkeypatch.setattr(settings, "enable_auth", True)
+    monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
+
+
 SR = 16000
 
 
@@ -81,7 +93,7 @@ def meeting_id():
 
 class TestWebsocketSilenceGate:
     def test_silent_chunk_is_not_sent_to_the_model(self, test_client: TestClient, caption_mock, meeting_id):
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _silence()))
             # The socket is handled in order: the answer to the speech chunk is the first frame back.
             ws.send_text(_message(meeting_id, _speech()))
@@ -91,7 +103,7 @@ class TestWebsocketSilenceGate:
         assert caption_mock.await_count == 1
 
     def test_silent_chunk_adds_nothing_to_the_transcript(self, test_client: TestClient, caption_mock, meeting_id):
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _silence()))
             ws.send_text(_message(meeting_id, _silence()))
             ws.send_text("not json")  # synchronisation point: its error reply proves both chunks were handled
@@ -101,7 +113,7 @@ class TestWebsocketSilenceGate:
         assert SessionManager.get_transcript(meeting_id=meeting_id, room_name="room-1") in (None, "")
 
     def test_speech_chunk_is_sent_to_the_model(self, test_client: TestClient, caption_mock, meeting_id):
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             reply = ws.receive_json()
 
@@ -109,7 +121,7 @@ class TestWebsocketSilenceGate:
         assert caption_mock.await_count == 1
 
     def test_silent_chunk_skips_translation_too(self, test_client: TestClient, caption_mock, meeting_id):
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _silence(), target_languages=["de"]))
             ws.send_text("not json")
             assert ws.receive_json()["code"] == "INVALID_JSON"
@@ -120,7 +132,7 @@ class TestWebsocketSilenceGate:
     def test_chunk_at_the_threshold_is_sent(self, test_client: TestClient, caption_mock, meeting_id, monkeypatch):
         monkeypatch.setattr(settings, "asr_silence_rms", 150.0)
         at_threshold = _pcm(np.full(SR * 2, 150.0))
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, at_threshold))
             ws.receive_json()
 
@@ -129,7 +141,7 @@ class TestWebsocketSilenceGate:
     def test_chunk_just_below_the_threshold_is_dropped(self, test_client: TestClient, caption_mock, meeting_id, monkeypatch):
         monkeypatch.setattr(settings, "asr_silence_rms", 150.0)
         below = _pcm(np.full(SR * 2, 149.0))
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, below))
             ws.send_text("not json")
             assert ws.receive_json()["code"] == "INVALID_JSON"
@@ -138,7 +150,7 @@ class TestWebsocketSilenceGate:
 
     def test_gate_off_keeps_sending_silence(self, test_client: TestClient, caption_mock, meeting_id, monkeypatch):
         monkeypatch.setattr(settings, "asr_silence_rms", 0.0)
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _silence()))
             ws.receive_json()
 

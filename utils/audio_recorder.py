@@ -59,7 +59,7 @@ class AudioRecorder:
         audio_format :str = "wav"
     ) -> dict:
         """Save an audio chunk for a meeting"""
-        meeting_path = settings.recordings_base_path / room_name / meeting_id
+        meeting_path = StorageManager.meeting_path(settings.recordings_base_path, room_name, meeting_id)
 
         if not meeting_path.exists():
             cls.init_recording(room_name, meeting_id)
@@ -96,7 +96,7 @@ class AudioRecorder:
     @classmethod
     def stop_recording(cls, room_name: str, meeting_id: str, delete_recording: bool = False) -> dict:
         """Stop recording for a meeting"""
-        meeting_path = settings.recordings_base_path / room_name / meeting_id
+        meeting_path = StorageManager.meeting_path(settings.recordings_base_path, room_name, meeting_id)
 
         if not meeting_path.exists():
             logging.error(f"Could not stop recording. {meeting_path} does not exist")

@@ -48,6 +48,18 @@ curl -X POST localhost:8000/api/auth/login -H 'content-type: application/json' \
   -d '{"email":"admin@example.com","password":"<password>"}'
 ```
 
+Passwords are stored as argon2id. Two operator commands go with it:
+
+```sh
+uv run cli.py migrate-hashes           # once per deploy: wraps old sha256 digests in argon2id
+uv run cli.py reset-password user@example.com   # prompts twice, or reads one line from stdin
+```
+
+`migrate-hashes` is idempotent; `--dry-run` only counts. A wrapped account is moved to a plain
+argon2id hash at its next login. With `EMAIL_ENABLED=false` there is no "forgot password" mail,
+so `reset-password` is how a user gets back in. It prints the email only, and sessions opened
+before the reset stay valid until their refresh token expires.
+
 ## Configuration
 
 Every field of `Settings` in `config.py` is an environment variable, read from the environment
@@ -59,9 +71,11 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `MODEL_PROFILES_PATH` | `model_profiles.yml` | where the profiles are read from |
 | `PORT` | `8000` | port used by `uv run main.py` |
 | `ENABLE_AUTH` | `true` | bearer authentication on `/api/*` |
-| `JWT_SECRET_KEY` | `change-me-in-production` | HS256 secret for access, refresh and Jitsi tokens |
+| `JWT_SECRET_KEY` | `change-me-in-production` | HS256 secret for access and refresh tokens; never leaves this service |
+| `JWT_JITSI_SECRET_KEY` | empty | HS256 secret for Jitsi room tokens, the value Prosody holds as `JWT_APP_SECRET`; never the same as `JWT_SECRET_KEY`. While it is empty `/api/auth/jitsi/issue` and the bot route answer `503` |
+| `ROOM_CLAIMS_PER_DAY` | `20` | new rooms a user may claim per UTC day; the first user to claim a room owns it and moderates it |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | access token lifetime; an expired token gets `401` with `Access token expired` |
-| `JITSI_MEET_BASE_URL` | unset | when set, `/api/auth/jitsi/issue` returns a ready join URL |
+| `JITSI_MEET_BASE_URL` | unset | when set, `/api/auth/jitsi/issue` returns a join URL, with the token in the fragment (`#jwt=`) for the room owner |
 | `MONGO_URI` | `mongodb://localhost:27017` | MongoDB connection |
 | `RECORDINGS_BASE_PATH` | `/mnt/recordings` | where recording chunks are written |
 | `RECORDING_RETENTION_DAYS` | `7` | retention of recording chunks |
@@ -84,9 +98,10 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 
 ### Virtual participant settings
 
-`/api/virtual-participants` is a thin control route. It needs a bearer token, refuses a room with no
-human in it, caps the bots per room, mints the bot's room token and forwards to `vp-worker`, which
-owns the browsers and the media.
+`/api/virtual-participants` is a thin control route. It needs a bearer token, lets only the room
+owner or an admin add a bot, refuses a room with no human in it, caps the bots per room, mints the
+bot's room token and forwards to `vp-worker`, which owns the browsers and the media. A user sees and
+controls only the bots they added; anyone else gets `404`. Admins see all.
 A create request may carry `meeting_id`, the id Jigasi reports as ended. If that meeting has ended the
 route answers `409` with `Meeting has ended`. Without it the check is skipped, because a room name
 cannot identify a meeting: rooms are reused.
@@ -101,6 +116,8 @@ cannot identify a meeting: rooms are reused.
 | `VP_XMPP_DOMAIN` | `meet.jitsi` | XMPP domain for the room lookup |
 | `VP_SERVICE_NAMES` | `Transcriber,Recorder,Jibri,Jigasi` | display names, matched case insensitively, that do not count as a human |
 | `VP_REQUEST_TIMEOUT_S` | `10` | timeout for the worker and Prosody calls |
+| `VP_MAX_LIFETIME_S` | `7200` | the worker's bot lifetime, same value; the bot's room token expires with it |
+| `VP_BOT_NAME_SUFFIX` | empty, matched as ` (AI)` | the worker's display name suffix, same value; marks a participant as a bot |
 
 Profiles shipped in `model_profiles.yml`: `speechlmm` (plain text prompt plus WAV),
 `qwen25_omni` and `voxtral_mini_3b_2507` (JSON envelope). A profile overrides only the Triton
@@ -136,8 +153,8 @@ a directory mounted there or anywhere else must be writable by that uid.
 | POST | `/api/chat` | question answering over the transcript and the chat history |
 | POST | `/api/agenda-tracking` | status of each agenda item from the transcript |
 | GET | `/api/config/recording-retention-days` | runtime configuration |
-| POST | `/api/auth/login`, `/api/auth/refresh`, `/api/auth/jitsi/validate` | public auth endpoints |
-| POST | `/api/auth/users`, `/api/auth/jitsi/issue` | user creation and Jitsi room token, authenticated |
+| POST | `/api/auth/login`, `/api/auth/refresh` | public auth endpoints |
+| POST | `/api/auth/users`, `/api/auth/jitsi/issue` | user creation, and the room join URL with a token for the room owner, authenticated |
 | GET | `/api/auth/context/{room_name}` | meeting context, authenticated |
 | POST, GET | `/api/virtual-participants` | start a virtual participant, list the active ones, authenticated |
 | GET, DELETE | `/api/virtual-participants/{bot_id}` | status of one virtual participant, stop it, authenticated |

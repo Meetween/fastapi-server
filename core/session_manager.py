@@ -11,6 +11,7 @@ from config import settings
 from butler import CaptionHandler
 from butler.triton_client import TritonClient
 from models import HistoryEntry
+from utils import agentar_lifecycle
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,7 @@ class SessionManager:
 
         # Detach the socket before any await so no other task can pick it up.
         websocket = cls._connections.pop(meeting_id, None)
+        agentar_lifecycle.on_meeting_ended(meeting_id)
         cls._clear_meeting_state(meeting_id=meeting_id, room_name=None)
 
         if websocket is not None:

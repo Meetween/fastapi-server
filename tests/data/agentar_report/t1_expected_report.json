@@ -1,0 +1,110 @@
+{
+  "transcript": "t1.txt",
+  "entries": "t1.jsonl",
+  "deferrals": "t1.deferrals.json",
+  "line_numbers": "1 based, line N of the txt file is entry N of the jsonl file",
+  "summary_points": [
+    {
+      "text": "Sara Neri sends the training invitations to the Trento group by Friday 13 November",
+      "facts": [
+        "training invitations",
+        "Trento",
+        "13 November"
+      ],
+      "lines": [
+        4
+      ]
+    },
+    {
+      "text": "Lyon signs the data processing agreement on 20 November",
+      "facts": [
+        "Lyon",
+        "20 November"
+      ],
+      "lines": [
+        7
+      ]
+    },
+    {
+      "text": "Katrin Vogel runs the user training at Bonn, starting 2 December",
+      "facts": [
+        "Katrin Vogel",
+        "Bonn"
+      ],
+      "lines": [
+        11
+      ]
+    },
+    {
+      "text": "The Bonn dry run room still needs to be booked, by Laura",
+      "facts": [
+        "Bonn",
+        "room"
+      ],
+      "lines": [
+        15
+      ]
+    }
+  ],
+  "action_items": [
+    {
+      "text": "Send the training invitations to the Trento group",
+      "owner": "Sara Neri",
+      "due": "Friday 13 November",
+      "line": 4
+    },
+    {
+      "text": "Ask Pierre Duval to confirm the Lyon signing date in writing and send it to the group",
+      "owner": "Anil Kapoor",
+      "due": null,
+      "line": 9
+    },
+    {
+      "text": "Book the Bonn dry run room",
+      "owner": "Laura Bianchi",
+      "due": null,
+      "line": 15
+    }
+  ],
+  "answers": [
+    {
+      "question_id": "Q1",
+      "status": "answered",
+      "answer": "Lyon will sign the data processing agreement on 20 November",
+      "answer_facts": [
+        "20 November"
+      ],
+      "speaker": "Anil Kapoor",
+      "quote": "They will sign the agreement on 20 November",
+      "line": 7
+    },
+    {
+      "question_id": "Q2",
+      "status": "answered",
+      "answer": "Katrin Vogel will run the user training at Bonn",
+      "answer_facts": [
+        "Katrin Vogel"
+      ],
+      "speaker": "Sara Neri",
+      "quote": "Katrin Vogel will run the training at Bonn",
+      "line": 11
+    }
+  ],
+  "open_points": [
+    {
+      "kind": "deferral",
+      "text": "Can we move 5,000 euros to Lyon? Asked by Anil Kapoor, left for Laura",
+      "line": 14
+    },
+    {
+      "kind": "action_for_owner",
+      "text": "Book the Bonn dry run room",
+      "line": 15
+    }
+  ],
+  "must_contain": [],
+  "must_not_contain": [
+    "approved",
+    "no answer captured"
+  ]
+}

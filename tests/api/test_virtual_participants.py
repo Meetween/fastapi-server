@@ -3,6 +3,9 @@ Tests for the virtual participant control route.
 
 Prosody and vp-worker are served by an httpx.MockTransport injected through the
 get_vp_http_client dependency override; no network access and no global patching.
+
+The `client` user owns ROOM and the bots the tests address, unless a test says otherwise; owner
+gating and scoping have their own classes at the end.
 """
 import asyncio
 import json
@@ -12,10 +15,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from jose import JWTError, jwt
+
 from api.routes import virtual_participants as vp_routes
 from config import VirtualParticipantSettings, settings
 from core import SessionManager
 from main import app
+from src.database.models.agentar_meeting import AgentarMeeting
+from src.database.models.room_owner import RoomOwner
+from src.database.models.vp_bot_owner import VpBotOwner
+from src.schemas.virtual_participants import BOT_NAME_SUFFIX
 from utils.auth import verify_jitsi_token
 
 WORKER_HOST = "vp-worker.test"
@@ -25,13 +34,17 @@ XMPP_DOMAIN = "meet.jitsi"
 ROOM = "team-sync"
 MEETING_ID = "5506be1e-b870-4922-845d-d053b1d0b4db"
 BASE = "/api/virtual-participants"
+JITSI_KEY = "vp-test-jitsi-key-" + "v" * 32
+# The user behind the `client` fixture (tests/conftest.py auth_headers).
+CALLER = "pytest-guard@meetween.test"
+CALLER_BOTS = ("bot-1", "missing-bot")
 
 
 def bot_view(
     bot_id: str = "bot-1",
     *,
     room: str = ROOM,
-    display_name: str = "Agentar (bot)",
+    display_name: str = f"Agentar{BOT_NAME_SUFFIX}",
     state: str = "joining",
 ) -> dict[str, Any]:
     return {
@@ -57,7 +70,7 @@ def occupant(display_name: str, *, nick: str = "a1b2c3d4") -> dict[str, str]:
     The ``jid`` field is ``tostring(occupant.nick)``, that is the room JID with the MUC
     nickname as its resource. It is never the occupant's real JID, so it carries no
     information about who or what the occupant is. Verified against the running Prosody:
-    ``{"jid": "room@muc.meet.jitsi/4d5f34aa", "display_name": "Probe (bot)", "email": ""}``.
+    ``{"jid": "room@muc.meet.jitsi/4d5f34aa", "display_name": "Probe (AI)", "email": ""}``.
     Do not add a parameter that lets a test supply a real JID here; that is what hid the
     transcriber from the human check.
     """
@@ -147,6 +160,15 @@ def vp_settings(monkeypatch):
     return _apply
 
 
+@pytest.fixture(autouse=True)
+def caller_owns_room_and_bots(monkeypatch):
+    """The Jitsi key is set, and the `client` user owns ROOM and the bots in CALLER_BOTS."""
+    monkeypatch.setattr(settings, "jwt_jitsi_secret_key", JITSI_KEY)
+    asyncio.run(RoomOwner(room_name=ROOM, owner_user_id=CALLER).save())
+    for bot_id in CALLER_BOTS:
+        asyncio.run(VpBotOwner(bot_id=bot_id, owner=CALLER, room_name=ROOM).save())
+
+
 @pytest.fixture
 def upstream(vp_settings):
     fake = FakeUpstream()
@@ -200,6 +222,9 @@ class TestCreateVirtualParticipant:
             {"room_name": ""},
             {},
             {"room_name": ROOM, "display_name": "Bad/Name"},
+            {"room_name": ROOM, "display_name": "Bob (AI)"},
+            {"room_name": ROOM, "display_name": "Bob\u200b"},
+            {"room_name": ROOM, "display_name": " Leading space"},
             {"room_name": ROOM, "display_name": "x" * 49},
             {"room_name": ROOM, "script": "x" * 2001},
             {"room_name": ROOM, "jwt": "client-supplied"},
@@ -223,8 +248,8 @@ class TestCreateVirtualParticipant:
 
     def test_room_with_only_bots_is_refused(self, client: TestClient, upstream: FakeUpstream):
         upstream.occupants = [
-            occupant("Agentar (bot)"),
-            occupant("Helper (bot)", nick="e5f6a7b8"),
+            occupant(f"Agentar{BOT_NAME_SUFFIX}"),
+            occupant(f"Helper{BOT_NAME_SUFFIX}", nick="e5f6a7b8"),
         ]
 
         response = client.post(BASE, json={"room_name": ROOM})
@@ -262,8 +287,8 @@ class TestCreateVirtualParticipant:
     def test_refused_at_max_bots_per_room(self, client: TestClient, upstream: FakeUpstream):
         upstream.bots = [
             bot_view("bot-1", state="joined"),
-            bot_view("bot-2", display_name="Helper (bot)", state="speaking"),
-            bot_view("bot-3", display_name="Old (bot)", state="left"),
+            bot_view("bot-2", display_name=f"Helper{BOT_NAME_SUFFIX}", state="speaking"),
+            bot_view("bot-3", display_name=f"Old{BOT_NAME_SUFFIX}", state="left"),
         ]
 
         response = client.post(BASE, json={"room_name": ROOM, "display_name": "Third"})
@@ -277,10 +302,10 @@ class TestCreateVirtualParticipant:
     ):
         upstream.bots = [
             bot_view("bot-1", state="joining"),
-            bot_view("bot-2", display_name="A (bot)", state="left"),
-            bot_view("bot-3", display_name="B (bot)", state="error"),
-            bot_view("bot-4", display_name="C (bot)", state="lost"),
-            bot_view("bot-5", room="other-room", display_name="D (bot)", state="joined"),
+            bot_view("bot-2", display_name=f"A{BOT_NAME_SUFFIX}", state="left"),
+            bot_view("bot-3", display_name=f"B{BOT_NAME_SUFFIX}", state="error"),
+            bot_view("bot-4", display_name=f"C{BOT_NAME_SUFFIX}", state="lost"),
+            bot_view("bot-5", room="other-room", display_name=f"D{BOT_NAME_SUFFIX}", state="joined"),
         ]
 
         response = client.post(BASE, json={"room_name": ROOM, "display_name": "Second"})
@@ -290,7 +315,7 @@ class TestCreateVirtualParticipant:
     def test_relays_202_with_bot_token_for_room(
         self, client: TestClient, upstream: FakeUpstream
     ):
-        upstream.occupants = [occupant("Agentar (bot)"), occupant("Alice")]
+        upstream.occupants = [occupant(f"Agentar{BOT_NAME_SUFFIX}"), occupant("Alice")]
 
         response = client.post(
             BASE,
@@ -318,13 +343,17 @@ class TestCreateVirtualParticipant:
         claims = verify_jitsi_token(sent["jwt"])
         assert claims["room"] == ROOM
         assert claims["sub"] == "vp-bot"
-        assert claims["moderator"] is False
+        # No name claim: it would replace the "(AI)" display name and get the bot transcribed.
+        assert "context" not in claims
+        assert claims["exp"] - claims["iat"] == int(settings.vp_max_lifetime_s)
+        with pytest.raises(JWTError):
+            jwt.decode(sent["jwt"], settings.jwt_secret_key, algorithms=["HS256"], audience="jitsi")
 
     def test_duplicate_active_bot_is_forwarded_at_limit(
         self, client: TestClient, upstream: FakeUpstream
     ):
         existing = bot_view("bot-1", state="joined")
-        upstream.bots = [existing, bot_view("bot-2", display_name="Helper (bot)", state="joined")]
+        upstream.bots = [existing, bot_view("bot-2", display_name=f"Helper{BOT_NAME_SUFFIX}", state="joined")]
         upstream.responses[("POST", "/bots")] = httpx.Response(200, json=existing)
 
         response = client.post(BASE, json={"room_name": ROOM, "display_name": "Agentar"})
@@ -388,7 +417,7 @@ class TestCreateVirtualParticipant:
         Nothing in the mod_muc_size payload separates them from a service participant, and
         refusing the request would be the worse error.
         """
-        upstream.occupants = ["garbage", occupant("Agentar (bot)"), occupant("")]
+        upstream.occupants = ["garbage", occupant(f"Agentar{BOT_NAME_SUFFIX}"), occupant("")]
 
         response = client.post(BASE, json={"room_name": ROOM})
 
@@ -521,6 +550,8 @@ class TestReadVirtualParticipants:
         assert listing.headers["x-vp-secret"] == WORKER_SECRET
 
     def test_list_without_room_returns_all(self, client: TestClient, upstream: FakeUpstream):
+        """All of the caller's bots, in every room."""
+        asyncio.run(VpBotOwner(bot_id="bot-2", owner=CALLER, room_name="other-room").save())
         upstream.bots = [bot_view("bot-1"), bot_view("bot-2", room="other-room")]
 
         response = client.get(BASE)
@@ -659,3 +690,127 @@ class TestVirtualParticipantHttpClient:
             await vp_routes.close_http_client()
 
         asyncio.run(scenario())
+
+
+@pytest.mark.integration
+class TestOwnerGating:
+    """Only the room owner or an admin sends a bot: the bot's token makes it a room owner in Jitsi."""
+
+    def test_room_owned_by_someone_else_is_404_before_any_upstream_call(
+        self, test_client: TestClient, upstream: FakeUpstream, user_b
+    ):
+        response = test_client.post(BASE, json={"room_name": ROOM}, headers=user_b.headers)
+
+        assert response.status_code == 404
+        assert response.json() == {"detail": "Not found", "code": "not_found"}
+        assert upstream.requests == []
+
+    def test_free_room_is_404_and_is_not_claimed(self, client: TestClient, upstream: FakeUpstream):
+        response = client.post(BASE, json={"room_name": "free-room"})
+
+        assert response.status_code == 404
+        assert upstream.requests == []
+        assert asyncio.run(RoomOwner.find_by_room("free-room")) is None
+
+    def test_admin_sends_a_bot_into_any_room(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers
+    ):
+        response = test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers)
+
+        assert response.status_code == 202
+
+    def test_empty_jitsi_key_is_503_before_any_upstream_call(
+        self, client: TestClient, upstream: FakeUpstream, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "jwt_jitsi_secret_key", "")
+
+        response = client.post(BASE, json={"room_name": ROOM})
+
+        assert response.status_code == 503
+        assert response.json()["code"] == "jitsi_key_missing"
+        assert upstream.requests == []
+
+    def test_unicode_name_without_parentheses_is_sent_as_given(
+        self, client: TestClient, upstream: FakeUpstream
+    ):
+        response = client.post(BASE, json={"room_name": ROOM, "display_name": "Zoë Agentar"})
+
+        assert response.status_code == 202
+        (create,) = upstream.calls("POST", "/bots")
+        assert json.loads(create.content)["display_name"] == "Zoë Agentar"
+
+
+@pytest.mark.integration
+class TestBotOwnerScoping:
+    """Every bot route but create answers 404 for a bot the caller neither added nor owns."""
+
+    def _own(self, bot_id: str, owner: str) -> None:
+        asyncio.run(VpBotOwner(bot_id=bot_id, owner=owner, room_name=ROOM).save())
+
+    def test_a_new_bot_is_recorded_for_its_creator(self, client: TestClient, upstream: FakeUpstream):
+        upstream.responses[("POST", "/bots")] = httpx.Response(202, json=bot_view("bot-new"))
+
+        assert client.post(BASE, json={"room_name": ROOM}).status_code == 202
+
+        record = asyncio.run(VpBotOwner.find_one({"bot_id": "bot-new"}))
+        assert (record.owner, record.room_name) == (CALLER, ROOM)
+
+    def test_an_existing_bot_returned_with_200_keeps_its_owner(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers
+    ):
+        self._own("bot-other", "someone@meetween.test")
+        upstream.responses[("POST", "/bots")] = httpx.Response(200, json=bot_view("bot-other"))
+
+        response = test_client.post(BASE, json={"room_name": ROOM}, headers=admin_headers)
+
+        assert response.status_code == 200
+        record = asyncio.run(VpBotOwner.find_one({"bot_id": "bot-other"}))
+        assert record.owner == "someone@meetween.test"
+
+    @pytest.mark.parametrize(
+        "method,suffix,body",
+        [("GET", "", None), ("DELETE", "", None), ("POST", "/say", {"text": "Hello"})],
+    )
+    def test_foreign_and_unknown_bots_are_404_without_a_worker_call(
+        self, client: TestClient, upstream: FakeUpstream, method, suffix, body
+    ):
+        self._own("bot-foreign", "someone@meetween.test")
+
+        for bot_id in ("bot-foreign", "never-created"):
+            response = client.request(method, f"{BASE}/{bot_id}{suffix}", json=body)
+            assert response.status_code == 404
+            assert response.json() == {"detail": "Not found", "code": "not_found"}
+        assert upstream.requests == []
+
+    def test_the_owner_of_an_agentar_meeting_controls_its_bot(
+        self, test_client: TestClient, upstream: FakeUpstream, user_b
+    ):
+        asyncio.run(
+            AgentarMeeting.get_collection().insert_one({"owner": user_b.email, "bot_id": "agentar-bot"})
+        )
+        view = bot_view("agentar-bot", state="joined")
+        upstream.responses[("GET", "/bots/agentar-bot")] = httpx.Response(200, json=view)
+        upstream.bots = [view, bot_view("bot-1")]
+
+        assert test_client.get(f"{BASE}/agentar-bot", headers=user_b.headers).status_code == 200
+        listed = test_client.get(BASE, headers=user_b.headers).json()
+        assert [bot["id"] for bot in listed] == ["agentar-bot"]
+
+    def test_list_shows_only_the_callers_bots(
+        self, client: TestClient, upstream: FakeUpstream, test_client: TestClient, user_b
+    ):
+        self._own("bot-b", user_b.email)
+        upstream.bots = [bot_view("bot-1"), bot_view("bot-b"), bot_view("bot-nobody")]
+
+        assert [bot["id"] for bot in client.get(BASE).json()] == ["bot-1"]
+        assert [bot["id"] for bot in test_client.get(BASE, headers=user_b.headers).json()] == ["bot-b"]
+
+    def test_admin_sees_and_controls_every_bot(
+        self, test_client: TestClient, upstream: FakeUpstream, admin_headers
+    ):
+        upstream.bots = [bot_view("bot-1"), bot_view("bot-nobody")]
+        upstream.responses[("GET", "/bots/bot-nobody")] = httpx.Response(200, json=bot_view("bot-nobody"))
+
+        listed = test_client.get(BASE, headers=admin_headers).json()
+        assert [bot["id"] for bot in listed] == ["bot-1", "bot-nobody"]
+        assert test_client.get(f"{BASE}/bot-nobody", headers=admin_headers).status_code == 200

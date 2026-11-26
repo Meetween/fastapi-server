@@ -1,19 +1,68 @@
 import json
 import shutil
+import unicodedata
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 from config import settings
 import logging
 
 logger = logging.getLogger(__name__)
 
+_SEPARATORS = frozenset("/\\")
+_MAX_SEGMENT = 255
+
+
+class UnsafePathError(ValueError):
+    """A recording path segment, or the place it resolves to, is not `<base>/<room>/<meeting>`."""
+
+
+def _check_segment(value: object, what: str) -> str:
+    """One plain path component: not empty, not `.` or `..`, no separator, no control character."""
+    if not isinstance(value, str) or not value or len(value) > _MAX_SEGMENT:
+        raise UnsafePathError(f"unsafe {what}")
+    if value in {".", ".."} or any(ch in _SEPARATORS or unicodedata.category(ch) == "Cc" for ch in value):
+        raise UnsafePathError(f"unsafe {what}")
+    return value
+
+
 class StorageManager:
     """Manages file storage for recordings"""
 
     @staticmethod
+    def meeting_path(base_path: Path, room_name: str, meeting_id: str) -> Path:
+        """
+        The recording directory of one meeting, `<base>/<room_name>/<meeting_id>`, resolved.
+
+        Each name must be a single plain component, and the resolved path must equal the lexical one
+        under the resolved base: `..`, an absolute name, a separator, or a symlink at the room or
+        meeting level (even one pointing inside the base) raises UnsafePathError.
+        """
+        _check_segment(room_name, "room_name")
+        _check_segment(meeting_id, "meeting_id")
+        base = Path(base_path).resolve()
+        expected = base / room_name / meeting_id
+        if expected.resolve() != expected:
+            raise UnsafePathError("recording path leaves the recordings base")
+        return expected
+
+    @staticmethod
+    def find_meeting_directory(base_path: Path, room_name: str, meeting_id: str) -> Optional[Path]:
+        """The meeting's recording directory when it is safe and exists, else None."""
+        try:
+            path = StorageManager.meeting_path(base_path, room_name, meeting_id)
+        except UnsafePathError:
+            logger.warning("Refused recording path: room=%r meeting=%r", room_name, meeting_id)
+            return None
+        return path if path.is_dir() else None
+
+    @staticmethod
     def create_meeting_directory(base_path: Path, room_name: str, meeting_id: str) -> Path:
-        meeting_path = base_path / room_name / meeting_id
+        meeting_path = StorageManager.meeting_path(base_path, room_name, meeting_id)
         meeting_path.mkdir(parents=True, exist_ok=True)
+        # A link swapped in between the check and mkdir is caught here, before any file is written.
+        if meeting_path.resolve() != meeting_path:
+            raise UnsafePathError("recording path leaves the recordings base")
         return meeting_path
 
     @staticmethod
@@ -58,11 +107,12 @@ class StorageManager:
         logger.info(f"Starting cleanup of recordings older than {retention_days} days (cutoff: {cutoff_date.isoformat()})")
         
         for room_path in base_path.iterdir():
-            if not room_path.is_dir():
+            # A symlink is never followed: rmtree through a linked room would delete outside the base.
+            if room_path.is_symlink() or not room_path.is_dir():
                 continue
             
             for meeting_path in room_path.iterdir():
-                if not meeting_path.is_dir():
+                if meeting_path.is_symlink() or not meeting_path.is_dir():
                     continue
                 
                 try:

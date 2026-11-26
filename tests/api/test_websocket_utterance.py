@@ -16,9 +16,20 @@ from config import settings
 from core import SessionManager
 from utils import new_meeting_id
 
+
+JIGASI_KEY = "jigasi-test-key"
+JIGASI_AUTH = {"Authorization": f"Bearer {JIGASI_KEY}"}
+
+
+@pytest.fixture(autouse=True)
+def _jigasi_key(monkeypatch: pytest.MonkeyPatch):
+    """/ws requires the Jigasi service key on the handshake."""
+    monkeypatch.setattr(settings, "enable_auth", True)
+    monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
+
+
 SR = 16000
 CHUNK_BYTES = SR * 2 * 2  # one 2 s chunk of 16 kHz PCM16
-JIGASI_KEY = "jigasi-test-key"
 
 
 def _pcm(samples: np.ndarray) -> bytes:
@@ -141,7 +152,7 @@ def _seconds(call) -> float:
 class TestUtteranceMode:
     def test_utterance_closes_on_the_first_silent_chunk(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for _ in range(3):
                 ws.send_text(_message(meeting_id, _speech()))
                 ws.receive_json()
@@ -155,7 +166,7 @@ class TestUtteranceMode:
     def test_utterance_closes_at_the_cap(self, test_client: TestClient, pipeline, meeting_id, monkeypatch):
         monkeypatch.setattr(settings, "asr_utterance_max_s", 4.0)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for _ in range(5):
                 ws.send_text(_message(meeting_id, _speech()))
                 ws.receive_json()
@@ -166,7 +177,7 @@ class TestUtteranceMode:
 
     def test_open_utterance_is_flushed_on_close(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             _sync(ws)
@@ -181,7 +192,7 @@ class TestUtteranceMode:
         # Jigasi's VAD drops silence, so a speaker who stops talking sends nothing at all.
         monkeypatch.setattr(settings, "asr_utterance_idle_s", 0.05)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             ws.send_text(_message(meeting_id, _speech()))
@@ -195,7 +206,7 @@ class TestUtteranceMode:
 
     def test_lone_short_tail_is_dropped(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _tail(300)))
             # Past the silence gate, so it is still captioned.
             assert ws.receive_json()["transcript"] == "chunk text"
@@ -207,7 +218,7 @@ class TestUtteranceMode:
 
     def test_short_tail_joins_the_speech_before_it(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for audio in (_speech(), _tail(300)):
                 ws.send_text(_message(meeting_id, audio))
                 ws.receive_json()
@@ -219,7 +230,7 @@ class TestUtteranceMode:
 
     def test_tail_with_enough_speech_is_kept(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _tail(600)))
             ws.receive_json()
 
@@ -228,7 +239,7 @@ class TestUtteranceMode:
     def test_captions_are_unchanged(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
         replies = []
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for audio in (_speech(), _speech(), _silence(), _speech()):
                 ws.send_text(_message(meeting_id, audio))
                 if audio != _silence():
@@ -248,7 +259,7 @@ class TestUtteranceMode:
             participants=[{"participant_id": "p1", "username": "Ada"}],
         )
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for audio in (_speech(), _speech(), _silence(), _speech(), _silence()):
                 ws.send_text(_message(meeting_id, audio))
                 if audio != _silence():
@@ -264,7 +275,7 @@ class TestUtteranceMode:
 
     def test_participants_have_separate_utterances(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for pid in ("p1", "p2", "p1"):
                 ws.send_text(_message(meeting_id, _speech(), participant_id=pid))
                 ws.receive_json()
@@ -276,7 +287,7 @@ class TestUtteranceMode:
 
     def test_silence_without_open_utterance_calls_nothing(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _silence()))
             _sync(ws)
 
@@ -294,7 +305,7 @@ class TestUtteranceMode:
             participants=[{"participant_id": "bot", "username": "Ada (Agentar)"}],
         )
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech(), participant_id="bot"))
             _sync(ws)
 
@@ -307,7 +318,7 @@ class TestUtteranceMode:
         monkeypatch.setattr(settings, "enable_auth", True)
         monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             test_client.post(f"/meetings/{meeting_id}/ended", headers={"Authorization": f"Bearer {JIGASI_KEY}"})
@@ -320,7 +331,7 @@ class TestUtteranceMode:
     ):
         caption, transcribe = pipeline
         transcribe.side_effect = RuntimeError("triton down")
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             assert ws.receive_json()["transcript"] == "chunk text"
             ws.send_text(_message(meeting_id, _silence()))
@@ -338,7 +349,7 @@ class TestFinalCaption:
 
     def test_chunks_are_interim_and_the_utterance_is_final(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             first = ws.receive_json()
             ws.send_text(_message(meeting_id, _speech()))
@@ -363,7 +374,7 @@ class TestFinalCaption:
     def test_final_comes_when_the_speaker_goes_quiet(self, test_client: TestClient, pipeline, meeting_id, monkeypatch):
         monkeypatch.setattr(settings, "asr_utterance_idle_s", 0.05)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             interim = ws.receive_json()
             final = ws.receive_json()
@@ -385,7 +396,7 @@ class TestFinalCaption:
             return await fake_caption(*args, **kwargs)
 
         caption.side_effect = slow_caption
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.send_text(_message(meeting_id, _speech()))
             replies = [ws.receive_json() for _ in range(3)]
@@ -399,7 +410,7 @@ class TestFinalCaption:
 
     def test_final_carries_the_joined_translations(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for _ in range(2):
                 ws.send_text(_message(meeting_id, _speech(), language="en-US", target_languages=["de"]))
                 interim = ws.receive_json()
@@ -412,7 +423,7 @@ class TestFinalCaption:
 
     def test_dropped_utterance_ends_with_its_captions(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _tail(300)))
             interim = ws.receive_json()
             ws.send_text(_message(meeting_id, _silence()))
@@ -427,7 +438,7 @@ class TestFinalCaption:
     def test_failed_transcription_ends_with_its_captions(self, test_client: TestClient, pipeline, meeting_id):
         caption, transcribe = pipeline
         transcribe.side_effect = RuntimeError("triton down")
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             interim = ws.receive_json()
             ws.send_text(_message(meeting_id, _silence()))
@@ -443,7 +454,7 @@ class TestFinalCaption:
     ):
         caption, transcribe = pipeline
         with caplog.at_level(logging.INFO, logger="api.routes.websocket"):
-            with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+            with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
                 ws.send_text(_message(meeting_id, _speech()))
                 ws.receive_json()
 
@@ -456,7 +467,7 @@ class TestFinalCaption:
         monkeypatch.setattr(settings, "enable_auth", True)
         monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             test_client.post(f"/meetings/{meeting_id}/ended", headers={"Authorization": f"Bearer {JIGASI_KEY}"})
@@ -496,7 +507,7 @@ class TestCleanAsr:
 
     def test_detector_is_on_in_utterance_mode(self, test_client: TestClient, pipeline, meeting_id, vad):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             _sync(ws)
@@ -509,7 +520,7 @@ class TestCleanAsr:
         caption, transcribe = pipeline
         # Loud enough for the RMS gate, but the detector hears no voice in it: fan, music, echo.
         noise = _pcm(np.random.default_rng(3).normal(0, 2000, SR * 2))
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             ws.receive_json()
             ws.send_text(_message(meeting_id, noise))
@@ -529,7 +540,7 @@ class TestCleanAsr:
         t = np.arange(SR * 2) / SR
         echo = _pcm(60 * np.sin(2 * np.pi * 200 * t))
         vad.side_effect = lambda audio, threshold: 2000
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, echo))
             _sync(ws)
 
@@ -540,7 +551,7 @@ class TestCleanAsr:
         self, test_client: TestClient, pipeline, meeting_id, vad
     ):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             # 300 ms of voice passes the chunk minimum but not the utterance minimum of 500 ms.
             ws.send_text(_message(meeting_id, _tail(300)))
             ws.receive_json()
@@ -559,7 +570,7 @@ class TestCleanAsr:
     ):
         monkeypatch.setattr(settings, "asr_vad", False)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _pcm(np.random.default_rng(3).normal(0, 2000, SR * 2))))
             ws.receive_json()
             _sync(ws)
@@ -570,7 +581,7 @@ class TestCleanAsr:
     def test_model_reply_caption_is_not_sent(self, test_client: TestClient, pipeline, meeting_id, vad):
         caption, transcribe = pipeline
         self._captions(caption, ["Agentar, when do we ship", "I'm sorry.", "the MVP?"])
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for _ in range(3):
                 ws.send_text(_message(meeting_id, _speech()))
             first, second = ws.receive_json(), ws.receive_json()
@@ -589,7 +600,7 @@ class TestCleanAsr:
         transcribe.return_value = _result(
             "I'm sorry, but I can't understand that. Could you please repeat or clarify your request?"
         )
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             interim = ws.receive_json()
             ws.send_text(_message(meeting_id, _speech()))
@@ -609,7 +620,7 @@ class TestCleanAsr:
         self._captions(caption, ["I'm sorry.", "."])
         transcribe.side_effect = None
         transcribe.return_value = _result("I'm sorry, I didn't quite catch that.")
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for audio in (_speech(), _speech(), _silence()):
                 ws.send_text(_message(meeting_id, audio))
             _sync(ws)
@@ -623,7 +634,7 @@ class TestCleanAsr:
         self._captions(caption, ["I'm sorry."])
         transcribe.side_effect = None
         transcribe.return_value = _result("I'm sorry.")
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             interim = ws.receive_json()
             ws.send_text(_message(meeting_id, _silence()))
@@ -671,7 +682,7 @@ class TestEndSilence:
         self, test_client: TestClient, pipeline, meeting_id, profile
     ):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             self._send(ws, meeting_id, _speech(), _speech(), _tail(600))
 
         # No silent chunk followed and the idle timer is 60 s.
@@ -682,7 +693,7 @@ class TestEndSilence:
         self, test_client: TestClient, pipeline, meeting_id, profile, monkeypatch
     ):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             self._send(ws, meeting_id, _speech(), _tail(1600))
             assert transcribe.await_count == 0
             self._send(ws, meeting_id, _speech())
@@ -695,7 +706,7 @@ class TestEndSilence:
         self, test_client: TestClient, pipeline, meeting_id, profile
     ):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             # 400 ms of silence ends the first chunk and 1000 ms starts the second: a 1.4 s pause.
             self._send(ws, meeting_id, _speech(), _tail(1600), _lead(1000))
             assert [_seconds(c) for c in transcribe.await_args_list] == [4.0]
@@ -709,7 +720,7 @@ class TestEndSilence:
     ):
         monkeypatch.setattr(settings, "asr_utterance_end_silence_ms", 1500)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             self._send(ws, meeting_id, _tail(1600), _lead(1000))
             ws.send_text(_message(meeting_id, _silence()))
             _sync(ws)
@@ -720,7 +731,7 @@ class TestEndSilence:
         self, test_client: TestClient, pipeline, meeting_id, profile
     ):
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             # 300 ms of voice and 1.7 s of pause: closing would drop the fragment's words.
             self._send(ws, meeting_id, _tail(300))
             assert transcribe.await_count == 0
@@ -735,7 +746,7 @@ class TestEndSilence:
     ):
         monkeypatch.setattr(settings, "asr_utterance_end_silence_ms", 0)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             self._send(ws, meeting_id, _speech(), _tail(600), _lead(1000))
 
         assert profile.call_count == 0
@@ -746,7 +757,7 @@ class TestEndSilence:
     ):
         monkeypatch.setattr(settings, "asr_vad", False)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             self._send(ws, meeting_id, _speech(), _tail(600))
             assert transcribe.await_count == 0
 
@@ -757,7 +768,7 @@ class TestEndSilence:
     ):
         monkeypatch.setattr(settings, "asr_utterance_final_caption", True)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             ws.send_text(_message(meeting_id, _speech()))
             interim = ws.receive_json()
             ws.send_text(_message(meeting_id, _tail(600)))
@@ -775,7 +786,7 @@ class TestUtteranceModeOff:
     ):
         monkeypatch.setattr(settings, "asr_utterance_mode", False)
         caption, transcribe = pipeline
-        with test_client.websocket_connect(f"/ws/{meeting_id}") as ws:
+        with test_client.websocket_connect(f"/ws/{meeting_id}", headers=JIGASI_AUTH) as ws:
             for audio in (_speech(), _speech(), _silence(), _speech()):
                 ws.send_text(_message(meeting_id, audio))
                 if audio != _silence():

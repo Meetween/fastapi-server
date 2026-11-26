@@ -1,0 +1,94 @@
+# The worker's POST /bots body (CreateBot, version 0.2.0-agentar.1), rules only.
+# Refresh this copy when the worker's CreateBot changes.
+type: object
+additionalProperties: false
+required:
+- room
+properties:
+  room:
+    type: string
+    pattern: ^[a-z0-9][a-z0-9_-]{0,62}$
+  display_name:
+    type: string
+    pattern: ^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 _.'-]{0,47}$
+    default: Agentar
+  jwt:
+    type:
+    - string
+    - 'null'
+    maxLength: 4096
+  script:
+    type:
+    - string
+    - 'null'
+    maxLength: 2000
+  greeting:
+    type:
+    - string
+    - 'null'
+    minLength: 1
+    maxLength: 2000
+  opener:
+    type:
+    - string
+    - 'null'
+    minLength: 1
+    maxLength: 1000
+  questions:
+    type: array
+    maxItems: 10
+    default: []
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - text
+      properties:
+        id:
+          type: string
+          pattern: ^q[0-9]{1,2}$
+        text:
+          type: string
+          minLength: 1
+          maxLength: 300
+  escalation_line:
+    type:
+    - string
+    - 'null'
+    minLength: 1
+    maxLength: 300
+  farewell:
+    type:
+    - string
+    - 'null'
+    minLength: 1
+    maxLength: 300
+  voice:
+    type:
+    - string
+    - 'null'
+    enum:
+    - af_heart
+    - af_bella
+    - am_fenrir
+    - am_michael
+    - null
+  avatar_jpeg_b64:
+    type:
+    - string
+    - 'null'
+    contentEncoding: base64
+    contentMediaType: image/jpeg
+    maxLength: 546136
+  agentar_meeting_id:
+    type:
+    - string
+    - 'null'
+    pattern: ^[a-f0-9]{24}$
+  events_url:
+    type:
+    - string
+    - 'null'
+    format: uri
+    maxLength: 512

@@ -14,6 +14,7 @@ from api.deps.meeting_ended import reject_if_meeting_ended
 
 from core import EngineManager, SessionManager
 from models import MeetweenTaskRequest, MeetweenTaskResponse, HistoryEntry, TaskType
+from utils.agentar_prompt import answer_agentar_question, load_agentar_context
 from utils.prompt_template import format_template
 
 router = APIRouter(
@@ -162,7 +163,11 @@ async def chat(
             )
             history_snapshot = list(history)
 
-        if not (transcript or "").strip():
+        # An Agentar bound to an Agentar meeting answers from its owner's brief; any other caller
+        # takes the Butler path below, unchanged.
+        agentar = await load_agentar_context(request.participant_id)
+
+        if not (transcript or "").strip() and agentar is None:
             # SQA answers questions about the meeting. With no transcript the model can only deflect or
             # invent, so skip it and return an empty result with a reason. The turn is not stored.
             logger.info(
@@ -181,28 +186,40 @@ async def chat(
                 error=NO_TRANSCRIPT_ERROR,
             )
 
-        combined_prompt = _build_chat_prompt(
-            query=request.prompt,
-            context=transcript,
-            history=history_snapshot,
-            max_context_chars=engine.max_context_chars,
-            max_history_chars=engine.max_history_chars,
-            participant_id=request.participant_id,
-        )
+        answer_kind = None
+        if agentar is not None:
+            turn = await answer_agentar_question(
+                engine,
+                agentar,
+                request.prompt,
+                transcript,
+                max_new_tokens=request.max_new_tokens,
+                task=TaskType.SPOKEN_QUESTION_ANSWERING,
+            )
+            result, answer_kind = turn.text, turn.kind
+        else:
+            combined_prompt = _build_chat_prompt(
+                query=request.prompt,
+                context=transcript,
+                history=history_snapshot,
+                max_context_chars=engine.max_context_chars,
+                max_history_chars=engine.max_history_chars,
+                participant_id=request.participant_id,
+            )
 
-        result = await engine._generate_text(
-            prompt=combined_prompt,
-            audio=None,
-            sample_rate=16000,
-            task=TaskType.SPOKEN_QUESTION_ANSWERING,
-            max_new_tokens=request.max_new_tokens,
-            do_sample=request.do_sample,
-            temperature=request.temperature,
-            repetition_penalty=request.repetition_penalty
-        )
+            result = await engine._generate_text(
+                prompt=combined_prompt,
+                audio=None,
+                sample_rate=16000,
+                task=TaskType.SPOKEN_QUESTION_ANSWERING,
+                max_new_tokens=request.max_new_tokens,
+                do_sample=request.do_sample,
+                temperature=request.temperature,
+                repetition_penalty=request.repetition_penalty
+            )
 
-        if participant_id.startswith(VP_PARTICIPANT_PREFIX):
-            result = _guard_example_leak(_strip_speaker_prefix(result, transcript), transcript)
+            if participant_id.startswith(VP_PARTICIPANT_PREFIX):
+                result = _guard_example_leak(_strip_speaker_prefix(result, transcript), transcript)
 
         async with SessionManager.participant_history_mutex(
             meeting_id=request.meeting_id,
@@ -225,6 +242,7 @@ async def chat(
             result=result.strip(),
             language=request.language,
             participant_id=request.participant_id,
+            answer_kind=answer_kind,
         )
     except HTTPException:
         raise

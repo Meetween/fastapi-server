@@ -126,9 +126,9 @@ async def api_transcribe(request: LMMRequest = Body(...)):
         elif isinstance(request, MeetweenTaskRequest):
             meeting_id = request.meeting_id
             room_name = request.room_name
-            meeting_path = settings.recordings_base_path / room_name / meeting_id
+            meeting_path = StorageManager.find_meeting_directory(settings.recordings_base_path, room_name, meeting_id)
 
-            if not meeting_path.exists():
+            if meeting_path is None:
                 logger.error(f"No recording found. Can't generate transcription. Meeting: {room_name}/{meeting_id}")
                 raise HTTPException(
                     status_code=404,
