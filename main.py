@@ -72,6 +72,22 @@ def cleanup_old_recordings_job():
         logger.error(f"Error in recording cleanup job: {str(e)}", exc_info=True)
 
 
+def schedule_agentar_tick(target: AsyncIOScheduler) -> None:
+    """Agentar lifecycle: claims due scheduled meetings, reconciles live ones with the worker.
+    Only on a deployment with AGENTAR_ENABLED."""
+    if not settings.agentar_enabled:
+        return
+    target.add_job(
+        agentar_lifecycle.tick,
+        trigger=IntervalTrigger(seconds=settings.agentar.tick_seconds),
+        id="agentar_lifecycle_tick",
+        name="Agentar lifecycle tick",
+        max_instances=1,
+        coalesce=True,
+        replace_existing=True,
+    )
+
+
 @app.on_event("startup")
 async def startup_event():
     """Initialize server and load SpeechLMM model"""
@@ -119,16 +135,7 @@ async def startup_event():
         name="Sweep idle meetings",
         replace_existing=True,
     )
-    # Agentar lifecycle: claims due scheduled meetings, reconciles live ones with the worker.
-    scheduler.add_job(
-        agentar_lifecycle.tick,
-        trigger=IntervalTrigger(seconds=settings.agentar.tick_seconds),
-        id="agentar_lifecycle_tick",
-        name="Agentar lifecycle tick",
-        max_instances=1,
-        coalesce=True,
-        replace_existing=True,
-    )
+    schedule_agentar_tick(scheduler)
     scheduler.start()
     logger.info("Scheduled recording cleanup job (daily at 2:00 AM UTC)")
 
@@ -166,11 +173,25 @@ app.include_router(translation.router)
 app.include_router(participants.router)
 app.include_router(virtual_participants.router)
 app.include_router(auth_signup.router)
-app.include_router(agentar_profile.router)
-app.include_router(agentar_files.router)
-app.include_router(agentar_meetings.router)
-app.include_router(agentar_reports.router)
-app.include_router(agentar_events.router)
+
+# /api/me and /api/agentar exist only on a deployment with AGENTAR_ENABLED. Without it they are not
+# mounted: absent from the OpenAPI schema, and a request gets the plain 404 of an unknown path.
+AGENTAR_ROUTERS = (
+    agentar_profile.router,
+    agentar_files.router,
+    agentar_meetings.router,
+    agentar_reports.router,
+    agentar_events.router,
+)
+
+
+def include_agentar_routers(target: FastAPI) -> None:
+    for router in AGENTAR_ROUTERS:
+        target.include_router(router)
+
+
+if settings.agentar_enabled:
+    include_agentar_routers(app)
 
 
 if __name__ == "__main__":

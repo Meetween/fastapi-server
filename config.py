@@ -265,8 +265,9 @@ class Settings(BaseSettings):
     signup_enabled: bool = Field(default=False, env="SIGNUP_ENABLED")
     email_enabled: bool = Field(default=False, env="EMAIL_ENABLED")
     calendar_enabled: bool = Field(default=False, env="CALENDAR_ENABLED")
-    # This deployment runs Agentar. Routes are always registered and each answers 503 for a missing
-    # dependency; this switch makes startup refuse a configuration that cannot work (empty worker key).
+    # This deployment runs Agentar. Unset, /api/me and /api/agentar are not mounted and the lifecycle
+    # tick does not run. Set, startup refuses a configuration that cannot work (empty worker key), and
+    # each route answers 503 for a dependency that is still missing.
     agentar_enabled: bool = Field(default=False, env="AGENTAR_ENABLED")
     # Sign up attempts per hour allowed by the throttle.
     signup_rate_per_ip: int = Field(default=5, ge=1, env="SIGNUP_RATE_PER_IP")
