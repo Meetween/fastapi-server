@@ -28,6 +28,13 @@ _LANGUAGE_MODES = {
     )
 }
 
+# The Voxtral Triton model knows "transcribe" and "chat", not the task acronyms "asr" and "sqa".
+# An unknown mode falls into its chat branch, which answers about the audio instead of transcribing it.
+_WIRE_MODES = {
+    TaskType.TRANSCRIPTION.lower(): "transcribe",
+    TaskType.SPOKEN_QUESTION_ANSWERING.lower(): "chat",
+}
+
 class TritonClient:
     """Client for Triton Inference Server with SpeechLMM model interface"""
     
@@ -140,7 +147,7 @@ class TritonClient:
                 mode = (
                     TaskType.SPOKEN_QUESTION_ANSWERING if audio_b64 is None else TaskType.TRANSCRIPTION
                 ).lower()
-            payload_obj: dict = {"mode": mode, "prompt": prompt_to_send, "format": "verbatim"}
+            payload_obj: dict = {"mode": _WIRE_MODES.get(mode, mode), "prompt": prompt_to_send, "format": "verbatim"}
             if mode == TaskType.CAPTION.lower():
                 payload_obj["caption_chars"] = self.caption_chars
             # Voxtral/Qwen: source language in JSON (caption/transcribe/ST/MT).

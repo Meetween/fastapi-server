@@ -23,6 +23,10 @@ def _keys(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "enable_auth", True)
     monkeypatch.setattr(settings, "vp_meetween_api_key", VP_KEY)
     monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
+    # With no transcript /api/chat skips the model, so the tests that expect an answer need a line.
+    SessionManager.update_transcript(
+        meeting_id=MEETING_ID, room_name=ROOM, transcript="Alice: the deadline is June 15."
+    )
     yield
     SessionManager._sessions.clear()
     SessionManager._last_activity.clear()

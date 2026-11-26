@@ -14,6 +14,7 @@ dependencies = [
     "librosa",
     "motor>=3.3.0",
     "numpy>=1.24.3",
+    "onnxruntime==1.30.0",
     "pydantic>=2.0.0",
     "pydantic-settings",
     "pydub",

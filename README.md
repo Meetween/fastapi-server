@@ -66,6 +66,20 @@ or from a `.env` file next to `config.py`. The ones that matter to run the servi
 | `RECORDINGS_BASE_PATH` | `/mnt/recordings` | where recording chunks are written |
 | `RECORDING_RETENTION_DAYS` | `7` | retention of recording chunks |
 | `TRITON_TIMEOUT` | `1800` | inference timeout in seconds |
+| `ASR_SILENCE_RMS` | `150` | caption websocket: chunks whose 20 ms frames all stay below this RMS (raw int16 units, 0 to 32767, 150 is about -47 dBFS) are not sent to the model; `0` turns the gate off |
+| `ASR_SILENCE_MIN_ACTIVE_MS` | `100` | caption websocket: time at or above `ASR_SILENCE_RMS` a chunk needs to count as speech |
+| `ASR_VOCABULARY` | empty | comma separated names the speakers may say; added to the transcription prompt so the model spells them correctly |
+| `ASR_UTTERANCE_MODE` | `false` | caption websocket: join a participant's speech chunks until a pause, transcribe them once and store that as the transcript line; live captions stay per chunk. Off stores one line per caption chunk |
+| `ASR_UTTERANCE_MODE` | `false` | caption websocket: join a participant's speech chunks until a pause, transcribe them once and store that as the transcript line; live captions keep their 2 s pace. Off stores one line per caption chunk |
+| `ASR_UTTERANCE_MAX_S` | `10` | caption websocket: an utterance is closed and transcribed at this length; it also caps the buffer at about 32 KB per second per speaker |
+| `ASR_UTTERANCE_IDLE_S` | `3` | caption websocket: an utterance is also closed when its speaker sends no chunk for this long, since Jigasi stops sending during silence; `0` turns the timer off |
+| `ASR_UTTERANCE_END_SILENCE_MS` | `0` | caption websocket, utterance mode with `ASR_VAD`: a chunk that ends with at least this much non speech (32 ms windows below `ASR_VAD_THRESHOLD`) closes its speaker's utterance at once, once the utterance holds `ASR_UTTERANCE_MIN_SPEECH_MS` of speech, instead of waiting for the next chunk or `ASR_UTTERANCE_IDLE_S`; `0` turns it off |
+| `ASR_UTTERANCE_MIN_SPEECH_MS` | `500` | caption websocket: an utterance with less speech than this (32 ms voice windows with `ASR_VAD`, else 20 ms frames at or above `ASR_SILENCE_RMS`) is dropped instead of transcribed alone; its caption is still sent |
+| `ASR_UTTERANCE_FINAL_CAPTION` | `true` | caption websocket, utterance mode only: each 2 s caption is sent as interim under the utterance's message id with the utterance's captions so far, and the utterance text is sent once as the final caption under the same id; a dropped or failed utterance ends with its captions. `false` keeps every 2 s caption final |
+| `ASR_VAD` | unset, follows `ASR_UTTERANCE_MODE` | caption websocket: of the chunks that pass the RMS gate, only those Silero VAD hears voice in reach the model, so a fan, a breath or another speaker's faint echo never becomes a caption |
+| `ASR_VAD_THRESHOLD` | `0.5` | caption websocket: speech probability at or above which a 32 ms window counts as voice |
+| `ASR_VAD_MIN_SPEECH_MS` | `96` | caption websocket: voice a chunk needs, in ms of such windows, to reach the model and to join an utterance |
+| `ASR_OUTPUT_GUARD` | unset, follows `ASR_UTTERANCE_MODE` | caption websocket: a caption or utterance text that is a model reply rather than speech ("I'm sorry", "could you please repeat", "the audio is silent", a lone "Okay.") is neither sent nor stored; a dropped utterance ends with its remaining captions |
 | `LOG_LEVEL` | `INFO` | application and uvicorn log level |
 
 ### Virtual participant settings
