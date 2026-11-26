@@ -176,10 +176,14 @@ class Settings(BaseSettings):
     enable_auth: bool = Field(default=True, env="ENABLE_AUTH")
     # Shared bearer Jigasi sends. Empty while auth is on rejects those calls.
     jigasi_meetween_api_key: str = Field(default="", env="JIGASI_MEETWEEN_API_KEY")
-    # Shared bearer the virtual participant worker sends to /api/chat, and nowhere else.
-    # Kept apart from the Jigasi key so a worker holds no right to end meetings or push
-    # participants. Empty while auth is on rejects those calls.
+    # Shared bearer the virtual participant worker sends to /api/chat and to the chat message
+    # route, and nowhere else. Kept apart from the Jigasi key so a worker holds no right to end
+    # meetings or push participants. Empty while auth is on rejects those calls.
     vp_meetween_api_key: str = Field(default="", env="VP_MEETWEEN_API_KEY")
+    # Display name suffix that marks a virtual participant, the worker's VP_BOT_NAME_SUFFIX.
+    # Audio of a participant whose name ends with it is not transcribed, so the bot's own
+    # answers never enter the transcript. Empty transcribes everyone.
+    vp_bot_name_suffix: str = Field(default="", env="VP_BOT_NAME_SUFFIX")
 
     jwt_secret_key: str = Field(default="change-me-in-production", env="JWT_SECRET_KEY")
     jwt_algorithm: str = Field(default="HS256", env="JWT_ALGORITHM")
@@ -210,6 +214,9 @@ class Settings(BaseSettings):
     triton_max_history_turns: int = Field(default=400, env="TRITON_MAX_HISTORY_TURNS")
     triton_max_history_chars: int = Field(default=600_000, env="TRITON_MAX_HISTORY_CHARS")
     triton_caption_chars: int = Field(default=60, env="TRITON_CAPTION_CHARS")
+    # Comma separated names the speakers may say, e.g. "Agentar,Meetween". Added to the
+    # transcription prompt so the model spells them correctly. Empty leaves the prompt unchanged.
+    asr_vocabulary: str = Field(default="", env="ASR_VOCABULARY")
 
     # Virtual participant control route. Environment names are the upper case field names.
     vp_worker_url: str = "http://vp-worker:8000"
@@ -221,6 +228,43 @@ class Settings(BaseSettings):
     vp_request_timeout_s: float = 10.0
     # Comma separated display names that must not count as a human in the room.
     vp_service_names: str = DEFAULT_VP_SERVICE_NAMES
+
+    # Silence gate on the caption websocket. A chunk with no speech never reaches the model,
+    # which otherwise answers silence as a chatbot. The RMS is in raw int16 units (0 to 32767):
+    # 150 is about -47 dBFS. 0 turns the gate off.
+    asr_silence_rms: float = Field(default=150.0, env="ASR_SILENCE_RMS")
+    # Total time at or above that RMS (20 ms frames) a chunk needs to count as speech.
+    asr_silence_min_active_ms: int = Field(default=100, env="ASR_SILENCE_MIN_ACTIVE_MS")
+    # Utterance mode: speech chunks of a participant are joined until a pause or the cap,
+    # transcribed once, and that text is the transcript line. Live captions keep their 2 s pace.
+    # Off keeps one transcript line per 2 s caption chunk.
+    asr_utterance_mode: bool = Field(default=False, env="ASR_UTTERANCE_MODE")
+    # Longest utterance in seconds. Also bounds the buffer: about 32 KB per second per speaker.
+    asr_utterance_max_s: float = Field(default=10.0, env="ASR_UTTERANCE_MAX_S")
+    # An utterance also closes when its speaker sends nothing for this long. Jigasi drops silence
+    # with its own VAD, so chunks stop rather than turn silent. 0 turns the timer off.
+    asr_utterance_idle_s: float = Field(default=3.0, env="ASR_UTTERANCE_IDLE_S")
+    # A chunk that ends with at least this much non speech (Silero VAD windows) closes its speaker's
+    # utterance at once, without waiting for the next chunk or the idle timer. 0 turns it off. Needs ASR_VAD.
+    asr_utterance_end_silence_ms: int = Field(default=0, env="ASR_UTTERANCE_END_SILENCE_MS")
+    # An utterance with less speech than this (VAD windows with ASR_VAD, else frames above
+    # ASR_SILENCE_RMS) is dropped, not transcribed: alone, a fragment comes back as a chatbot reply.
+    asr_utterance_min_speech_ms: int = Field(default=500, env="ASR_UTTERANCE_MIN_SPEECH_MS")
+    # In utterance mode, the 2 s captions go out as interim and the utterance text as the final
+    # caption, so the room and the virtual participant read whole sentences. Off keeps every 2 s
+    # caption final. Direct translations ride on finals only in Jigasi, so they then come per utterance.
+    asr_utterance_final_caption: bool = Field(default=True, env="ASR_UTTERANCE_FINAL_CAPTION")
+    # Speech detector: of the chunks loud enough for the RMS gate, Silero VAD decides which hold
+    # voice and so reach the model, and how much speech an utterance holds. The RMS gate alone
+    # passes a fan, a breath, or the echo of another speaker. Unset follows ASR_UTTERANCE_MODE.
+    asr_vad: Optional[bool] = Field(default=None, env="ASR_VAD")
+    # Speech probability at or above which a 32 ms window counts as voice.
+    asr_vad_threshold: float = Field(default=0.5, env="ASR_VAD_THRESHOLD")
+    # Voice a chunk needs, in ms of such windows, to reach the model and to join an utterance.
+    asr_vad_min_speech_ms: int = Field(default=96, env="ASR_VAD_MIN_SPEECH_MS")
+    # Output guard: a caption or utterance text that is a model reply ("I'm sorry, could you
+    # please repeat") rather than speech is neither sent nor stored. Unset follows ASR_UTTERANCE_MODE.
+    asr_output_guard: Optional[bool] = Field(default=None, env="ASR_OUTPUT_GUARD")
 
     _triton: TritonSettings = PrivateAttr()
     _app_jwt: AppJwtSettings = PrivateAttr()
@@ -270,6 +314,18 @@ class Settings(BaseSettings):
             request_timeout_s=self.vp_request_timeout_s,
             service_names=_service_name_set(self.vp_service_names),
         )
+
+    @property
+    def asr_vad_enabled(self) -> bool:
+        return self.asr_utterance_mode if self.asr_vad is None else self.asr_vad
+
+    @property
+    def asr_utterance_end_silence_enabled(self) -> bool:
+        return self.asr_utterance_mode and self.asr_vad_enabled and self.asr_utterance_end_silence_ms > 0
+
+    @property
+    def asr_output_guard_enabled(self) -> bool:
+        return self.asr_utterance_mode if self.asr_output_guard is None else self.asr_output_guard
 
     @property
     def app_jwt(self) -> AppJwtSettings:

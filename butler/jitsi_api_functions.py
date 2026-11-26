@@ -19,7 +19,8 @@ from dataclasses import dataclass
 from enum import Enum
 
 from .triton_client import TritonClient
-from utils.prompt_template import get_task_prompt
+from config import settings
+from utils.prompt_template import get_task_prompt, with_vocabulary
 
 
 def monify_and_resample_audio(
@@ -155,6 +156,14 @@ class CaptionHandler:
         # self.last_was_final = False
 
 
+def _transcription_prompt(language: str) -> str:
+    """ASR prompt for `language`, with the configured ASR_VOCABULARY names appended."""
+    return with_vocabulary(
+        get_task_prompt(TaskType.TRANSCRIPTION, language),
+        settings.asr_vocabulary,
+    )
+
+
 async def transcribe_audio(
     engine: TritonClient,
     audio_bytes: bytes,
@@ -185,7 +194,7 @@ async def transcribe_audio(
     """
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = get_task_prompt(TaskType.TRANSCRIPTION, language)
+    prompt = _transcription_prompt(language)
 
     gen_kwargs: dict = {}
     if max_new_tokens is not None:
@@ -256,7 +265,7 @@ async def caption_audio(
 
     audio_tensor, target_sr = AudioConverter.bytes_to_tensor(audio_bytes, sample_rate)
 
-    prompt = get_task_prompt(TaskType.TRANSCRIPTION, language)
+    prompt = _transcription_prompt(language)
 
     transcription = await engine._generate_text(
         prompt=prompt,

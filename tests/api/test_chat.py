@@ -5,8 +5,10 @@ import pytest
 from unittest.mock import Mock, patch
 from fastapi.testclient import TestClient
 
+from api.routes.chat import NOT_MENTIONED, _build_chat_prompt, _guard_example_leak, _strip_speaker_prefix
+from config import settings
 from core import SessionManager
-from models import TaskType
+from models import HistoryEntry, TaskType
 from tests.utils.assertions import assert_successful_response
 
 
@@ -132,3 +134,232 @@ def test_chat_uses_session_manager_context_and_history_only(
         force=True,
     )
 
+
+
+def _chat_payload(meeting_id: str, room_name: str, participant_id: str = "user-empty") -> dict:
+    return {
+        "type": TaskType.SPOKEN_QUESTION_ANSWERING,
+        "meeting_id": meeting_id,
+        "room_name": room_name,
+        "participant_id": participant_id,
+        "language": "en-US",
+        "prompt": "What was decided on the budget?",
+    }
+
+
+def test_chat_without_transcript_skips_model_and_returns_reason(client: TestClient):
+    meeting_id, room_name = "chat-empty-meeting", "chat-empty-room"
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+    calls = {"n": 0}
+
+    async def mock_generate_text(*args, **kwargs):
+        calls["n"] += 1
+        return "Based on the meeting transcript, the deadline is June 15."
+
+    mock_engine._generate_text = mock_generate_text
+
+    with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+        response = client.post("/api/chat", json=_chat_payload(meeting_id, room_name))
+
+    data = assert_successful_response(response)
+    assert data["result"] == ""
+    assert data["error"] == "no_transcript"
+    assert data["meeting_id"] == meeting_id
+    assert data["room_name"] == room_name
+    assert data["participant_id"] == "user-empty"
+    assert calls["n"] == 0
+    assert SessionManager.get_participant_history(meeting_id, room_name, "user-empty") == []
+
+
+def test_chat_with_transcript_has_no_error_field_set(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Server transcript says budget was approved.",
+    )
+    try:
+        response = client.post("/api/chat", json=_chat_payload(test_meeting_id, test_room_name))
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            force=True,
+        )
+
+    data = assert_successful_response(response)
+    assert data["result"] == "Mock chat response text for testing"
+    assert data["error"] is None
+
+
+def _prompt(**overrides) -> str:
+    args = dict(
+        query="How are you?",
+        context="Alice: the deadline is June 15.",
+        history=None,
+        max_context_chars=300_000,
+        max_history_chars=600_000,
+    )
+    args.update(overrides)
+    return _build_chat_prompt(**args)
+
+
+def test_chat_prompt_answers_directly_without_a_transcript_preamble():
+    prompt = _prompt()
+    assert "Never open with a preamble" in prompt
+    assert "small talk" in prompt
+    assert "one plain" in prompt
+    assert 'you may say things like "Based on the meeting' not in prompt
+
+
+def test_chat_prompt_keeps_markdown_and_length_for_web_participants():
+    for participant_id in (None, "user-123", "jitsi-abc"):
+        prompt = _prompt(participant_id=participant_id)
+        assert "Use bullet points" in prompt
+        assert "read aloud" not in prompt
+        assert "two short sentences" not in prompt
+
+
+def test_chat_prompt_adds_spoken_style_for_the_virtual_participant():
+    prompt = _prompt(participant_id="vp:bot1-3")
+    assert "will be read aloud" in prompt
+    assert "at most two short sentences" in prompt
+    assert "no bullet points, headings, markdown or emoji" in prompt
+
+
+def test_chat_prompt_grounds_the_virtual_participant_in_the_transcript():
+    prompt = _prompt(participant_id="vp:bot1-3")
+    assert "Answer only from lines of the meeting transcript" in prompt
+    assert "reply exactly: That was not mentioned in the meeting." in prompt
+    assert "Never guess" in prompt
+    assert "Question: Who drives the van? Answer: That was not mentioned in the meeting." in prompt
+
+
+def test_chat_prompt_leaves_the_web_prompt_free_of_the_grounding_example():
+    prompt = _prompt(participant_id="user-123")
+    assert "Answer only from lines" not in prompt
+    assert "Who drives the van?" not in prompt
+
+
+def test_example_leak_guard_replaces_an_answer_from_the_example_meeting():
+    transcript = "Maria: The demo is on Friday."
+    assert _guard_example_leak("The van leaves at noon.", transcript) == NOT_MENTIONED
+    assert _guard_example_leak("Zed drives the van.", transcript) == NOT_MENTIONED
+
+
+def test_example_leak_guard_keeps_a_grounded_answer():
+    assert _guard_example_leak("The demo is on Friday.", "Maria: The demo is on Friday.") == "The demo is on Friday."
+    assert _guard_example_leak("The van leaves at noon.", "Tom: The van leaves at noon.") == "The van leaves at noon."
+
+
+def test_speaker_prefix_is_dropped_from_a_spoken_answer():
+    transcript = "Luca: Priya owns the cost report.\nMaria: The demo is on Friday."
+    assert _strip_speaker_prefix("Luca: Priya owns the cost report.", transcript) == "Priya owns the cost report."
+    assert _strip_speaker_prefix("luca: the report is due.", transcript) == "The report is due."
+
+
+def test_a_leading_label_that_is_not_a_speaker_is_kept():
+    transcript = "Luca: Priya owns the cost report."
+    assert _strip_speaker_prefix("Note: the report is due.", transcript) == "Note: the report is due."
+    assert _strip_speaker_prefix("The time is 10:30.", transcript) == "The time is 10:30."
+
+
+def _caller_headers(participant_id: str, monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
+    """The vp: namespace belongs to the worker key; a user token keeps its own headers."""
+    if not participant_id.startswith("vp:"):
+        return {}
+    monkeypatch.setattr(settings, "vp_meetween_api_key", "vp-test-key")
+    return {"Authorization": "Bearer vp-test-key"}
+
+
+def test_chat_endpoint_guards_the_virtual_participant_only(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Alice: the deadline is June 15.",
+    )
+
+    async def mock_generate_text(*args, **kwargs):
+        return "The van leaves at noon."
+
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+    mock_engine._generate_text = mock_generate_text
+    results = {}
+    try:
+        with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+            for pid in ("vp:bot1-1", "user-web"):
+                payload = _chat_payload(test_meeting_id, test_room_name)
+                payload["participant_id"] = pid
+                response = client.post("/api/chat", json=payload, headers=_caller_headers(pid, monkeypatch))
+                assert_successful_response(response)
+                results[pid] = response.json()["result"]
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            force=True,
+        )
+    assert results["vp:bot1-1"] == NOT_MENTIONED
+    assert results["user-web"] == "The van leaves at noon."
+
+
+def test_chat_endpoint_passes_participant_id_to_the_prompt(
+    client: TestClient,
+    test_room_name: str,
+    test_meeting_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    SessionManager.update_transcript(
+        meeting_id=test_meeting_id,
+        room_name=test_room_name,
+        transcript="Alice: the deadline is June 15.",
+    )
+    seen: list[str] = []
+
+    async def mock_generate_text(*args, **kwargs):
+        seen.append(kwargs["prompt"])
+        return "June 15."
+
+    mock_engine = Mock()
+    mock_engine.max_context_chars = 300_000
+    mock_engine.max_history_chars = 600_000
+    mock_engine._generate_text = mock_generate_text
+    try:
+        with patch("api.routes.chat.EngineManager.get_lmm", return_value=mock_engine):
+            for pid in ("vp:bot1-1", "user-web"):
+                payload = _chat_payload(test_meeting_id, test_room_name)
+                payload["participant_id"] = pid
+                assert_successful_response(
+                    client.post("/api/chat", json=payload, headers=_caller_headers(pid, monkeypatch))
+                )
+    finally:
+        SessionManager.clear_session(
+            meeting_id=test_meeting_id,
+            room_name=test_room_name,
+            force=True,
+        )
+    assert "will be read aloud" in seen[0]
+    assert "will be read aloud" not in seen[1]
+
+
+def test_chat_prompt_carries_transcript_history_and_question():
+    history = [
+        HistoryEntry(role="user", content="Hello"),
+        HistoryEntry(role="assistant", content="Hi there"),
+    ]
+    prompt = _prompt(history=history)
+    assert "<context>\nAlice: the deadline is June 15.\n</context>" in prompt
+    assert "User: Hello\nAssistant: Hi there" in prompt
+    assert "<question>\nHow are you?\n</question>" in prompt
