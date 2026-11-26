@@ -32,3 +32,6 @@ recordings
 .gitignore
 release-please-config.json
 .release-please-manifest.json
+
+# Agentar voice samples ship with the image
+!assets/voices/*.wav

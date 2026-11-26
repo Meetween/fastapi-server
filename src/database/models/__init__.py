@@ -3,6 +3,7 @@ from src.database.models.agentar_file import AgentarFile, FileChunk
 from src.database.models.agentar_meeting import AgentarMeeting, MeetingQuestion
 from src.database.models.agentar_report import AgentarReport
 from src.database.models.meeting_context import MeetingContext
+from src.database.models.room_owner import RoomOwner
 from src.database.models.user import User, UserProfile
 from src.database.models.vp_bot_owner import VpBotOwner
 
@@ -15,6 +16,7 @@ ALL_MODELS = (
     AgentarReport,
     AgentarEvent,
     VpBotOwner,
+    RoomOwner,
 )
 
 __all__ = [
@@ -26,6 +28,7 @@ __all__ = [
     "FileChunk",
     "MeetingContext",
     "MeetingQuestion",
+    "RoomOwner",
     "User",
     "UserProfile",
     "VpBotOwner",

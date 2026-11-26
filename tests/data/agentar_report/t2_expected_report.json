@@ -1,0 +1,94 @@
+{
+  "transcript": "t2.txt",
+  "entries": "t2.jsonl",
+  "deferrals": "t2.deferrals.json",
+  "line_numbers": "1 based, line N of the txt file is entry N of the jsonl file",
+  "summary_points": [
+    {
+      "text": "Lyon signs the data processing agreement on 20 November",
+      "facts": [
+        "Lyon",
+        "20 November"
+      ],
+      "lines": [
+        5
+      ]
+    },
+    {
+      "text": "Training material is ready in English and Italian, and the Trento room is booked for 25 November",
+      "facts": [
+        "English",
+        "Italian",
+        "25 November"
+      ],
+      "lines": [
+        8,
+        9
+      ]
+    },
+    {
+      "text": "The usage survey goes out on Friday",
+      "facts": [
+        "survey",
+        "Friday"
+      ],
+      "lines": [
+        10
+      ]
+    },
+    {
+      "text": "The next steering call is on Tuesday 24 November",
+      "facts": [
+        "24 November"
+      ],
+      "lines": [
+        11
+      ]
+    }
+  ],
+  "action_items": [
+    {
+      "text": "Send the usage survey to the group",
+      "owner": "Anil Kapoor",
+      "due": "Friday",
+      "line": 10
+    }
+  ],
+  "answers": [
+    {
+      "question_id": "Q1",
+      "status": "answered",
+      "answer": "Lyon will sign on 20 November",
+      "answer_facts": [
+        "20 November"
+      ],
+      "speaker": "Anil Kapoor",
+      "quote": "they sign on 20 November",
+      "line": 5
+    },
+    {
+      "question_id": "Q2",
+      "status": "no_answer_captured",
+      "answer": null,
+      "answer_facts": [],
+      "speaker": null,
+      "quote": null,
+      "line": null,
+      "asked_at_line": 7
+    }
+  ],
+  "open_points": [
+    {
+      "kind": "unanswered_question",
+      "text": "Q2 Who will run the user training at the Bonn site? no answer captured",
+      "line": 7
+    }
+  ],
+  "must_contain": [
+    "no answer captured"
+  ],
+  "must_not_contain": [
+    "Katrin",
+    "Vogel"
+  ]
+}

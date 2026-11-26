@@ -1,0 +1,35 @@
+{
+  "room": "atlas-steering",
+  "owner_name": "Laura Bianchi",
+  "agent_name": "Laura Bianchi Agentar",
+  "display_name": "Laura Bianchi Agentar (AI)",
+  "language": "en",
+  "purpose": "Present the Atlas status and get answers to my two questions. Do not commit to budget or dates.",
+  "script_questions": [
+    {
+      "id": "Q1",
+      "text": "Can Lyon confirm the date they sign the data processing agreement?",
+      "must_ask": true
+    },
+    {
+      "id": "Q2",
+      "text": "Who will run the user training at the Bonn site?",
+      "must_ask": true
+    }
+  ],
+  "relevant_info": "Laura is on leave from 16 to 20 November 2026. Her deputy for Atlas is Marco Ferri. The meeting is in English.",
+  "files": [
+    {
+      "path": "kb/atlas-status.md"
+    },
+    {
+      "path": "kb/atlas-faq.md"
+    },
+    {
+      "path": "kb/atlas-sites.txt"
+    },
+    {
+      "path": "kb/atlas-timeline.txt"
+    }
+  ]
+}

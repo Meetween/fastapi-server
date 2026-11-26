@@ -1,9 +1,14 @@
 """
 Virtual participant control route.
 
-Authorises the caller, requires a human in the room, caps bots per room, mints the
-bot's room token and forwards to vp-worker with the shared secret. Browsers, media
-and speech live in vp-worker; this module keeps no bot state.
+Authorises the caller, lets only the room owner or an admin add a bot, requires a human
+in the room, caps bots per room, mints the bot's room token and forwards to vp-worker with
+the shared secret. Browsers, media and speech live in vp-worker.
+
+The only state kept here is who added a bot (`vp_bot_owners`), so list, get, delete and say
+are scoped to the caller's own bots: a Butler panel bot through that record, an Agentar bot
+through `agentar_meetings.bot_id`. Anyone else's bot is 404, like an unknown one. Admins see
+and control every bot.
 """
 import logging
 import re
@@ -16,7 +21,10 @@ from fastapi.responses import JSONResponse
 
 from api.deps.auth import REQUIRE_AUTH, get_current_subject
 from api.deps.meeting_ended import reject_if_meeting_ended
+from api.errors import not_found
 from config import VirtualParticipantSettings, settings
+from src.database.models.agentar_meeting import AgentarMeeting
+from src.database.models.vp_bot_owner import VpBotOwner
 from src.schemas.virtual_participants import (
     BOT_ID_PATTERN,
     BOT_NAME_SUFFIX,
@@ -26,7 +34,9 @@ from src.schemas.virtual_participants import (
     VirtualParticipantSayRequest,
     VirtualParticipantView,
 )
-from utils.auth import create_jitsi_token
+from utils import clock
+from utils.auth import create_jitsi_bot_token, jitsi_signing_key
+from utils.room_owner import is_admin, is_room_moderator
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +47,6 @@ router = APIRouter(
 )
 
 WORKER_SECRET_HEADER = "X-VP-Secret"
-BOT_SUBJECT = "vp-bot"
 ACTIVE_STATES = frozenset({"joining", "joined", "speaking"})
 NO_HUMAN_DETAIL = "no human participant in the room"
 
@@ -75,7 +84,10 @@ async def close_http_client() -> None:
 
 
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
-    404: {"model": VirtualParticipantError, "description": "Unknown bot"},
+    404: {
+        "model": VirtualParticipantError,
+        "description": "Unknown bot, a bot of another user, or a room the caller does not own",
+    },
     422: {"description": "Invalid room name, bot id or body"},
     502: {"model": VirtualParticipantError, "description": "vp-worker rejected the request or failed"},
     503: {"model": VirtualParticipantError, "description": "vp-worker or Prosody unreachable, or route not configured"},
@@ -215,6 +227,51 @@ async def _count_humans(
     return sum(1 for occupant in occupants if _is_human(occupant, vp.service_names))
 
 
+async def _record_bot_owner(bot_id: str, owner: str, room: str) -> None:
+    """Remember who added the bot. A bot id is recorded once and never handed to another user."""
+    now = clock.utcnow()
+    await VpBotOwner.get_collection().update_one(
+        {"bot_id": bot_id},
+        {
+            "$setOnInsert": {
+                "bot_id": bot_id,
+                "owner": owner,
+                "room_name": room,
+                "created_at": now,
+                "timestamp": now,
+            }
+        },
+        upsert=True,
+    )
+
+
+async def _owned_bot_ids(subject: str) -> set[str]:
+    """Ids of the Butler panel bots the caller added and of the caller's Agentar bots."""
+    panel = VpBotOwner.get_collection().find({"owner": subject}, {"bot_id": 1})
+    agentar = AgentarMeeting.get_collection().find(
+        {"owner": subject, "bot_id": {"$ne": None}}, {"bot_id": 1}
+    )
+    ids = {doc.get("bot_id") async for doc in panel} | {doc.get("bot_id") async for doc in agentar}
+    return {bot_id for bot_id in ids if isinstance(bot_id, str)}
+
+
+async def _require_bot_owner(subject: str, bot_id: str, action: str) -> None:
+    """404 unless the caller added the bot, owns the Agentar meeting it serves, or is an admin.
+
+    Checked before the worker is called, so a foreign id and an unknown id answer the same.
+    """
+    if await VpBotOwner.count_documents({"bot_id": bot_id, "owner": subject}):
+        return
+    if await AgentarMeeting.count_documents({"bot_id": bot_id, "owner": subject}):
+        return
+    if await is_admin(subject):
+        return
+    logger.info(
+        f"virtual participant {action} refused subject={subject} bot_id={bot_id} reason=not_owner"
+    )
+    raise not_found()
+
+
 async def _active_bots(client: httpx.AsyncClient, room: str) -> list[dict[str, Any]]:
     response = await _worker_request(client, "GET", "/bots", params={"room": room})
     if response.status_code != 200:
@@ -245,9 +302,19 @@ async def create_virtual_participant(
     current_subject: str = Depends(get_current_subject),
     client: httpx.AsyncClient = Depends(get_vp_http_client),
 ):
-    """Send a bot into a room that already has a human participant."""
+    """Send a bot into a room the caller owns and that already has a human participant."""
     vp = _vp_settings()
+    # 503 before anything else: no bot is sent while room tokens cannot be signed.
+    jitsi_signing_key()
     room = request.room_name
+
+    # The bot holds a room token, and Jitsi makes every token holder an owner of the room, so
+    # only the room owner or an admin may send one. Anyone else learns nothing about the room.
+    if not await is_room_moderator(room_name=room, user_id=current_subject):
+        logger.info(
+            f"virtual participant create refused subject={current_subject} room={room} reason=not_owner"
+        )
+        raise not_found()
 
     if request.meeting_id is not None:
         try:
@@ -277,7 +344,7 @@ async def create_virtual_participant(
             detail=f"room already has {len(active)} virtual participants, limit is {vp.max_bots_per_room}",
         )
 
-    bot_token = create_jitsi_token(sub=BOT_SUBJECT, room=room, moderator=False)
+    bot_token = create_jitsi_bot_token(room)
     response = await _worker_request(
         client,
         "POST",
@@ -295,6 +362,9 @@ async def create_virtual_participant(
         f"virtual participant create subject={current_subject} room={room} "
         f"bot_id={bot_id} worker_status={response.status_code}"
     )
+    # Only a new bot is recorded. A 200 returns an existing bot of the room, whose owner stays.
+    if response.status_code == 202 and isinstance(bot_id, str) and bot_id:
+        await _record_bot_owner(bot_id, current_subject, room)
     return _relay(response)
 
 
@@ -308,13 +378,17 @@ async def list_virtual_participants(
     current_subject: str = Depends(get_current_subject),
     client: httpx.AsyncClient = Depends(get_vp_http_client),
 ):
-    """List bots known to the worker cluster, optionally for one room."""
+    """List the caller's bots, optionally for one room. Admins see every bot of the cluster."""
     params = {"room": _normalize_room(room_name)} if room_name is not None else None
     response = await _worker_request(client, "GET", "/bots", params=params)
     if response.status_code != 200:
         return _relay(response)
-    logger.debug(f"virtual participant list subject={current_subject} params={params}")
-    return JSONResponse(content=_bots_from_payload(_json_body(response)))
+    bots = _bots_from_payload(_json_body(response))
+    if not await is_admin(current_subject):
+        owned = await _owned_bot_ids(current_subject)
+        bots = [bot for bot in bots if bot.get("id") in owned]
+    logger.debug(f"virtual participant list subject={current_subject} params={params} count={len(bots)}")
+    return JSONResponse(content=bots)
 
 
 @router.get(
@@ -328,6 +402,7 @@ async def get_virtual_participant(
     client: httpx.AsyncClient = Depends(get_vp_http_client),
 ):
     """Return one bot's state."""
+    await _require_bot_owner(current_subject, bot_id, "get")
     response = await _worker_request(client, "GET", _bot_path(bot_id))
     logger.debug(f"virtual participant get subject={current_subject} bot_id={bot_id}")
     return _relay(response)
@@ -344,6 +419,7 @@ async def delete_virtual_participant(
     client: httpx.AsyncClient = Depends(get_vp_http_client),
 ):
     """Make a bot leave its room. Returns the final view."""
+    await _require_bot_owner(current_subject, bot_id, "delete")
     response = await _worker_request(client, "DELETE", _bot_path(bot_id))
     body = _json_body(response)
     room = body.get("room") if isinstance(body, dict) else None
@@ -370,6 +446,7 @@ async def say_virtual_participant(
     client: httpx.AsyncClient = Depends(get_vp_http_client),
 ):
     """Queue one utterance for the bot to speak."""
+    await _require_bot_owner(current_subject, bot_id, "say")
     response = await _worker_request(
         client, "POST", _bot_path(bot_id, "/say"), json={"text": request.text}
     )

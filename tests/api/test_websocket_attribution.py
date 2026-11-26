@@ -12,6 +12,18 @@ from butler.jitsi_api_functions import TranscriptionResult
 from config import settings
 from core import SessionManager
 
+
+JIGASI_KEY = "jigasi-test-key"
+JIGASI_AUTH = {"Authorization": f"Bearer {JIGASI_KEY}"}
+
+
+@pytest.fixture(autouse=True)
+def _jigasi_key(monkeypatch: pytest.MonkeyPatch):
+    """/ws requires the Jigasi service key on the handshake."""
+    monkeypatch.setattr(settings, "enable_auth", True)
+    monkeypatch.setattr(settings, "jigasi_meetween_api_key", JIGASI_KEY)
+
+
 MEETING_ID = "6f0c1b52-3c1a-4d0e-9a55-2f4f1d1a9b11"
 ROOM = "attribution-room"
 TIMESTAMP = 1_700_000_000_123.0
@@ -69,7 +81,7 @@ class TestWebsocketAttribution:
             participants=[{"participant_id": "p1", "username": "Ada"}],
         )
 
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=JIGASI_AUTH) as ws:
             ws.send_json(_audio_message("p1"))
             assert ws.receive_json()["participant_id"] == "p1"
 
@@ -86,7 +98,7 @@ class TestWebsocketAttribution:
             ws_route, "caption_audio", AsyncMock(return_value=_result(is_interim=True))
         )
 
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=JIGASI_AUTH) as ws:
             ws.send_json(_audio_message("p1"))
             ws.receive_json()
 
@@ -109,7 +121,7 @@ class TestWebsocketVirtualParticipant:
         )
 
     def test_bot_audio_is_neither_transcribed_nor_stored(self, test_client: TestClient):
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=JIGASI_AUTH) as ws:
             ws.send_json(_audio_message("bot1"))
             ws.send_json(_audio_message("p1"))
             # Only the human chunk is answered: the bot chunk produced no message before it.
@@ -122,14 +134,14 @@ class TestWebsocketVirtualParticipant:
     def test_unset_suffix_transcribes_the_bot(self, test_client: TestClient, monkeypatch):
         monkeypatch.setattr(settings, "vp_bot_name_suffix", "")
 
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=JIGASI_AUTH) as ws:
             ws.send_json(_audio_message("bot1"))
             assert ws.receive_json()["participant_id"] == "bot1"
 
         assert SessionManager.get_transcript(MEETING_ID, ROOM) == "Agentar (bot): hello there"
 
     def test_participant_missing_from_the_list_is_transcribed(self, test_client: TestClient):
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=JIGASI_AUTH) as ws:
             ws.send_json(_audio_message("late"))
             assert ws.receive_json()["participant_id"] == "late"
 

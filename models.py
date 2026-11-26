@@ -212,6 +212,8 @@ class MeetweenTaskResponse(BaseModel):
     language: Optional[str] = "en"
     participant_id: Optional[str] = None
     error: Optional[str] = None
+    # Set only for an Agentar bot: "escalate" when the answer is the fixed escalation line.
+    answer_kind: Optional[Literal["answer", "escalate"]] = None
 
 class MeetweenTranslationResponse(MeetweenTaskResponse):
     type: Literal[TaskType.TEXT_TRANSLATION, TaskType.SPEECH_TRANSLATION]

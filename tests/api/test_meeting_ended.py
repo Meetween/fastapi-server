@@ -94,14 +94,14 @@ class TestMeetingEnded:
         test_client.post(f"/meetings/{MEETING_ID}/ended", headers=AUTH)
 
         with pytest.raises(WebSocketDenialResponse) as exc:
-            with test_client.websocket_connect(f"/ws/{MEETING_ID}"):
+            with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=AUTH):
                 pass
 
         assert exc.value.status_code == 409
         assert MEETING_ID not in SessionManager._connections
 
     def test_open_websocket_is_closed_by_end_signal(self, test_client: TestClient):
-        with test_client.websocket_connect(f"/ws/{MEETING_ID}") as ws:
+        with test_client.websocket_connect(f"/ws/{MEETING_ID}", headers=AUTH) as ws:
             assert MEETING_ID in SessionManager._connections
 
             test_client.post(f"/meetings/{MEETING_ID}/ended", headers=AUTH)

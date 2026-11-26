@@ -1,10 +1,17 @@
 import asyncio
 import json
 import logging
+import re
 import time
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi.security import HTTPAuthorizationCredentials
+from fastapi.security.utils import get_authorization_scheme_param
+from starlette.status import WS_1008_POLICY_VIOLATION
 from starlette.websockets import WebSocketState
+from api.deps.service_token import token_matches
+from src.schemas.virtual_participants import ROOM_PATTERN
+from utils.storage import UnsafePathError
 from core import EngineManager, SessionManager
 from core.utterance_collector import UtteranceCollector
 from butler import caption_audio, translate_audio, ResultType
@@ -33,6 +40,41 @@ ws_router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
+# A close sent before accept rejects the handshake (uvicorn answers HTTP 403, the code stays in
+# process). Jigasi retries a failed handshake a bounded number of times, but reconnects without end
+# after a close that follows accept, so every handshake refusal happens before accept.
+WS_CLOSE_UNAUTHORIZED = 4401
+
+# The Jitsi meetingUniqueId is a UUID. ASCII letters, digits, `_` and `-` only: no dot, no separator,
+# no Unicode look-alike. Checked with re.fullmatch, so a trailing newline does not pass as `$` would.
+MEETING_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}"
+_MEETING_ID = re.compile(MEETING_ID_PATTERN)
+# The Jitsi room segment, the platform's room rule.
+_ROOM_NAME = re.compile(ROOM_PATTERN)
+
+
+def valid_meeting_id(value: object) -> bool:
+    return isinstance(value, str) and _MEETING_ID.fullmatch(value) is not None
+
+
+def valid_room_name(value: object) -> bool:
+    return isinstance(value, str) and _ROOM_NAME.fullmatch(value) is not None
+
+
+def _bearer(websocket: WebSocket) -> Optional[HTTPAuthorizationCredentials]:
+    """The Authorization bearer of the upgrade request, parsed as HTTPBearer does."""
+    scheme, token = get_authorization_scheme_param(websocket.headers.get("authorization"))
+    if scheme.lower() != "bearer" or not token:
+        return None
+    return HTTPAuthorizationCredentials(scheme=scheme, credentials=token)
+
+
+def jigasi_authorized(websocket: WebSocket) -> bool:
+    """The Jigasi service key, under the same ENABLE_AUTH switch as Jigasi's HTTP routes."""
+    if not settings.enable_auth:
+        return True
+    return token_matches(_bearer(websocket), settings.jigasi_meetween_api_key)
+
 
 @ws_router.websocket("/ws/{meeting_id}")
 async def websocket_caption(websocket: WebSocket, meeting_id: str):
@@ -49,7 +91,23 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
     In utterance mode with ASR_UTTERANCE_FINAL_CAPTION, each 2 s caption goes out as interim, named
     by its utterance and carrying the utterance's captions so far, and the utterance text goes out
     once as the final caption under the same message id. Jigasi relays both to the room.
+
+    The upgrade request carries the Jigasi service key as `Authorization: Bearer`; without it the
+    handshake is closed with 4401 before accept. A meeting id outside MEETING_ID_PATTERN is closed
+    with 1008. An audio message whose room_name breaks ROOM_PATTERN is answered INVALID_REQUEST and
+    dropped before any path is built; the socket stays open.
     """
+    if not jigasi_authorized(websocket):
+        client = websocket.client.host if websocket.client else None
+        logger.warning("WebSocket refused, missing or invalid service key: client=%s", client)
+        await websocket.close(code=WS_CLOSE_UNAUTHORIZED, reason="Unauthorized")
+        return
+
+    if not valid_meeting_id(meeting_id):
+        logger.warning("WebSocket refused, invalid meeting id: %r", meeting_id[:160])
+        await websocket.close(code=WS_1008_POLICY_VIOLATION, reason="Invalid meeting id")
+        return
+
     if SessionManager.is_meeting_ended(meeting_id):
         # Reject the handshake (not accept-then-close): Jigasi retries failed handshakes
         # with bounded backoff, but treats a server close after accept as a drop and reconnects forever.
@@ -135,18 +193,41 @@ async def websocket_caption(websocket: WebSocket, meeting_id: str):
                     try:
                         request = MeetweenWebsocketRequest(**data)
 
-                        if not audio_recorder_initialized:
-                            room_name = request.room_name
-                            AudioRecorder.init_recording(room_name=room_name, meeting_id=meeting_id)
-                            audio_recorder_initialized = True
+                        if not valid_room_name(request.room_name):
+                            logger.warning(
+                                "Audio dropped, invalid room_name: meeting=%s room=%r",
+                                meeting_id, request.room_name[:160],
+                            )
+                            await send(MeetweenErrorResponse(
+                                message="Invalid room_name",
+                                code="INVALID_REQUEST",
+                            ).model_dump(mode="json"))
+                            continue
 
                         audio_data = request.get_audio_bytes()
-                        await AudioRecorder.save_chunk(
-                            room_name=room_name,
-                            meeting_id=meeting_id,
-                            audio_data=audio_data,
-                            chunk_duration=2.0,
-                        )
+                        try:
+                            if not audio_recorder_initialized:
+                                AudioRecorder.init_recording(room_name=request.room_name, meeting_id=meeting_id)
+                                room_name = request.room_name
+                                audio_recorder_initialized = True
+
+                            await AudioRecorder.save_chunk(
+                                room_name=room_name,
+                                meeting_id=meeting_id,
+                                audio_data=audio_data,
+                                chunk_duration=2.0,
+                            )
+                        except UnsafePathError:
+                            # Names passed the patterns, so the tree itself was changed (a link).
+                            logger.error(
+                                "Audio dropped, recording path leaves the base: meeting=%s room=%s",
+                                meeting_id, request.room_name,
+                            )
+                            await send(MeetweenErrorResponse(
+                                message="Recording path refused",
+                                code="INVALID_REQUEST",
+                            ).model_dump(mode="json"))
+                            continue
 
                         if SessionManager.is_virtual_participant(meeting_id, request.participant_id):
                             # The bot's own speech: no caption, no transcript line, no GPU time.

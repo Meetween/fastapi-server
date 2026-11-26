@@ -157,9 +157,9 @@ async def get_summary_text(request: LMMRequest) -> str:
 
         meeting_id = request.meeting_id
         room_name = request.room_name
-        meeting_path = settings.recordings_base_path / room_name / meeting_id
+        meeting_path = StorageManager.find_meeting_directory(settings.recordings_base_path, room_name, meeting_id)
 
-        if not meeting_path.exists():
+        if meeting_path is None:
             logger.error(f"No audio found. Can't summarize. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,
@@ -354,9 +354,9 @@ async def api_catchup(request: MeetweenCatchupRequest = Body(...)):
     try:
         meeting_id = request.meeting_id
         room_name = request.room_name
-        meeting_path = settings.recordings_base_path / room_name / meeting_id
+        meeting_path = StorageManager.find_meeting_directory(settings.recordings_base_path, room_name, meeting_id)
 
-        if not meeting_path.exists():
+        if meeting_path is None:
             logger.error(f"No audio found for catching up. Meeting: {room_name}/{meeting_id}")
             raise HTTPException(
                 status_code=404,

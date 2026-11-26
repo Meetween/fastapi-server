@@ -1,14 +1,19 @@
 """Pydantic request/response schemas for the virtual participants router."""
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+
+from config import settings
+from src.schemas.names import bot_display_name
 
 # Shared with vp-worker. Jitsi room segments are lowercase.
 ROOM_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,62}$"
-NAME_PATTERN = r"^[A-Za-z0-9 _.()-]{1,48}$"
 BOT_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
-# vp-worker appends this suffix to every bot display name.
-BOT_NAME_SUFFIX = " (bot)"
+# vp-worker appends its VP_BOT_NAME_SUFFIX to every bot display name. It is the "(AI)" disclosure
+# on the Agentar stacks, and it is how a bot is told apart from a human in the room. The same
+# environment value is read here; unset, the Agentar default applies.
+DEFAULT_BOT_NAME_SUFFIX = " (AI)"
+BOT_NAME_SUFFIX = settings.vp_bot_name_suffix if settings.vp_bot_name_suffix.strip() else DEFAULT_BOT_NAME_SUFFIX
 
 BotState = Literal["joining", "joined", "speaking", "leaving", "left", "error", "lost"]
 
@@ -21,10 +26,13 @@ class VirtualParticipantCreateRequest(BaseModel):
         pattern=ROOM_PATTERN,
         description="Room segment of the Jitsi join URL. Lowercased before validation.",
     )
-    display_name: str = Field(
+    display_name: Annotated[str, AfterValidator(bot_display_name)] = Field(
         default="Agentar",
-        pattern=NAME_PATTERN,
-        description=f"Name shown in the meeting. The worker appends '{BOT_NAME_SUFFIX}'.",
+        description=(
+            "Name shown in the meeting: Unicode letters and marks, digits, space and `_ . ' -`, "
+            "1 to 48 characters, no parentheses, so only the worker suffix can add the "
+            f"'{BOT_NAME_SUFFIX.strip()}' disclosure."
+        ),
     )
     script: str | None = Field(default=None, max_length=2000)
     meeting_id: str | None = Field(

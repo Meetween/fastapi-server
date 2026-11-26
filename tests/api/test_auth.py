@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -10,6 +11,16 @@ from tests.utils.helpers import (
     obtain_bearer_headers,
     register_user_via_api,
 )
+
+# Jitsi room tokens need their own key; the routes answer 503 without it.
+_JITSI_KEY = "auth-test-jitsi-key-" + "k" * 32
+
+
+@pytest.fixture
+def jitsi_key(monkeypatch) -> str:
+    monkeypatch.setattr(settings, "jwt_jitsi_secret_key", _JITSI_KEY)
+    return _JITSI_KEY
+
 
 _REGISTER_PAYLOAD = {
     "email": "blocked@example.com",
@@ -209,7 +220,7 @@ class TestAuthEndpoints:
         assert response.status_code == 401
 
     def test_jitsi_issue_and_context_with_access_token(
-        self, test_client, admin_headers, monkeypatch
+        self, test_client, admin_headers, monkeypatch, jitsi_key
     ):
         monkeypatch.setattr(
             settings,
@@ -242,7 +253,8 @@ class TestAuthEndpoints:
         )
         assert issue_response.status_code == 200
         issue_data = issue_response.json()
-        assert "jitsi_token" in issue_data
+        assert issue_data["jitsi_token"]
+        assert issue_data["moderator"] is True
         assert issue_data["room"] == "room-123"
         assert issue_data["meeting_context"]["meeting_id"] == meeting_uuid
         assert issue_data["meeting_context"]["room_name"] == "room-123"
@@ -250,18 +262,18 @@ class TestAuthEndpoints:
         assert issue_data["meeting_context"]["metadata"]["source"] == "jwt-auth"
         assert issue_data.get("meet_join_url") is None
 
-        validate_response = test_client.post(
-            "/api/auth/jitsi/validate",
-            json={"token": issue_data["jitsi_token"]},
+        # The public validate route is gone; the token is checked the way Prosody checks it.
+        claims = jwt.decode(
+            issue_data["jitsi_token"],
+            jitsi_key,
+            algorithms=["HS256"],
+            audience="jitsi",
+            issuer=settings.meeting_jwt.issuer,
         )
-        assert validate_response.status_code == 200
-        validate_data = validate_response.json()
-        assert validate_data["valid"] is True
-        assert isinstance(validate_data["claims"], dict)
-        assert validate_data["claims"]["room"] == "room-123"
-        assert validate_data["claims"]["iss"] == settings.meeting_jwt.issuer
-        assert "iat" in validate_data["claims"]
-        assert "meeting_id" not in validate_data["claims"]
+        assert claims["room"] == "room-123"
+        assert "iat" in claims
+        assert "meeting_id" not in claims
+        assert "jwt-user@example.com" not in json.dumps(claims)
 
         context_response = test_client.get(
             "/api/auth/context/room-123",
@@ -273,7 +285,7 @@ class TestAuthEndpoints:
         assert context_data["meeting_id"] == meeting_uuid
 
     def test_jitsi_issue_omitted_meeting_id_keys_context_by_room(
-        self, test_client, admin_headers
+        self, test_client, admin_headers, jitsi_key
     ):
         headers = create_user_via_api_and_login(
             test_client,
@@ -313,7 +325,7 @@ class TestAuthEndpoints:
         assert bad.status_code == 422
 
     def test_jitsi_meet_join_url_when_base_configured(
-        self, test_client, admin_headers, monkeypatch
+        self, test_client, admin_headers, monkeypatch, jitsi_key
     ):
         monkeypatch.setattr(
             settings,
@@ -333,14 +345,42 @@ class TestAuthEndpoints:
         issue_response = test_client.post(
             "/api/auth/jitsi/issue",
             json={
-                "room_name": "My Room",
+                "room_name": "My-Room",
                 "moderator": False,
             },
             headers=headers,
         )
         assert issue_response.status_code == 200
-        url = issue_response.json()["meet_join_url"]
-        assert url is not None
-        assert url.startswith("https://meet.example.com/")
-        assert "My%20Room" in url or "My+Room" in url
-        assert "jwt=" in url
+        body = issue_response.json()
+        # The token travels in the fragment, as a JSON string, never in the query.
+        assert body["meet_join_url"] == (
+            f"https://meet.example.com/my-room#jwt=%22{body['jitsi_token']}%22"
+        )
+
+    def test_jitsi_issue_refuses_a_room_outside_the_pattern(
+        self, test_client, admin_headers, jitsi_key
+    ):
+        headers = create_user_via_api_and_login(
+            test_client,
+            email="spaceroom@example.com",
+            password="secret123",
+            admin_headers=admin_headers,
+        )
+        response = test_client.post(
+            "/api/auth/jitsi/issue",
+            json={"room_name": "My Room"},
+            headers=headers,
+        )
+        assert response.status_code == 422
+
+    def test_jitsi_issue_is_503_without_the_jitsi_key(
+        self, test_client, admin_headers, monkeypatch
+    ):
+        monkeypatch.setattr(settings, "jwt_jitsi_secret_key", "")
+        response = test_client.post(
+            "/api/auth/jitsi/issue",
+            json={"room_name": "no-key-room"},
+            headers=admin_headers,
+        )
+        assert response.status_code == 503
+        assert response.json()["code"] == "jitsi_key_missing"

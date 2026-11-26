@@ -1,0 +1,83 @@
+{
+  "transcript": "t3.txt",
+  "entries": "t3.jsonl",
+  "deferrals": "t3.deferrals.json",
+  "line_numbers": "1 based, line N of the txt file is entry N of the jsonl file",
+  "summary_points": [
+    {
+      "text": "Sara Neri sends the training invitations to the Trento group by Friday",
+      "facts": [
+        "training invitations",
+        "Trento",
+        "Friday"
+      ],
+      "lines": [
+        5
+      ]
+    },
+    {
+      "text": "Lyon signs the data processing agreement on 20 November",
+      "facts": [
+        "Lyon",
+        "20 November|twentieth of November"
+      ],
+      "lines": [
+        8
+      ]
+    },
+    {
+      "text": "Katrin Vogel runs the user training at Bonn",
+      "facts": [
+        "Katrin Vogel",
+        "Bonn"
+      ],
+      "lines": [
+        11
+      ]
+    }
+  ],
+  "action_items": [
+    {
+      "text": "Send the training invitations to the Trento group",
+      "owner": "Sara Neri",
+      "due": "Friday",
+      "line": 5
+    }
+  ],
+  "answers": [
+    {
+      "question_id": "Q1",
+      "status": "answered",
+      "answer": "Lyon will sign on 20 November",
+      "answer_facts": [
+        "20 November|twentieth of November"
+      ],
+      "speaker": "Anil Kapoor",
+      "quote": "they will sign, uh, on the twentieth of November",
+      "line": 8
+    },
+    {
+      "question_id": "Q2",
+      "status": "answered",
+      "answer": "Katrin Vogel will run the user training at Bonn",
+      "answer_facts": [
+        "Katrin Vogel"
+      ],
+      "speaker": "Sara Neri",
+      "quote": "Katrin Vogel will, will run the training in, in Bonn",
+      "line": 11
+    }
+  ],
+  "open_points": [],
+  "must_contain": [],
+  "must_not_contain": [
+    "very very",
+    "13 November",
+    "no answer captured"
+  ],
+  "must_not_contain_words": [
+    "um",
+    "uh",
+    "you know"
+  ]
+}

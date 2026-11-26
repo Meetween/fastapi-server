@@ -1,0 +1,12 @@
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "Good morning everyone, let us start the Atlas steering call.", "timestamp": 1794391203000, "source": "speech"}
+{"participant_id": "7b44e5d1", "username": "Sara Neri", "text": "Good morning, I am here for Trento.", "timestamp": 1794391208000, "source": "speech"}
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "Thank you Sara. Agentar will give us the status first.", "timestamp": 1794391240000, "source": "speech"}
+{"participant_id": "agentar-bot", "username": "Agentar (asked Q1)", "text": "Can Lyon confirm the date they sign the data processing agreement?", "timestamp": 1794391255000, "source": "agentar_marker"}
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "Lyon told me this morning that they sign on 20 November.", "timestamp": 1794391263000, "source": "speech"}
+{"participant_id": "7b44e5d1", "username": "Sara Neri", "text": "Good, that is in time for January.", "timestamp": 1794391270000, "source": "speech"}
+{"participant_id": "agentar-bot", "username": "Agentar (asked Q2)", "text": "Who will run the user training at the Bonn site?", "timestamp": 1794391284000, "source": "agentar_marker"}
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "The Bonn training material is ready in English and Italian, so that part is done.", "timestamp": 1794391292000, "source": "speech"}
+{"participant_id": "7b44e5d1", "username": "Sara Neri", "text": "Trento has the same material, the room is booked for 25 November.", "timestamp": 1794391299000, "source": "speech"}
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "Next topic. The usage survey goes out on Friday, I will send it to the group.", "timestamp": 1794391312000, "source": "speech"}
+{"participant_id": "7b44e5d1", "username": "Sara Neri", "text": "Fine. Then the next steering call is on Tuesday 24 November.", "timestamp": 1794391320000, "source": "speech"}
+{"participant_id": "3f9a1c02", "username": "Anil Kapoor", "text": "Yes. Thank you all, we close here.", "timestamp": 1794391327000, "source": "speech"}
