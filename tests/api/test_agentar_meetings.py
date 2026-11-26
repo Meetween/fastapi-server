@@ -1,14 +1,15 @@
 """Agentar meetings: create, list, read, edit, delete, picture override, dispatch, recall.
 
 vp-worker and Prosody are an httpx.MockTransport behind the `get_vp_http_client` dependency, the
-object store is the in-memory one, MongoDB is mongomock. Two pieces of other tasks are faked at
-their documented seams: `utils.room_owner.claim_room_moderator` and `utils.auth.create_jitsi_bot_token`
-(B2) and `utils.picture.normalise_picture` (B4). The lifecycle (B7) is faked at `advance_waiting(meeting_id)`:
-the fake checks what dispatch hands over (waiting_for_human with the live lock), then does the
-documented next step with the real `dispatch_bot`. The fakes install themselves only while that
-module is absent and replace the attribute otherwise, so these tests keep working after the merges.
+object store is the in-memory one, MongoDB is mongomock. Other modules are faked at their
+documented seams, with their real signatures: `utils.room_owner.claim_room_moderator` and
+`utils.picture.normalise_picture`. The lifecycle is faked at `advance_waiting(meeting_id)`: the fake
+checks what dispatch hands over (waiting_for_human with the live lock), then does the documented
+next step with the real `dispatch_bot`. The bot token is the real one. The real chain runs in
+tests/api/test_agentar_flow.py.
 """
 import asyncio
+import hashlib
 import json
 from datetime import timedelta
 
@@ -29,9 +30,9 @@ from src.database.models.agentar_event import AgentarEvent
 from src.database.models.agentar_file import AgentarFile
 from src.database.models.agentar_meeting import AgentarMeeting
 from src.database.models.agentar_report import AgentarReport
-from tests.seams import install, install_bot_token
+from tests.seams import install
 from tests.worker_schema import check_create_bot
-from utils import agentar_meetings
+from utils import agentar_files, agentar_meetings, picture
 
 BASE = "/api/agentar/meetings"
 JPEG = b"\xff\xd8\xff\xe0" + b"j" * 64
@@ -65,18 +66,17 @@ def rooms(monkeypatch) -> RoomOwners:
 
 
 @pytest.fixture(autouse=True)
-def other_tasks_seams(monkeypatch):
-    install_bot_token(monkeypatch)
-
-
-@pytest.fixture(autouse=True)
 def picture_normaliser(monkeypatch):
-    def normalise_picture(data: bytes) -> bytes:
-        if data.startswith(b"BAD"):
-            raise AgentarError(422, "picture_invalid", "The picture cannot be read")
-        return JPEG
+    """Same contract as `utils.picture.normalise_picture`: async, a NormalisedPicture, PictureError
+    for a file it cannot use. The real Pillow path is covered by tests/unit/test_picture.py and the
+    flow test."""
 
-    install(monkeypatch, "utils.picture", normalise_picture=normalise_picture)
+    async def normalise_picture(data: bytes) -> picture.NormalisedPicture:
+        if data.startswith(b"BAD"):
+            raise picture.PictureError("picture_invalid", "The picture cannot be read")
+        return picture.NormalisedPicture(data=JPEG, sha256=hashlib.sha256(JPEG).hexdigest())
+
+    monkeypatch.setattr(picture, "normalise_picture", normalise_picture)
 
 
 class Upstream:
@@ -84,6 +84,8 @@ class Upstream:
 
     def __init__(self) -> None:
         self.humans = 1
+        # The lifecycle leaves the meeting waiting, as when a concurrent dispatch took the slot.
+        self.lifecycle_waits = False
         self.prosody_status = 200
         self.bot_response: httpx.Response | None = None
         self.delete_response: httpx.Response | None = None
@@ -149,14 +151,15 @@ def upstream(monkeypatch, object_store):
     app.dependency_overrides[vp_routes.get_vp_http_client] = lambda: client
 
     async def advance_waiting(meeting_id: str) -> None:
-        """Stands in for B7: with a human in the room claim joining and call the worker, record
-        the bot or the failure; with none leave the meeting waiting for the tick."""
+        """Stands in for B7: claim joining and call the worker, record the bot or the failure. The
+        room is not asked: the Agentar opens it. With `lifecycle_waits` leave the meeting waiting
+        for the tick, as a taken slot does."""
         fake.lifecycle_calls.append(meeting_id)
         collection = AgentarMeeting.get_collection()
         where = {"_id": ObjectId(meeting_id)}
         doc = await collection.find_one(where)
         assert doc["status"] == "waiting_for_human" and doc["live_lock"] is True
-        if fake.humans == 0:
+        if fake.lifecycle_waits:
             return
         await collection.update_one(where, {"$set": {"status": "joining", "dispatched_at": clock.utcnow()}})
         try:
@@ -257,6 +260,15 @@ class TestCreate:
         assert response.status_code == 409
         assert code_of(response) == "room_not_owned"
         assert asyncio.run(AgentarMeeting.count_documents({"owner": user_b.email})) == 0
+
+    def test_any_room_lets_an_agentar_into_a_room_held_by_another_user(
+        self, test_client, user_a, user_b, rooms, monkeypatch
+    ) -> None:
+        agentar_settings(monkeypatch, any_room=True)
+        make_id(test_client, user_a, room="shared")
+        response = make(test_client, user_b, room="shared")
+        assert response.status_code == 201, response.text
+        assert rooms.owners["shared"] == user_a.email
 
     @pytest.mark.parametrize(
         ("value", "expected"),
@@ -621,6 +633,20 @@ class TestDelete:
         assert asyncio.run(AgentarFile.find_by_id(kept_file)) is not None
         assert asyncio.run(AgentarFile.find_by_id(general)) is not None
 
+    def test_meeting_documents_go_through_the_files_module(self, test_client, user_a, rooms, object_store, monkeypatch) -> None:
+        meeting_id = make_id(test_client, user_a)
+        _meeting_file(user_a, meeting_id, object_store)
+        calls = []
+        real = agentar_files.delete_meeting_documents
+
+        async def spy(owner, store, mid):
+            calls.append((owner, store, mid))
+            return await real(owner, store, mid)
+
+        monkeypatch.setattr(agentar_files, "delete_meeting_documents", spy)
+        assert test_client.delete(f"{BASE}/{meeting_id}", headers=user_a.headers).status_code == 204
+        assert calls == [(user_a.email, object_store, meeting_id)]
+
     def test_an_unreachable_store_does_not_resurrect_the_meeting(self, test_client, user_a, rooms, object_store, monkeypatch, caplog) -> None:
         from utils.object_store import ObjectStoreError
 
@@ -772,7 +798,7 @@ class TestDispatchNow:
         body = response.json()
         assert body["status"] == "joining"
         assert body["bot_id"] == "bot-1"
-        assert body["display_name"] == "Alice Agentar (AI)"
+        assert body["display_name"] == "Alice Tester Agentar (AI)"
         assert body["voice"] == settings.agentar.default_voice
         assert body["start_at"] is not None
         assert body["dispatched_at"] is not None
@@ -795,8 +821,17 @@ class TestDispatchNow:
         assert upstream.posted[0]["jwt"] not in text
         assert "avatar_jpeg_b64" not in text
 
-    def test_an_empty_room_waits_for_a_human(self, test_client, user_a, rooms, object_store, upstream) -> None:
+    def test_an_empty_room_does_not_stop_the_dispatch(self, test_client, user_a, rooms, object_store, upstream) -> None:
+        """The Agentar opens the room: dispatch never asks Prosody."""
         upstream.humans = 0
+        meeting_id = make_id(test_client, user_a)
+        body = dispatch(test_client, user_a, meeting_id).json()
+        assert body["status"] == "joining"
+        assert len(upstream.posted) == 1
+        assert upstream.prosody_calls == 0
+
+    def test_a_meeting_left_waiting_has_no_bot_and_holds_the_slot(self, test_client, user_a, rooms, object_store, upstream) -> None:
+        upstream.lifecycle_waits = True
         meeting_id = make_id(test_client, user_a)
         body = dispatch(test_client, user_a, meeting_id).json()
         assert body["status"] == "waiting_for_human"
@@ -898,29 +933,59 @@ class TestTheThree409s:
         force(theirs, status="ended", live_lock=None)
         assert dispatch(test_client, user_a, make_id(test_client, user_a, room="mine")).status_code == 202
 
-    def test_a_race_over_the_cap_gives_the_slot_back(self, test_client, user_a, rooms, object_store, upstream, monkeypatch) -> None:
-        """Both claims saw room for one, both took the lock: the verify step finds two holders and
-        the late claim restores the meeting to what it was."""
-        meeting_id = make_id(test_client, user_a)
-        calls = {"n": 0}
-        real = agentar_meetings._live_holders
+    def test_a_waiting_meeting_does_not_hold_the_global_slot(self, test_client, user_a, user_b, rooms, object_store, upstream) -> None:
+        """A meeting still waiting takes no Ditto session, so another owner's dispatch goes through."""
+        upstream.lifecycle_waits = True
+        theirs = make_id(test_client, user_b, room="theirs")
+        assert dispatch(test_client, user_b, theirs).json()["status"] == "waiting_for_human"
+        upstream.lifecycle_waits = False
+        mine = make_id(test_client, user_a, room="mine")
+        response = dispatch(test_client, user_a, mine)
+        assert response.status_code == 202, response.text
+        assert response.json()["status"] == "joining"
 
-        async def holders():
-            calls["n"] += 1
-            return 0 if calls["n"] == 1 else 2
-
-        monkeypatch.setattr(agentar_meetings, "_live_holders", holders)
-        response = dispatch(test_client, user_a, meeting_id)
+    @pytest.mark.parametrize("status", ["joining", "live", "leaving"])
+    def test_an_active_bot_holds_the_global_slot(self, test_client, user_a, user_b, rooms, object_store, upstream, status) -> None:
+        theirs = make_id(test_client, user_b, room="theirs")
+        force(theirs, status=status, live_lock=True)
+        response = dispatch(test_client, user_a, make_id(test_client, user_a, room="mine"))
         assert response.status_code == 409
         assert code_of(response) == "agentar_capacity"
-        stored = document(meeting_id)
-        assert stored["status"] == "draft"
-        assert not stored.get("live_lock")
-        assert stored.get("start_at") is None
-        assert stored.get("dispatched_at") is None
-        assert upstream.posted == []
-        monkeypatch.setattr(agentar_meetings, "_live_holders", real)
+
+
+class TestResendQuota:
+    """Sending a missed or failed meeting again costs one unit of `AGENTAR_MEETINGS_PER_DAY`, so a
+    meeting cannot be cycled through the lifecycle for free."""
+
+    @pytest.mark.parametrize("status", ["missed", "failed"])
+    def test_a_resend_counts_against_the_daily_quota(self, test_client, user_a, rooms, object_store, upstream, frozen_clock, monkeypatch, status) -> None:
+        agentar_settings(monkeypatch, meetings_per_day=2)
+        meeting_id = make_id(test_client, user_a)
+        force(meeting_id, status=status, live_lock=None)
         assert dispatch(test_client, user_a, meeting_id).status_code == 202
+        force(meeting_id, status=status, live_lock=None)
+        response = dispatch(test_client, user_a, meeting_id)
+        assert response.status_code == 422
+        assert code_of(response) == "quota_meetings_per_day"
+        assert document(meeting_id)["status"] == status
+        assert make(test_client, user_a, room="other").status_code == 422
+        frozen_clock.advance(days=1)
+        assert dispatch(test_client, user_a, meeting_id).status_code == 202
+
+    def test_the_first_send_of_a_draft_is_covered_by_the_create(self, test_client, user_a, rooms, object_store, upstream, frozen_clock, monkeypatch) -> None:
+        agentar_settings(monkeypatch, meetings_per_day=1)
+        meeting_id = make_id(test_client, user_a)
+        assert dispatch(test_client, user_a, meeting_id).status_code == 202
+        assert document(meeting_id).get("resent_at", []) == []
+
+    def test_a_scheduled_resend_counts_as_well(self, test_client, user_a, rooms, object_store, upstream, frozen_clock, monkeypatch) -> None:
+        agentar_settings(monkeypatch, meetings_per_day=1)
+        start = (clock.utcnow() + timedelta(hours=1)).isoformat()
+        meeting_id = make_id(test_client, user_a, mode="scheduled", start_at=start)
+        force(meeting_id, status="missed")
+        response = dispatch(test_client, user_a, meeting_id)
+        assert response.status_code == 422
+        assert code_of(response) == "quota_meetings_per_day"
 
 
 class TestWorkerFailure:
@@ -1010,7 +1075,7 @@ class TestDispatchScheduled:
         assert response.status_code == 202
         body = response.json()
         assert body["status"] == "scheduled"
-        assert body["display_name"] == f"Alice Agentar{BOT_NAME_SUFFIX}"
+        assert body["display_name"] == f"Alice Tester Agentar{BOT_NAME_SUFFIX}"
         assert body["voice"] == settings.agentar.default_voice
         assert upstream.posted == [] and upstream.lifecycle_calls == []
         assert not document(meeting_id).get("live_lock")
@@ -1064,8 +1129,8 @@ class TestRecall:
         assert response.json()["status"] == "draft"
         assert upstream.deleted == []
 
-    def test_waiting_for_a_human_goes_back_to_draft_and_frees_the_slot(self, test_client, user_a, rooms, object_store, upstream) -> None:
-        upstream.humans = 0
+    def test_waiting_goes_back_to_draft_and_frees_the_slot(self, test_client, user_a, rooms, object_store, upstream) -> None:
+        upstream.lifecycle_waits = True
         meeting_id = make_id(test_client, user_a)
         dispatch(test_client, user_a, meeting_id)
         body = self.recall(test_client, user_a, meeting_id).json()

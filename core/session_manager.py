@@ -3,7 +3,7 @@ import asyncio
 import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from fastapi import WebSocket
 
@@ -11,12 +11,16 @@ from config import settings
 from butler import CaptionHandler
 from butler.triton_client import TritonClient
 from models import HistoryEntry
-from utils import agentar_lifecycle
 
 logger = logging.getLogger(__name__)
 
 SOURCE_SPEECH = "speech"
 SOURCE_CHAT = "chat"
+# A script question the Agentar asked aloud; its own speech is not transcribed.
+SOURCE_AGENTAR = "agentar"
+# The entry the server writes for a worker `question_asked` event. Only this source marks where a
+# script question was asked; a speaker name never does, since guests choose their names.
+SOURCE_AGENTAR_MARKER = "agentar_marker"
 
 
 @dataclass
@@ -70,6 +74,9 @@ class SessionManager:
     _ended_meetings: Dict[str, float] = {}
     # Monotonic time of the last activity per meeting. Drives the idle sweep.
     _last_activity: Dict[str, float] = {}
+    # Called with the meeting id by mark_meeting_ended, before the session is cleared. Higher
+    # layers register here (the Agentar lifecycle copies the transcript), so core imports none.
+    _meeting_ended_hooks: List[Callable[[str], object]] = []
 
     def __new__(cls, *args, **kwargs):
         if cls._instance is None:
@@ -77,6 +84,13 @@ class SessionManager:
         return cls._instance
 
     # Meeting lifecycle
+
+    @classmethod
+    def add_meeting_ended_hook(cls, hook: Callable[[str], object]) -> None:
+        """Run `hook(meeting_id)` in mark_meeting_ended while the session still exists. A hook
+        must not block; one that raises is logged and the others still run. Idempotent."""
+        if hook not in cls._meeting_ended_hooks:
+            cls._meeting_ended_hooks.append(hook)
 
     @classmethod
     def is_meeting_ended(cls, meeting_id: str) -> bool:
@@ -96,7 +110,11 @@ class SessionManager:
 
         # Detach the socket before any await so no other task can pick it up.
         websocket = cls._connections.pop(meeting_id, None)
-        agentar_lifecycle.on_meeting_ended(meeting_id)
+        for hook in list(cls._meeting_ended_hooks):
+            try:
+                hook(meeting_id)
+            except Exception:
+                logger.exception(f"Meeting ended hook {getattr(hook, '__name__', hook)} failed for {meeting_id}")
         cls._clear_meeting_state(meeting_id=meeting_id, room_name=None)
 
         if websocket is not None:
@@ -290,6 +308,17 @@ class SessionManager:
             yield
 
     # Session and chat history management
+    @classmethod
+    def get_session(cls, meeting_id: str) -> Optional[Session]:
+        """The session of a meeting, or None. Read only: no session is created, the idle clock is
+        not touched."""
+        return cls._sessions.get(meeting_id)
+
+    @classmethod
+    def list_sessions(cls) -> List[Session]:
+        """A snapshot of the open sessions, safe to iterate across awaits."""
+        return list(cls._sessions.values())
+
     @classmethod
     def get_or_create_session(cls, meeting_id: str, room_name: Optional[str] = None) -> Session:
         """

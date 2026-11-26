@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import unicodedata
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -27,8 +25,8 @@ from config import settings
 from src.database.models.agentar_file import AgentarFile
 from src.database.models.user import User, UserProfile
 from src.schemas.agentar import Me, MePatch, Picture, Profile, VoiceInfo
-from src.schemas.names import agent_name
 from utils import clock
+from utils.agentar_names import clean_name
 from utils.object_store import ObjectNotFound, ObjectStore, ObjectStoreError
 from utils.picture import NormalisedPicture
 
@@ -50,6 +48,7 @@ VOICE_SAMPLE_DIR = Path(__file__).resolve().parent.parent / "assets" / "voices"
 
 # Used when a user has neither an agent name nor a usable first and last name.
 FALLBACK_AGENT_NAME = "Meetween"
+AGENT_NAME_CHARS = 32
 
 
 # Voices --------------------------------------------------------------------------------------
@@ -119,32 +118,14 @@ def build_me(user: User) -> Me:
     )
 
 
-def _sanitise_agent_name(raw: str) -> Optional[str]:
-    """Reduce free text to something `agent_name` accepts, or None when nothing is left.
-
-    Keeps Unicode letters, marks and digits, plus space and `_ . ' -`; drops the rest, collapses
-    spaces, cuts at 32 characters. A name that holds the word "agentar" is refused as a whole.
-    """
-    kept = []
-    for ch in raw:
-        if unicodedata.category(ch)[0] in {"L", "M"} or ch in "0123456789 _.'-":
-            kept.append(ch)
-    text = " ".join("".join(kept).split())[:32].strip()
-    try:
-        return agent_name(text)
-    except ValueError:
-        return None
-
-
 def effective_agent_name(user: User) -> str:
     """Name for the bot: the stored agent name, else the first and last name, else the first
-    name, else "Meetween". The bot is shown as "<name> Agentar (AI)"."""
+    name, else "Meetween". The bot is shown as "<name> Agentar (AI)". Each candidate goes through
+    `clean_name`, so a value written around the validators still gives a valid display name."""
     stored = user.profile.agent_name if user.profile else None
-    if stored:
-        return stored
     full = " ".join(part for part in (user.first_name, user.last_name) if part)
-    for candidate in (full, user.first_name or ""):
-        cleaned = _sanitise_agent_name(candidate)
+    for candidate in (stored, full, user.first_name):
+        cleaned = clean_name(candidate, AGENT_NAME_CHARS)
         if cleaned:
             return cleaned
     return FALLBACK_AGENT_NAME

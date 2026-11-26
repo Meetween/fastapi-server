@@ -6,31 +6,36 @@ The tick runs every ``AGENTAR_TICK_SECONDS`` (default 30) and does three things:
    ``status: scheduled``, so of two processes sharing the collection exactly one wins. It sets
    ``live_lock``, whose partial unique index holds one live Agentar per owner. Room ownership is
    checked again after the claim (A3 H1): a room now held by another user fails the meeting.
-2. Advances ``waiting_for_human`` meetings. A human in the room (the Prosody count the virtual
-   participant route uses, skipped when ``VP_REQUIRE_HUMAN`` is off) and a free slot under
-   ``AGENTAR_MAX_LIVE_TOTAL`` move the meeting to ``joining`` and call the worker. Past
-   ``start_at + grace_minutes`` the meeting is ``missed``.
+2. Advances ``waiting_for_human`` meetings. The Agentar opens the room: it is sent at the start
+   without waiting for a human, because under JWT auth guests wait for a host outside the MUC
+   and Prosody counts nobody until the bot, which holds a room token, is in. Only a free slot
+   under ``AGENTAR_MAX_LIVE_TOTAL`` is waited for; ``VP_REQUIRE_HUMAN`` gates Butler panel bots
+   and not this. Still blocked past ``start_at + grace_minutes``, the meeting is ``missed``.
 3. Reconciles ``joining``, ``live`` and ``leaving`` meetings with the worker's bot state: binds
    the Jitsi meeting id, moves ``joining`` to ``live``, fails a bot that errors or never joins,
    copies the live transcript from ``SessionManager`` into ``transcript_snapshot``, and ends the
-   meeting when the bot is gone.
+   meeting when the bot is gone. A ``live`` meeting nobody has joined yet counts the humans in
+   the room (the Prosody count of the virtual participant route, bots and the transcriber left
+   out). The first human sets ``human_joined_at``. With nobody ``grace_minutes`` after the bot
+   went live, the bot says its goodbye and the meeting is ``missed`` (``no_human_joined``).
+   Unknown presence never recalls a bot.
 
 Every status change is a ``find_one_and_update`` filtered on the expected status, so a recall, a
 worker event or a second process that moved the meeting first always wins and the tick backs off.
 
 The end of a meeting has three entry points, all idempotent and all funnelled into one update:
 the tick seeing a terminal bot, the worker ``left`` event (B10 calls ``mark_agentar_ended``), and
-Jigasi's ``/meetings/{id}/ended`` through ``on_meeting_ended``, the one hook line in
-``SessionManager.mark_meeting_ended``. That hook copies the transcript before the session is
+Jigasi's ``/meetings/{id}/ended`` through ``on_meeting_ended``, which this module registers as a
+``SessionManager`` meeting ended hook on import. That hook copies the transcript before the session is
 cleared, so the report reads it from Mongo and never from memory.
 
-Collaborators of other modules are reached through ``LifecycleDeps`` and imported lazily, so this
-module imports neither ``core`` nor the API routes at load time and tests swap them for fakes.
+Collaborators of other modules are reached through ``LifecycleDeps``, so tests swap them for
+fakes. They are imported as modules and looked up at call time: ``core.session_manager``,
+``agentar_events`` and ``agentar_report`` import this module in turn.
 """
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -38,19 +43,19 @@ from typing import Any, Awaitable, Callable, Iterable, Optional
 
 from bson import ObjectId
 from bson.errors import InvalidId
+from fastapi import HTTPException
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
+from api.routes import virtual_participants as vp_route
 from config import settings
+from core import session_manager
 from src.database.models.agentar_meeting import AgentarMeeting
-from utils import clock
+from src.database.models.user import User
+from utils import agentar_events, agentar_report, agentar_worker, clock, room_owner
 
 logger = logging.getLogger(__name__)
 
-# A bot still joining this long after dispatch is failed with join_timeout. The worker gives up
-# on its own after VP_JOIN_TIMEOUT_S (45 s) plus the Ditto setup (60 s); this is the backstop for
-# a worker that never reports.
-JOIN_TIMEOUT_SECONDS = 180
 # Due scheduled meetings claimed per tick. The rest wait for the next tick.
 CLAIM_BATCH = 50
 
@@ -59,7 +64,7 @@ BOT_JOINED_STATES = frozenset({"joined", "speaking"})
 BOT_TERMINAL_STATES = frozenset({"left", "error", "lost"})
 
 # status_reason values of the contract (Meeting.status_reason).
-ROOM_STAYED_EMPTY = "room_stayed_empty"
+NO_HUMAN_JOINED = "no_human_joined"
 ANOTHER_AGENTAR_LIVE = "another_agentar_live"
 AGENTAR_CAPACITY = "agentar_capacity"
 ROOM_NOT_OWNED = "room_not_owned"
@@ -86,6 +91,8 @@ class LifecycleDeps:
     - ``dispatch_bot(meeting)``: sends the bot, returns the worker bot view (``id``, ``state``).
     - ``get_bot(bot_id)``: the worker bot view, or None when the worker no longer knows the bot.
     - ``remove_bot(bot_id)``: makes a bot leave without the farewell.
+    - ``farewell_bot(bot_id)``: makes a bot say its farewell and leave. Raises when the worker
+      cannot be reached.
     - ``enqueue_report(meeting_id)``: queues the report job of an ended meeting.
     - ``record_event(owner=, meeting_id=, type=, data=, event_id=)``: a server side notification.
     """
@@ -95,6 +102,7 @@ class LifecycleDeps:
     dispatch_bot: Callable[[AgentarMeeting], Awaitable[dict[str, Any]]]
     get_bot: Callable[[str], Awaitable[Optional[dict[str, Any]]]]
     remove_bot: Callable[[str], Awaitable[None]]
+    farewell_bot: Callable[[str], Awaitable[None]]
     enqueue_report: Callable[[str], Awaitable[None]]
     record_event: Callable[..., Awaitable[None]]
 
@@ -103,13 +111,8 @@ class LifecycleDeps:
 
 
 async def _human_in_room(room: str) -> Optional[bool]:
-    from fastapi import HTTPException
-
-    from api.routes import virtual_participants as vp_route
-
+    # Asked whatever VP_REQUIRE_HUMAN says: that switch gates Butler panel bots only.
     vp = settings.virtual_participants
-    if not vp.require_human:
-        return True
     client = await vp_route.get_vp_http_client()
     try:
         return await vp_route._count_humans(client, vp, room) > 0
@@ -119,45 +122,35 @@ async def _human_in_room(room: str) -> Optional[bool]:
 
 
 async def _owns_room(meeting: AgentarMeeting) -> bool:
-    from src.database.models.user import User
-    from utils.room_owner import claim_room_moderator  # B2
-
     user = await User.find_by_email(meeting.owner)
     if user is None:
         return False
-    return bool(await claim_room_moderator(meeting.room_name, user))
+    return bool(await room_owner.may_send_agentar(meeting.room_name, user))
 
 
 async def _dispatch_bot(meeting: AgentarMeeting) -> dict[str, Any]:
-    from utils.agentar_worker import dispatch_bot  # B6
-
-    return await dispatch_bot(meeting)
+    return await agentar_worker.dispatch_bot(meeting)
 
 
 async def _get_bot(bot_id: str) -> Optional[dict[str, Any]]:
-    from utils.agentar_worker import get_bot  # B6
-
-    return await get_bot(bot_id)
+    return await agentar_worker.get_bot(bot_id)
 
 
 async def _remove_bot(bot_id: str) -> None:
-    from utils.agentar_worker import recall_bot  # B6
+    await agentar_worker.recall_bot(bot_id, farewell=False)
 
-    await recall_bot(bot_id, farewell=False)
+
+async def _farewell_bot(bot_id: str) -> None:
+    await agentar_worker.recall_bot(bot_id, farewell=True)
 
 
 async def _enqueue_report(meeting_id: str) -> None:
-    from utils.agentar_report import enqueue_report  # B9
-
-    result = enqueue_report(meeting_id)
-    if inspect.isawaitable(result):
-        await result
+    # Schedules the job and returns its task at once; the end hook never waits for the model.
+    agentar_report.enqueue_report(meeting_id)
 
 
 async def _record_event(**kwargs: Any) -> None:
-    from utils.agentar_events import record_server_event  # B10
-
-    await record_server_event(**kwargs)
+    await agentar_events.record_server_event(**kwargs)
 
 
 def default_deps() -> LifecycleDeps:
@@ -167,6 +160,7 @@ def default_deps() -> LifecycleDeps:
         dispatch_bot=_dispatch_bot,
         get_bot=_get_bot,
         remove_bot=_remove_bot,
+        farewell_bot=_farewell_bot,
         enqueue_report=_enqueue_report,
         record_event=_record_event,
     )
@@ -232,6 +226,12 @@ def _deadline(meeting: AgentarMeeting) -> datetime:
     return start + timedelta(minutes=meeting.grace_minutes)
 
 
+def _audience_deadline(meeting: AgentarMeeting) -> datetime:
+    """End of the wait for a first human, counted from the moment the bot is in."""
+    start = meeting.joined_at or meeting.dispatched_at or meeting.updated_at
+    return start + timedelta(minutes=meeting.grace_minutes)
+
+
 def _attempt_key(meeting: AgentarMeeting) -> int:
     """Identifies one dispatch of a meeting, so a re-dispatched meeting gets fresh event ids."""
     start = meeting.start_at or meeting.dispatched_at or meeting.created_at
@@ -257,10 +257,17 @@ async def _close_unstarted(
     from_statuses: Iterable[str],
     status: str,
     reason: str,
+    *,
+    extra_filter: Optional[dict[str, Any]] = None,
 ) -> Optional[AgentarMeeting]:
-    """Move a meeting that never went live to missed or failed and release the live slot."""
+    """Move a meeting that never went live, or went live with nobody, to missed or failed and
+    release the live slot. No report is queued."""
     closed = await _transition(
-        meeting_id, from_statuses, {"status": status, "status_reason": reason}, unset=("live_lock",)
+        meeting_id,
+        from_statuses,
+        {"status": status, "status_reason": reason},
+        unset=("live_lock",),
+        extra_filter=extra_filter,
     )
     if closed is not None:
         await _notify(deps, closed, status)
@@ -342,17 +349,17 @@ async def _live_total(exclude_id: Optional[str] = None) -> int:
     return await _collection().count_documents(query)
 
 
-async def _join_blocker(meeting: AgentarMeeting, deps: LifecycleDeps) -> Optional[str]:
-    """The reason the bot cannot be sent now, or None when it can."""
-    if await deps.human_in_room(meeting.room_name) is not True:
-        return ROOM_STAYED_EMPTY
+async def _join_blocker(meeting: AgentarMeeting) -> Optional[str]:
+    """The reason the bot cannot be sent now, or None when it can. An empty room is no reason:
+    the bot opens it."""
     if await _live_total(exclude_id=meeting.id) >= settings.agentar.max_live_total:
         return AGENTAR_CAPACITY
     return None
 
 
 async def advance_waiting(meeting_id: str, deps: Optional[LifecycleDeps] = None) -> Optional[AgentarMeeting]:
-    """One step for a ``waiting_for_human`` meeting: send the bot, keep waiting, or miss.
+    """One step for a ``waiting_for_human`` meeting: send the bot, keep waiting for a free slot,
+    or miss once the grace window closed with the slot still taken.
 
     Also the inline first step of a mode ``now`` dispatch: the dispatch route sets
     ``waiting_for_human`` with the live lock and calls this. Returns the meeting as it stands.
@@ -362,14 +369,14 @@ async def advance_waiting(meeting_id: str, deps: Optional[LifecycleDeps] = None)
     if meeting is None or meeting.status != "waiting_for_human":
         return meeting
 
-    blocker = await _join_blocker(meeting, deps)
+    blocker = await _join_blocker(meeting)
+    if blocker is None:
+        return await _start_join(meeting, deps)
     if clock.utcnow() > _deadline(meeting):
         return await _close_unstarted(
-            deps, meeting.id, ("waiting_for_human",), "missed", blocker or ROOM_STAYED_EMPTY
+            deps, meeting.id, ("waiting_for_human",), "missed", blocker
         ) or await AgentarMeeting.find_by_id(meeting.id)
-    if blocker is not None:
-        return meeting
-    return await _start_join(meeting, deps)
+    return meeting
 
 
 async def _within_capacity(meeting: AgentarMeeting) -> bool:
@@ -416,8 +423,12 @@ async def _start_join(meeting: AgentarMeeting, deps: LifecycleDeps) -> Optional[
 
     try:
         view = await deps.dispatch_bot(joining)
+    except agentar_worker.WorkerDispatchError as exc:
+        # worker_error, storage_unavailable or jitsi_key_missing: kept as the status reason.
+        logger.warning("agentar meeting %s: dispatch failed reason=%s %s", joining.id, exc.reason, exc.detail)
+        return await _close_unstarted(deps, joining.id, ("joining",), "failed", exc.reason)
     except Exception as exc:
-        logger.warning("agentar meeting %s: worker dispatch failed: %r", joining.id, exc)
+        logger.exception("agentar meeting %s: worker dispatch failed: %r", joining.id, exc)
         return await _close_unstarted(deps, joining.id, ("joining",), "failed", WORKER_ERROR)
 
     bot_id = view.get("id") if isinstance(view, dict) else None
@@ -466,7 +477,7 @@ async def reconcile(meeting: AgentarMeeting, deps: LifecycleDeps) -> Optional[Ag
 
 def _join_timed_out(meeting: AgentarMeeting) -> bool:
     started = meeting.dispatched_at or meeting.updated_at
-    return clock.utcnow() - started > timedelta(seconds=JOIN_TIMEOUT_SECONDS)
+    return clock.utcnow() - started > timedelta(seconds=settings.agentar.join_timeout_seconds)
 
 
 async def _fail_stuck_join(meeting: AgentarMeeting, deps: LifecycleDeps) -> Optional[AgentarMeeting]:
@@ -515,7 +526,36 @@ async def _apply_bot_view(
         await mark_agentar_ended(meeting.id, reason, deps=deps)
         return await AgentarMeeting.find_by_id(meeting.id)
     await snapshot_transcript(meeting)
-    return meeting
+    return await _check_audience(meeting, deps)
+
+
+async def _check_audience(meeting: AgentarMeeting, deps: LifecycleDeps) -> Optional[AgentarMeeting]:
+    """A live meeting nobody has joined yet: note the first human, or, with nobody once the grace
+    window after the bot went live has closed, say goodbye and miss the meeting.
+
+    Only a definite empty count recalls the bot; unknown presence waits for the next tick. The
+    worker is asked first, as the owner's recall does, so a missed meeting means the bot was told.
+    A worker that cannot be reached leaves the meeting live for the next tick.
+    """
+    if meeting.status != "live" or meeting.human_joined_at is not None:
+        return meeting
+    present = await deps.human_in_room(meeting.room_name)
+    if present is True:
+        return await _transition(
+            meeting.id, ("live",), {"human_joined_at": clock.utcnow()},
+            extra_filter={"human_joined_at": None},
+        ) or meeting
+    if present is None or clock.utcnow() <= _audience_deadline(meeting):
+        return meeting
+
+    try:
+        await deps.farewell_bot(meeting.bot_id)
+    except Exception as exc:
+        logger.warning("agentar meeting %s: goodbye to an empty room failed, retrying: %r", meeting.id, exc)
+        return meeting
+    return await _close_unstarted(
+        deps, meeting.id, ("live",), "missed", NO_HUMAN_JOINED, extra_filter={"human_joined_at": None}
+    ) or await AgentarMeeting.find_by_id(meeting.id)
 
 
 # Transcript snapshot ----------------------------------------------------------------------------
@@ -545,15 +585,13 @@ def _find_session(meeting: AgentarMeeting) -> Any:
     before the idle sweep cleared the old one) the one with an open Jigasi socket wins, and
     otherwise none is taken.
     """
-    from core.session_manager import SessionManager
-
-    sessions = SessionManager._sessions
+    manager = session_manager.SessionManager
     if meeting.jitsi_meeting_id:
-        return sessions.get(meeting.jitsi_meeting_id)
+        return manager.get_session(meeting.jitsi_meeting_id)
     room = meeting.room_name.casefold()
-    candidates = [s for s in list(sessions.values()) if (s.room_name or "").casefold() == room]
+    candidates = [s for s in manager.list_sessions() if (s.room_name or "").casefold() == room]
     if len(candidates) > 1:
-        candidates = [s for s in candidates if s.meeting_id in SessionManager._connections]
+        candidates = [s for s in candidates if manager.get_connection(s.meeting_id) is not None]
     return candidates[0] if len(candidates) == 1 else None
 
 
@@ -643,15 +681,14 @@ _flush_tasks: set[asyncio.Task] = set()
 
 
 def on_meeting_ended(jitsi_meeting_id: str) -> Optional[asyncio.Task]:
-    """Hook in ``SessionManager.mark_meeting_ended``, called before the session is cleared.
+    """Meeting ended hook of ``SessionManager.mark_meeting_ended``, called before the session is
+    cleared (registered at the end of this module).
 
     Copies the transcript synchronously, then ends the matching Agentar meeting in a task so the
     Jigasi request never waits on Mongo. Never raises. Returns the task, for tests.
     """
     try:
-        from core.session_manager import SessionManager
-
-        session = SessionManager._sessions.get(jitsi_meeting_id)
+        session = session_manager.SessionManager.get_session(jitsi_meeting_id)
         entries = _session_entries(session)
         room_name = session.room_name if session is not None else None
         task = asyncio.get_running_loop().create_task(
@@ -663,3 +700,6 @@ def on_meeting_ended(jitsi_meeting_id: str) -> Optional[asyncio.Task]:
     except Exception:
         logger.exception("agentar end hook failed for meeting %s", jitsi_meeting_id)
         return None
+
+
+session_manager.SessionManager.add_meeting_ended_hook(on_meeting_ended)

@@ -37,6 +37,9 @@ class RateLimiter(Protocol):
     def reset(self, key: str) -> None:
         """Forget every event of `key`."""
 
+    def release(self, key: str) -> None:
+        """Forget the most recent event of `key`: an attempt recorded up front that succeeded."""
+
 
 class SlidingWindowLimiter:
     """Event log per key, pruned on access. Bounded: at most `max_keys` keys, the least recently
@@ -94,6 +97,16 @@ class SlidingWindowLimiter:
         with self._lock:
             self._events.pop(key, None)
             self._windows.pop(key, None)
+
+    def release(self, key: str) -> None:
+        with self._lock:
+            events = self._events.get(key)
+            if not events:
+                return
+            events.pop()
+            if not events:
+                del self._events[key]
+                self._windows.pop(key, None)
 
     def clear(self) -> None:
         with self._lock:

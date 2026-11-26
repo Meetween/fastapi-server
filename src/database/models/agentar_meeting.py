@@ -29,6 +29,8 @@ class AgentarMeeting(MongoModel):
     start_at: Optional[UtcDatetime] = None
     grace_minutes: int = 15
     purpose: str = ""
+    # Spoken once after the greeting. Empty: the dispatch speaks the purpose sentence instead.
+    opener: str = ""
     questions: list[MeetingQuestion] = Field(default_factory=list)
     relevant_info: str = ""
     file_ids: list[str] = Field(default_factory=list)
@@ -45,7 +47,12 @@ class AgentarMeeting(MongoModel):
     # Transcript lines copied by the tick and by the end hook, moved to the report afterwards.
     transcript_snapshot: Optional[list[dict[str, Any]]] = None
     dispatched_at: Optional[UtcDatetime] = None
+    # Times this meeting was sent again from missed or failed; each counts against the daily quota.
+    resent_at: list[UtcDatetime] = Field(default_factory=list)
     joined_at: Optional[UtcDatetime] = None
+    # First time the tick counted a human in the room while the bot was live. Without it,
+    # `grace_minutes` after `joined_at` the meeting is missed (`no_human_joined`).
+    human_joined_at: Optional[UtcDatetime] = None
     ended_at: Optional[UtcDatetime] = None
     report_status: Literal["none", "pending", "ready", "failed"] = "none"
     created_at: UtcDatetime = Field(default_factory=now_field)

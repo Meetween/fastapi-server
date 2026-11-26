@@ -14,9 +14,9 @@ Rules kept here, not in the routes:
 - A room is sent into only by the user who holds it in Jitsi (`claim_room_moderator`, admins
   exempt), because the bot is owner in Jitsi.
 """
-import hashlib
 import logging
 import re
+import unicodedata
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional, Sequence
 from urllib.parse import unquote, urlsplit
@@ -36,7 +36,7 @@ from src.database.models.agentar_report import AgentarReport
 from src.database.models.user import User
 from src.schemas.agentar import Meeting, MeetingCreate, MeetingPatch, Picture, Question
 from src.schemas.virtual_participants import BOT_NAME_SUFFIX, ROOM_PATTERN
-from utils import clock
+from utils import agentar_files, agentar_lifecycle, clock, picture, room_owner
 from utils.agentar_worker import (
     WorkerDispatchError,
     events_url,
@@ -50,13 +50,17 @@ from utils.object_store import ObjectNotFound, ObjectStore, ObjectStoreError
 logger = logging.getLogger(__name__)
 
 DISPATCHABLE = ("draft", "missed", "failed")
+# Sending one of these again costs one unit of the daily meeting quota.
+RESENDABLE = ("missed", "failed")
+# A bot exists, or is being sent, only in these statuses. Only they use the global capacity.
+BOT_ACTIVE = ("joining", "live", "leaving")
 EDITABLE = ("draft", "scheduled")
 DELETABLE = ("draft", "scheduled", "missed", "failed", "ended")
 MIN_LEAD = timedelta(minutes=1)
 MAX_OFFSET = 100_000
 PICTURE_NAME = "picture.jpg"
 # A send starts clean: a failed attempt may have left the id of a bot that is gone.
-_CLEAN_SLATE = ("bot_id", "jitsi_meeting_id")
+_CLEAN_SLATE = ("bot_id", "jitsi_meeting_id", "human_joined_at")
 
 _ROOM_RE = re.compile(ROOM_PATTERN)
 _CURSOR_RE = re.compile(r"o[0-9]{1,6}")
@@ -119,6 +123,13 @@ def _clean_text(value: str) -> str:
     return value.strip()
 
 
+def plain_line(value: str) -> str:
+    """One line of plain text: control and format characters and line breaks become spaces,
+    runs of spaces fold into one."""
+    cleaned = "".join(" " if unicodedata.category(ch) in {"Cc", "Cf", "Zl", "Zp"} else ch for ch in value)
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
 def _title(value: Optional[str]) -> Optional[str]:
     return (_clean_text(value) or None) if value is not None else None
 
@@ -168,18 +179,28 @@ async def claim_room(room_name: str, user: User) -> None:
     """Claim a free room for the user or confirm the user holds it. Anything else is 409
     `room_not_owned`. Admins are exempt, and a user who claims too many new rooms gets the 429
     `rate_limited` that `claim_room_moderator` raises (both live there)."""
-    # B2's module. Hoist to the top of the file once utils/room_owner.py is merged.
-    from utils.room_owner import claim_room_moderator
-
-    if not await claim_room_moderator(room_name, user):
+    if not await room_owner.may_send_agentar(room_name, user):
         raise AgentarError(409, "room_not_owned", "This room belongs to another user")
 
 
-async def _check_daily_quota(owner: str) -> None:
-    now = clock.utcnow()
-    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+def _day_start() -> datetime:
+    return clock.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+async def _meetings_used_today(owner: str) -> int:
+    """Meetings created today plus sends of a missed or failed meeting today."""
+    day_start = _day_start()
     created = await AgentarMeeting.count_documents({"owner": owner, "created_at": {"$gte": day_start}})
-    if created >= settings.agentar.meetings_per_day:
+    resent = 0
+    async for doc in AgentarMeeting.get_collection().find(
+        {"owner": owner, "resent_at": {"$gte": day_start}}, {"resent_at": 1}
+    ):
+        resent += sum(1 for at in doc.get("resent_at") or [] if clock.as_utc(at) >= day_start)
+    return created + resent
+
+
+async def _check_daily_quota(owner: str) -> None:
+    if await _meetings_used_today(owner) >= settings.agentar.meetings_per_day:
         raise AgentarError(
             422,
             "quota_meetings_per_day",
@@ -208,6 +229,7 @@ def to_view(meeting: AgentarMeeting) -> Meeting:
         start_at=meeting.start_at,
         grace_minutes=meeting.grace_minutes,
         purpose=meeting.purpose,
+        opener=meeting.opener,
         questions=[Question(id=q.id, text=q.text) for q in meeting.questions],
         relevant_info=meeting.relevant_info,
         file_ids=meeting.file_ids,
@@ -265,18 +287,26 @@ async def _transition(
     from_statuses: Sequence[str],
     set_fields: dict[str, Any],
     unset_fields: Sequence[str] = (),
+    push: Optional[dict[str, Any]] = None,
 ) -> Optional[AgentarMeeting]:
     """Atomic move: apply the update only while the meeting is still in one of `from_statuses`.
     None when it is not (someone else moved it) or when it is not the owner's."""
     update: dict[str, Any] = {"$set": {**set_fields, "updated_at": clock.utcnow()}}
     if unset_fields:
         update["$unset"] = {name: "" for name in unset_fields}
+    if push:
+        update["$push"] = push
     doc = await AgentarMeeting.get_collection().find_one_and_update(
         {"_id": ObjectId(meeting_id), "owner": owner, "status": {"$in": list(from_statuses)}},
         update,
         return_document=ReturnDocument.AFTER,
     )
     return AgentarMeeting.from_dict(doc) if doc else None
+
+
+def _resend_push(now: datetime) -> dict[str, Any]:
+    """Record one resend. Only today's entries count, so the list keeps the last few."""
+    return {"resent_at": {"$each": [now], "$slice": -settings.agentar.meetings_per_day}}
 
 
 def invalid_state(message: str) -> AgentarError:
@@ -298,6 +328,7 @@ async def create_meeting(user: User, body: MeetingCreate) -> AgentarMeeting:
         start_at=start_at,
         grace_minutes=body.grace_minutes,
         purpose=_clean_text(body.purpose),
+        opener=plain_line(body.opener),
         questions=questions,
         relevant_info=_clean_text(body.relevant_info),
         file_ids=list(body.file_ids),
@@ -323,6 +354,8 @@ async def update_meeting(user: User, meeting_id: str, body: MeetingPatch) -> Age
         changes["grace_minutes"] = body.grace_minutes
     if "purpose" in sent:
         changes["purpose"] = _clean_text(body.purpose)
+    if "opener" in sent:
+        changes["opener"] = plain_line(body.opener)
     if "relevant_info" in sent:
         changes["relevant_info"] = _clean_text(body.relevant_info)
     if "use_general_kb" in sent:
@@ -358,7 +391,7 @@ async def update_meeting(user: User, meeting_id: str, body: MeetingPatch) -> Age
     return updated
 
 
-def _picture_prefix(user_id: str, meeting_id: str) -> str:
+def _meeting_prefix(user_id: str, meeting_id: str) -> str:
     return f"u/{user_id}/m/{meeting_id}/"
 
 
@@ -366,10 +399,11 @@ async def delete_meeting(user: User, meeting_id: str, store: ObjectStore) -> Non
     """Delete the meeting with its files, picture, report and events.
 
     The meeting document goes first, atomically and only in a deletable status, so a bot can never
-    be sent for a meeting that is half deleted. The objects under the meeting prefix and the
-    dependent records follow. An object that cannot be removed is logged with its prefix and left
-    for the purge script: the records that pointed at it are gone, so it is invisible and counts
-    against no quota.
+    be sent for a meeting that is half deleted. The meeting documents follow through the files
+    module, which owns their records and objects, then whatever is left under the meeting prefix
+    (picture override, report export) and the dependent records. An object that cannot be removed
+    is logged and left for the purge script: the records that pointed at it are gone, so it is
+    invisible and counts against no quota.
     """
     meeting = await load_owned(meeting_id, user.email)
     if meeting.status in BOT_PRESENT_STATUSES:
@@ -379,7 +413,8 @@ async def delete_meeting(user: User, meeting_id: str, store: ObjectStore) -> Non
     )
     if result.deleted_count == 0:
         raise invalid_state("The meeting changed state; reload it")
-    prefix = _picture_prefix(user.id, meeting.id)
+    await agentar_files.delete_meeting_documents(user.email, store, meeting.id)
+    prefix = _meeting_prefix(user.id, meeting.id)
     try:
         for info in await store.list(prefix):
             await store.delete(info.key)
@@ -398,13 +433,13 @@ def _storage_unavailable(exc: Exception) -> AgentarError:
     return AgentarError(503, "storage_unavailable", "Object storage is not reachable")
 
 
-def _normalise(data: bytes) -> bytes:
-    """512x512 JPEG of at most 400 KB from the upload. B4's `utils/picture.py`; it raises
-    AgentarError (415 `unsupported_type` or 422 `picture_invalid`) for a file it cannot use.
-    Hoist the import once that module is merged."""
-    from utils.picture import normalise_picture
-
-    return normalise_picture(data)
+async def _normalise(data: bytes) -> picture.NormalisedPicture:
+    """512x512 JPEG of at most 400 KB from the upload, off the event loop. 415
+    `unsupported_type` or 422 `picture_invalid` for a file that cannot be used."""
+    try:
+        return await picture.normalise_picture(data)
+    except picture.PictureError as exc:
+        raise AgentarError(exc.status_code, exc.code, exc.message) from exc
 
 
 def require_picture_editable(meeting: AgentarMeeting) -> None:
@@ -419,10 +454,10 @@ async def put_picture(user: User, meeting: AgentarMeeting, upload: bytes, store:
     scheduled in between loses nothing: the new object and record are removed and the call is 409.
     """
     require_picture_editable(meeting)
-    jpeg = _normalise(upload)
+    normalised = await _normalise(upload)
+    jpeg, digest = normalised.data, normalised.sha256
     file_id = str(ObjectId())
     key = f"u/{user.id}/m/{meeting.id}/avatar/{file_id}.jpg"
-    digest = hashlib.sha256(jpeg).hexdigest()
     now = clock.utcnow()
     try:
         await store.put(key, jpeg, content_type="image/jpeg")
@@ -516,29 +551,19 @@ def _require_dispatch_configuration() -> None:
 
 
 async def _live_holders() -> int:
-    return await AgentarMeeting.count_documents({"live_lock": True})
+    """Meetings whose bot exists or is being sent. A meeting still `waiting_for_human` (for a free
+    slot) holds its owner's live slot but no Ditto session, so it does not count here."""
+    return await AgentarMeeting.count_documents({"status": {"$in": list(BOT_ACTIVE)}})
 
 
 async def _ensure_slot_free(owner: str) -> None:
-    """Pre-check of one live Agentar per user and of the global cap. The unique index and the
-    verify step after the claim are what hold under a race."""
+    """Pre-check of one live Agentar per user and of the global cap. Under a race the unique
+    index holds the per user slot, and the lifecycle ranks joins (`_within_capacity`) so only
+    `AGENTAR_MAX_LIVE_TOTAL` bots are sent."""
     if await AgentarMeeting.find_one({"owner": owner, "live_lock": True}) is not None:
         raise AgentarError(409, "live_agentar_exists", "You already have an Agentar live in a meeting")
     if await _live_holders() >= settings.agentar.max_live_total:
         raise AgentarError(409, "agentar_capacity", "The Agentar capacity is in use; try again later")
-
-
-def _restore_fields(previous: AgentarMeeting) -> tuple[dict[str, Any], tuple[str, ...]]:
-    """Set and unset lists that put a meeting back to what it was before a claim."""
-    set_fields: dict[str, Any] = {"status": previous.status, "status_reason": previous.status_reason}
-    unset: list[str] = ["live_lock"]
-    for name in ("start_at", "dispatched_at", "bot_id", "jitsi_meeting_id"):
-        value = getattr(previous, name)
-        if value is None:
-            unset.append(name)
-        else:
-            set_fields[name] = value
-    return set_fields, tuple(unset)
 
 
 async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
@@ -550,8 +575,9 @@ async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
     its start comes, so arming for tomorrow is not refused because a meeting is live today.
 
     For `now` the meeting takes the user's live slot as `waiting_for_human` and the lifecycle
-    takes over with `advance_waiting`: it looks for a human in the room, claims `joining` and
-    calls the worker, or leaves the meeting waiting for the tick. A worker fault is recorded by
+    takes over with `advance_waiting`: the Agentar opens the room, so without asking who is in it
+    the lifecycle claims `joining` and calls the worker, or leaves the meeting waiting for the tick
+    while the global slot is taken. A worker fault is recorded by
     the lifecycle as `failed`; the call still returns the meeting as it is afterwards.
     """
     meeting = await load_owned(meeting_id, user.email)
@@ -561,6 +587,9 @@ async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
     now = clock.utcnow()
     if meeting.mode == "scheduled" and (meeting.start_at is None or meeting.start_at <= now):
         raise AgentarError(422, "start_in_past", "The scheduled start has passed; edit the meeting first")
+    resend = meeting.status in RESENDABLE
+    if resend:
+        await _check_daily_quota(user.email)
     await claim_room(meeting.room_name, user)
 
     resolved = {
@@ -568,6 +597,7 @@ async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
         "voice": resolve_voice(user),
         "status_reason": None,
     }
+    push = _resend_push(now) if resend else None
     if meeting.mode == "scheduled":
         armed = await _transition(
             meeting.id,
@@ -575,6 +605,7 @@ async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
             DISPATCHABLE,
             {"status": "scheduled", **resolved},
             unset_fields=_CLEAN_SLATE,
+            push=push,
         )
         if armed is None:
             raise invalid_state("The meeting changed state; reload it")
@@ -583,20 +614,13 @@ async def dispatch_meeting(user: User, meeting_id: str) -> AgentarMeeting:
     await _ensure_slot_free(user.email)
     claim = {"status": "waiting_for_human", "live_lock": True, "start_at": now, **resolved}
     try:
-        claimed = await _transition(meeting.id, user.email, DISPATCHABLE, claim, _CLEAN_SLATE)
+        claimed = await _transition(meeting.id, user.email, DISPATCHABLE, claim, _CLEAN_SLATE, push=push)
     except DuplicateKeyError as exc:
         raise AgentarError(409, "live_agentar_exists", "You already have an Agentar live in a meeting") from exc
     if claimed is None:
         raise invalid_state("The meeting changed state; reload it")
-    if await _live_holders() > settings.agentar.max_live_total:
-        restore, unset = _restore_fields(meeting)
-        await _transition(meeting.id, user.email, ("waiting_for_human",), restore, unset)
-        raise AgentarError(409, "agentar_capacity", "The Agentar capacity is in use; try again later")
 
-    # B7's module. Hoist to the top of the file once utils/agentar_lifecycle.py is merged.
-    from utils.agentar_lifecycle import advance_waiting
-
-    await advance_waiting(meeting.id)
+    await agentar_lifecycle.advance_waiting(meeting.id)
     return await load_owned(meeting.id, user.email)
 
 

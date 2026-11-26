@@ -4,10 +4,14 @@ Stored formats in `users.password_hash`:
 
 - `$argon2id$v=19$m=19456,t=2,p=1$...`: the PHC string of argon2-cffi. Current format.
 - `legacy$` + PHC string: a legacy digest wrapped by `cli.py migrate-hashes`. The inner hash is
-  argon2id of `sha256(JWT_SECRET_KEY:password)` as lower case hex, so no fast unsalted digest
-  stays in the database. Verified once, then replaced with a plain argon2id hash.
+  argon2id of `sha256(<pepper>:password)` as lower case hex, so no fast unsalted digest stays in
+  the database. Verified once, then replaced with a plain argon2id hash.
 - 64 lower case hex characters: a legacy digest that `migrate-hashes` has not wrapped yet.
   Accepted so a missed deploy step locks nobody out, and replaced at the next login.
+
+The pepper of both legacy formats is `LEGACY_PASSWORD_PEPPER` when set, else `JWT_SECRET_KEY`.
+Rotating `JWT_SECRET_KEY` therefore keeps legacy users in when the old key moves to
+`LEGACY_PASSWORD_PEPPER` (see deploy/fastapi.env.example).
 
 Hashing and verification run in a pool of `HASH_CONCURRENCY` threads, never on the event loop
 that also carries captions. The pool is the concurrency bound: at most that many hashes run at
@@ -69,9 +73,14 @@ def hash_password(password: str) -> str:
     return _hasher.hash(password)
 
 
+def _legacy_pepper() -> str:
+    return settings.legacy_password_pepper or settings.app_jwt.secret_key
+
+
 def legacy_digest(password: str) -> str:
-    """The pre-argon2 format: `sha256(JWT_SECRET_KEY:password)` as lower case hex."""
-    payload = f"{settings.app_jwt.secret_key}:{password}".encode("utf-8")
+    """The pre-argon2 format: `sha256(pepper:password)` as lower case hex, the pepper being
+    `LEGACY_PASSWORD_PEPPER` when set, else `JWT_SECRET_KEY`."""
+    payload = f"{_legacy_pepper()}:{password}".encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 

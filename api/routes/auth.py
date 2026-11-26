@@ -67,9 +67,12 @@ async def login(
     request: Request,
     limiter: RateLimiter = Depends(get_rate_limiter),
 ):
-    """Failed logins are throttled before any hashing: `LOGIN_FAIL_LIMIT` per window for one
-    client address and email, `LOGIN_FAIL_IP_LIMIT` per address over all emails. A success
-    clears the address and email counter. No permanent lockout: the window slides."""
+    """Logins are throttled before any hashing: `LOGIN_FAIL_LIMIT` per window for one client
+    address and email, `LOGIN_FAIL_IP_LIMIT` per address over all emails. Every attempt is
+    recorded on both keys before the hash, in the same step as the check with no await between,
+    so a parallel burst cannot pass the check while earlier attempts are still hashing. A success
+    clears the address and email counter and gives back its address attempt. No permanent
+    lockout: the window slides."""
     email = credentials.email.strip().lower()
     cfg = settings.agentar
     window = cfg.login_fail_window_minutes * 60
@@ -84,13 +87,14 @@ async def login(
     if wait is not None:
         logger.warning("Login throttled for client %s", ip)
         raise too_many_requests(wait)
+    limiter.hit(pair_key, window)
+    limiter.hit(ip_key, window)
 
     if not await verify_user(email, credentials.password):
-        limiter.hit(pair_key, window)
-        limiter.hit(ip_key, window)
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     limiter.reset(pair_key)
+    limiter.release(ip_key)
     return TokenPairResponse(
         access_token=create_access_token(sub=email),
         refresh_token=create_refresh_token(sub=email),

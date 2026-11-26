@@ -5,6 +5,9 @@ Authorises the caller, lets only the room owner or an admin add a bot, requires 
 in the room, caps bots per room, mints the bot's room token and forwards to vp-worker with
 the shared secret. Browsers, media and speech live in vp-worker.
 
+While `AGENTAR_ENABLED` is true a panel bot competes with the Agentar for the worker and the
+avatar renderer, so only an admin adds one, and only while `AGENTAR_MAX_LIVE_TOTAL` has room.
+
 The only state kept here is who added a bot (`vp_bot_owners`), so list, get, delete and say
 are scoped to the caller's own bots: a Butler panel bot through that record, an Agentar bot
 through `agentar_meetings.bot_id`. Anyone else's bot is 404, like an unknown one. Admins see
@@ -48,6 +51,8 @@ router = APIRouter(
 
 WORKER_SECRET_HEADER = "X-VP-Secret"
 ACTIVE_STATES = frozenset({"joining", "joined", "speaking"})
+# Agentar meetings whose bot exists or is being sent; the same set the dispatch cap counts.
+AGENTAR_ACTIVE_STATUSES = ("joining", "live", "leaving")
 NO_HUMAN_DETAIL = "no human participant in the room"
 
 # Worker statuses returned to the caller as they are. Anything else is a fault
@@ -283,6 +288,23 @@ async def _active_bots(client: httpx.AsyncClient, room: str) -> list[dict[str, A
     ]
 
 
+async def _live_total(client: httpx.AsyncClient) -> int:
+    """Active Agentar meetings plus active worker bots that serve no Agentar meeting."""
+    agentar = await AgentarMeeting.get_collection().find(
+        {"status": {"$in": list(AGENTAR_ACTIVE_STATUSES)}}, {"bot_id": 1}
+    ).to_list(length=None)
+    agentar_bots = {doc.get("bot_id") for doc in agentar if doc.get("bot_id")}
+    response = await _worker_request(client, "GET", "/bots")
+    if response.status_code != 200:
+        _raise_worker_fault(response)
+    panel = [
+        bot
+        for bot in _bots_from_payload(_json_body(response))
+        if bot.get("state") in ACTIVE_STATES and bot.get("id") not in agentar_bots
+    ]
+    return len(agentar) + len(panel)
+
+
 @router.post(
     "/virtual-participants",
     status_code=202,
@@ -292,6 +314,10 @@ async def _active_bots(client: httpx.AsyncClient, room: str) -> list[dict[str, A
         409: {
             "model": VirtualParticipantError,
             "description": "The meeting has ended, no human in the room, or bot limit reached",
+        },
+        403: {
+            "model": VirtualParticipantError,
+            "description": "Agentar is enabled and the caller is not an admin",
         },
         429: {"model": VirtualParticipantError, "description": "All worker replicas are full; see Retry-After"},
         **_ERROR_RESPONSES,
@@ -307,6 +333,10 @@ async def create_virtual_participant(
     # 503 before anything else: no bot is sent while room tokens cannot be signed.
     jitsi_signing_key()
     room = request.room_name
+
+    if settings.agentar_enabled and not await is_admin(current_subject):
+        logger.info(f"virtual participant create refused subject={current_subject} room={room} reason=agentar_enabled")
+        raise HTTPException(status_code=403, detail="only an admin adds a panel bot while Agentar is enabled")
 
     # The bot holds a room token, and Jitsi makes every token holder an owner of the room, so
     # only the room owner or an admin may send one. Anyone else learns nothing about the room.
@@ -343,6 +373,13 @@ async def create_virtual_participant(
             status_code=409,
             detail=f"room already has {len(active)} virtual participants, limit is {vp.max_bots_per_room}",
         )
+    if not duplicate and settings.agentar_enabled:
+        cap = settings.agentar.max_live_total
+        if await _live_total(client) >= cap:
+            logger.info(
+                f"virtual participant create refused subject={current_subject} room={room} reason=agentar_capacity"
+            )
+            raise HTTPException(status_code=409, detail=f"the virtual participant capacity of {cap} is in use")
 
     bot_token = create_jitsi_bot_token(room)
     response = await _worker_request(

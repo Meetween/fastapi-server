@@ -20,7 +20,7 @@ from config import ObjectStoreSettings, settings
 from src.database.models.agentar_file import AgentarFile as FileRecord
 from src.database.models.agentar_meeting import BOT_PRESENT_STATUSES, AgentarMeeting
 from utils import agentar_files
-from utils.object_store import MemoryObjectStore, ObjectStoreError, S3ObjectStore
+from utils.object_store import ObjectStoreError, S3ObjectStore
 from utils.uploads import OVERHEAD_BYTES
 
 KB = Path(__file__).resolve().parents[1] / "data" / "agentar_kb"

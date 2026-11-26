@@ -265,9 +265,10 @@ class TestFallbacks:
         assert "(" not in name and "<" not in name
         assert 1 <= len(name) <= 32
 
-    def test_the_word_agentar_falls_through(self) -> None:
-        assert profiles.effective_agent_name(self._user("Agentar", "Smith")) == "Meetween"
+    def test_the_word_agentar_is_removed(self) -> None:
+        assert profiles.effective_agent_name(self._user("Agentar", "Smith")) == "Smith"
         assert profiles.effective_agent_name(self._user("Ann", "Agentar")) == "Ann"
+        assert profiles.effective_agent_name(self._user("Agentar", None)) == "Meetween"
 
     def test_nothing_usable(self) -> None:
         assert profiles.effective_agent_name(self._user(None, None)) == "Meetween"

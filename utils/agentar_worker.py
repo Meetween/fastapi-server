@@ -8,7 +8,8 @@ lifecycle (`utils/agentar_lifecycle.py`) is the one caller: it claims the meetin
 `dispatch_bot`, `get_bot` and `recall_bot`, and records the result.
 
 Nothing here logs the payload: it carries the bot token and the picture. A worker error body can
-echo the request, so only the status and the field locations of a 422 are logged.
+echo the request, so only the status and the field locations of a schema 422 are logged, and
+for a policy 422 the worker's own sentence.
 """
 import base64
 import logging
@@ -25,8 +26,10 @@ from config import settings
 from src.database.models.agentar_file import AgentarFile
 from src.database.models.agentar_meeting import AgentarMeeting
 from src.database.models.user import User
-from src.schemas.agentar import AgentarWorkerBot, AgentarWorkerQuestion
+from src.schemas.agentar import OWNER_FIRST_NAME_CHARS, AgentarWorkerBot, AgentarWorkerQuestion
 from src.schemas.virtual_participants import BOT_ID_PATTERN
+from utils import agentar_profile, auth
+from utils.agentar_names import clean_name, escalation_line, owner_names
 from utils.object_store import (
     ObjectNotFound,
     ObjectStore,
@@ -38,8 +41,6 @@ logger = logging.getLogger(__name__)
 
 BOT_SUBJECT = "vp-bot"
 AGENTAR_WORD = "Agentar"
-FALLBACK_NAME = "Meetween"
-FALLBACK_OWNER = "the meeting owner"
 
 EVENTS_PATH = "/api/agentar/events"
 MAX_AVATAR_BYTES = 409_600
@@ -55,11 +56,10 @@ GREETING_TEMPLATE = (
     "I will listen, answer from the notes I was given where I can, and report back to {owner_first_name}."
 )
 OPENER_TEMPLATE = "The purpose of this meeting, as {owner_first_name} gave it to me, is: {purpose}"
-# Must equal the sentinel the chat path returns (B8): the worker compares the reply with this text.
-# Owner's full name, no trailing period.
-ESCALATION_TEMPLATE = "I do not have that, I will check with {owner_full_name} and report back"
+# The escalation line comes from utils.agentar_names, shared with the chat path.
 FAREWELL_TEMPLATE = "Thank you all, I will pass this on to {owner_first_name}. Goodbye."
 OPENER_PURPOSE_CHARS = 500
+OPENER_MAX_CHARS = 500
 
 
 class WorkerDispatchError(Exception):
@@ -74,58 +74,16 @@ class WorkerDispatchError(Exception):
 
 # Names ---------------------------------------------------------------------------------------
 
-_NAME_PUNCT = " _.'-"
-_DIGITS = frozenset("0123456789")
-
-
-def _clean_name(value: Optional[str], limit: int) -> Optional[str]:
-    """A name reduced to what a display name allows: letters, marks, digits and ` _ . ' -`.
-    Whitespace and control characters become one space, other symbols are dropped, the word
-    "agentar" is removed so a name can never fake or double the label."""
-    if not value:
-        return None
-    kept: list[str] = []
-    for ch in unicodedata.normalize("NFC", value):
-        category = unicodedata.category(ch)
-        if category[0] in "LM" or ch in _DIGITS or ch in "_.'-":
-            kept.append(ch)
-        elif ch == " " or category[0] == "Z" or category == "Cc":
-            kept.append(" ")
-    text = re.sub(" +", " ", "".join(kept))
-    while "agentar" in text.casefold():
-        text = re.sub("(?i)agentar", "", text)
-    text = re.sub(" +", " ", text).strip(_NAME_PUNCT)
-    text = text[:limit].rstrip(_NAME_PUNCT)
-    return text or None
-
-
-def agent_first_name(owner: User) -> str:
-    """Name part of the display name: the Agentar name, else the first name, else "Meetween"."""
-    profile = owner.profile
-    for candidate in (profile.agent_name if profile else None, owner.first_name):
-        cleaned = _clean_name(candidate, 32)
-        if cleaned:
-            return cleaned
-    return FALLBACK_NAME
 
 
 def resolve_display_name(owner: User) -> str:
-    return f"{agent_first_name(owner)} {AGENTAR_WORD}"
+    """"<name> Agentar": the name the profile page shows (`effective_agent_name`)."""
+    return f"{agentar_profile.effective_agent_name(owner)} {AGENTAR_WORD}"
 
 
 def resolve_voice(owner: User) -> str:
-    """The profile voice when it is still offered, else the default voice."""
-    voice = owner.profile.voice if owner.profile else None
-    allowed = settings.agentar.voices
-    return voice if voice in allowed else settings.agentar.default_voice
-
-
-def _owner_names(owner: User) -> tuple[str, str]:
-    """(full name, first name) as spoken. Without names the greeting says "the meeting owner"."""
-    first = _clean_name(owner.first_name, 64)
-    last = _clean_name(owner.last_name, 64)
-    full = " ".join(part for part in (first, last) if part) or FALLBACK_OWNER
-    return full, first or FALLBACK_OWNER
+    """The profile voice while it is still offered, else the default voice."""
+    return agentar_profile.effective_voice(owner)
 
 
 def _one_line(text: str, limit: int) -> str:
@@ -139,6 +97,15 @@ def _one_line(text: str, limit: int) -> str:
     cut = cleaned[:limit]
     boundary = cut.rfind(" ")
     return (cut[:boundary] if boundary > limit // 2 else cut).rstrip(" ,;:-")
+
+
+def purpose_opener(owner_first_name: str, purpose: str, limit: Optional[int] = None) -> Optional[str]:
+    """The opener spoken when the meeting has none of its own: the purpose sentence, or None
+    without a purpose. `limit` caps the whole sentence, the purpose is cut at a word."""
+    prefix = OPENER_TEMPLATE.format(owner_first_name=owner_first_name, purpose="")
+    room = OPENER_PURPOSE_CHARS if limit is None else min(OPENER_PURPOSE_CHARS, limit - len(prefix))
+    text = _one_line(purpose, max(room, 0))
+    return f"{prefix}{text}" if text else None
 
 
 # Payload -------------------------------------------------------------------------------------
@@ -177,22 +144,19 @@ def build_worker_bot(
 ) -> AgentarWorkerBot:
     """The body of `POST /bots` for an Agentar meeting. Built only here, never from a client body.
 
-    Fallbacks for an owner who skipped onboarding: the name falls back to the first name and then
-    to "Meetween", the voice to the default voice, the picture to none (the worker then uses its
+    Fallbacks for an owner who skipped onboarding: the name is the one the profile page shows
+    (`effective_agent_name`: first and last name, then first name, then "Meetween"), the voice to the default voice, the picture to none (the worker then uses its
     bundled avatar), the greeting to "the meeting owner" when no names are stored.
     """
     if not meeting.id:
         raise ValueError("the meeting has no id")
-    full_name, first_name = _owner_names(owner)
+    full_name, first_name = owner_names(owner.first_name, owner.last_name)
     # A meeting armed earlier keeps the name it was armed with, whatever the profile says now.
     armed = _ARMED_NAME.fullmatch(meeting.display_name or "")
-    agent_name = (_clean_name(armed["name"], 32) if armed else None) or agent_first_name(owner)
+    agent_name = (clean_name(armed["name"], 32) if armed else None) or agentar_profile.effective_agent_name(owner)
     display_name = f"{agent_name} {AGENTAR_WORD}"
 
-    purpose = _one_line(meeting.purpose, OPENER_PURPOSE_CHARS)
-    opener = (
-        OPENER_TEMPLATE.format(owner_first_name=first_name, purpose=purpose) if purpose else None
-    )
+    opener = _one_line(meeting.opener, OPENER_MAX_CHARS) or purpose_opener(first_name, meeting.purpose)
     voice = meeting.voice if meeting.voice in settings.agentar.voices else resolve_voice(owner)
 
     return AgentarWorkerBot(
@@ -204,12 +168,13 @@ def build_worker_bot(
         ),
         opener=opener,
         questions=[AgentarWorkerQuestion(id=q.id, text=q.text) for q in meeting.questions],
-        escalation_line=ESCALATION_TEMPLATE.format(owner_full_name=full_name),
+        escalation_line=escalation_line(full_name),
         farewell=FAREWELL_TEMPLATE.format(owner_first_name=first_name),
         voice=voice,
         avatar_jpeg_b64=base64.b64encode(avatar_jpeg).decode("ascii") if avatar_jpeg else None,
         agentar_meeting_id=meeting.id,
         events_url=events_url(),
+        owner_first_name=clean_name(owner.first_name, OWNER_FIRST_NAME_CHARS),
     )
 
 
@@ -217,11 +182,8 @@ def mint_bot_token(room: str) -> str:
     """Room bound token for the bot, from B2's `create_jitsi_bot_token`: signed with the Jitsi key,
     no moderator claim and no name claim (a name would replace the "(AI)" display name). It raises
     a 503 AgentarError itself when the key is empty; that becomes a dispatch error with its code."""
-    # B2's function. Hoist the import to the top of the file once it is merged.
-    from utils.auth import create_jitsi_bot_token
-
     try:
-        return create_jitsi_bot_token(room)
+        return auth.create_jitsi_bot_token(room)
     except AgentarError as exc:
         raise WorkerDispatchError(exc.code, str(exc.detail)) from exc
 
@@ -285,16 +247,29 @@ def _worker_headers() -> dict[str, str]:
     return {WORKER_SECRET_HEADER: settings.virtual_participants.worker_secret}
 
 
+WORKER_REFUSAL_MAX_CHARS = 200
+
+
 def _worker_fault(response: httpx.Response) -> str:
     """Log line for a refused call: status, and for a 422 only where the problem was, never the
-    echoed input."""
+    echoed input.
+
+    A schema 422 carries a list of errors that can echo the body, so only their field locations
+    are kept. A policy 422 from the worker's own checks (missing AI label, voice not allowed, events
+    url refused) carries one sentence the worker wrote: that sentence is kept, on one line and cut
+    to WORKER_REFUSAL_MAX_CHARS, because it is the only clue to the cause."""
     detail = f"status {response.status_code}"
     if response.status_code == 422:
         try:
             errors = response.json().get("detail", [])
-            locs = [".".join(str(p) for p in e.get("loc", [])) for e in errors if isinstance(e, dict)]
-            detail += f" fields {locs[:8]}"
-        except (ValueError, AttributeError):
+            if isinstance(errors, str):
+                reason = " ".join(errors.split())[:WORKER_REFUSAL_MAX_CHARS]
+                if reason:
+                    detail += f" refused: {reason}"
+            else:
+                locs = [".".join(str(p) for p in e.get("loc", [])) for e in errors if isinstance(e, dict)]
+                detail += f" fields {locs[:8]}"
+        except (ValueError, AttributeError, TypeError):
             pass
     return detail
 

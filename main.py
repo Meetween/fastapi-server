@@ -14,7 +14,7 @@ from config import settings
 from core import EngineManager, SessionManager
 from src.database import async_mongo_manager
 from utils import agentar_lifecycle
-from utils.startup_checks import unsafe_settings
+from utils.startup_checks import settings_warnings, unsafe_settings
 from utils.storage import StorageManager
 
 from api.routes import (
@@ -78,6 +78,8 @@ async def startup_event():
 
     logger.info("Server starting up...")
 
+    for warning in settings_warnings(settings):
+        logger.warning("Configuration: %s", warning)
     problems = unsafe_settings(settings)
     if problems:
         for problem in problems:

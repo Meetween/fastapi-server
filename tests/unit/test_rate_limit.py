@@ -40,6 +40,19 @@ def test_under_the_limit_there_is_no_wait(limiter: SlidingWindowLimiter) -> None
     assert limiter.retry_after("k", 3, 60) is None
 
 
+def test_release_gives_back_the_latest_event_only(limiter: SlidingWindowLimiter) -> None:
+    for _ in range(3):
+        limiter.hit("k", 60)
+    assert limiter.retry_after("k", 3, 60) is not None
+    limiter.release("k")
+    assert limiter.retry_after("k", 3, 60) is None
+    limiter.release("k")
+    limiter.release("k")
+    limiter.release("k")
+    limiter.release("unknown")
+    assert len(limiter) == 0
+
+
 def test_at_the_limit_the_wait_is_until_the_oldest_event_leaves(limiter, clock) -> None:
     limiter.hit("k", 60)
     clock.t += 10

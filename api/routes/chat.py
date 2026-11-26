@@ -247,8 +247,6 @@ async def chat(
     except HTTPException:
         raise
     except Exception as e:
+        # The exception stays in the log; its text may carry hosts, URIs or stored data.
         logger.error(f"Chat error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Chat failed: {str(e)}",
-        )
+        raise HTTPException(status_code=500, detail="Chat failed") from e

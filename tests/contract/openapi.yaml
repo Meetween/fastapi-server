@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Meetween fastapi-server, Agentar demo contract
-  version: 0.5.0-agentar.1
+  version: 0.5.0-agentar.3
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -25,7 +25,7 @@ info:
     - Times are RFC 3339 UTC.
     - Uploads (files, pictures): `Content-Length` is required (411 `length_required`), the form
       is parsed with `request.form(max_files=1, max_fields=3, max_part_size=1024)`, so exactly
-      one file part per request.
+      one file part per request. A form over those limits answers the default 422 array body.
     - Throttles key on `X-Real-IP` only when the TCP peer is in `TRUSTED_PROXY_IPS`, else on the
       peer address; never on the leftmost `X-Forwarded-For`. In process sliding window.
     - Names: `first_name` and `last_name` refuse `(`, `)`, control characters and the word
@@ -53,6 +53,8 @@ tags:
     description: worker to fastapi events and dashboard notifications
   - name: reports
     description: post meeting reports
+  - name: chat
+    description: existing chat route, answer_kind added for Agentar callers
   - name: virtual-participants
     description: existing bot control route, ownership added
 
@@ -256,7 +258,7 @@ paths:
       description: |
         Sets `profile.onboarding_skipped_at` when the user has not completed onboarding.
         Idempotent; a completed onboarding is left as it is. At dispatch a skipped profile falls
-        back to the first name, the default voice and the bundled picture.
+        back to the first and last name, the default voice and the bundled picture.
       responses:
         '200':
           description: Account and profile
@@ -276,8 +278,10 @@ paths:
         from the header and checked to 256 to 4096 px per side before `load()` or
         `exif_transpose`, `Image.MAX_IMAGE_PIXELS = 4096 * 4096`, `DecompressionBombWarning`
         raised as an error, frame 0 only. Then EXIF orientation applied, metadata stripped,
-        centre crop to a square, resized to 512x512, JPEG quality 85, at most 400 KB. Stored at `u/{user_id}/avatar/{file_id}.jpg`; the old
+        centre crop to a square, resized to 512x512, JPEG quality 90 (lower only to stay under the cap), at most 400 KB. Stored at `u/{user_id}/avatar/{file_id}.jpg`; the old
         object is deleted after the new record is written. No face check in the demo.
+        The decode runs on its own executor (2 threads, 2 waiting): a further upload while it is
+        full answers 429 `rate_limited` with `Retry-After: 5`, before anything is stored.
       requestBody:
         required: true
         content:
@@ -302,6 +306,7 @@ paths:
         '411': { $ref: '#/components/responses/LengthRequired' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedType' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
         '422':
           description: Picture cannot be decoded, too small or too large in pixels (`picture_invalid`), or body invalid
           content:
@@ -382,7 +387,12 @@ paths:
               schema:
                 type: string
                 contentMediaType: audio/wav
-        '404': { $ref: '#/components/responses/NotFound' }
+        '404':
+          description: Voice offered but its sample is not shipped (`not_found`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
 
   /api/agentar/files:
     post:
@@ -402,7 +412,9 @@ paths:
         200k characters, chunked to about 150 tokens. pdf (pypdf 6.21.4) and docx extraction run
         in a `ProcessPoolExecutor(max_workers=1)` with `RLIMIT_AS` 1 GiB and `RLIMIT_CPU` 30 s,
         called with a 30 s timeout. Extraction failure still stores the file
-        with `text_status: failed`. The client filename is kept as metadata only.
+        with `text_status: failed`. The client filename is kept as metadata only. Extraction of
+        every type runs on its own executor (2 threads, 2 waiting): a further upload while it is
+        full answers 429 `rate_limited` with `Retry-After: 5`, before anything is stored.
       requestBody:
         required: true
         content:
@@ -431,6 +443,7 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedType' }
         '422': { $ref: '#/components/responses/QuotaOrValidation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     get:
       tags: [files]
       operationId: listFiles
@@ -609,7 +622,7 @@ paths:
       tags: [meetings]
       operationId: putMeetingPicture
       summary: Picture override for this meeting
-      description: Same checks (411, one file part, header size check) and normalisation as `PUT /api/me/picture`. Stored at `u/{user_id}/m/{meeting_id}/avatar/{file_id}.jpg`. Draft or scheduled only.
+      description: Same checks (411, one file part, header size check), normalisation and executor (429 `rate_limited` when full) as `PUT /api/me/picture`. Stored at `u/{user_id}/m/{meeting_id}/avatar/{file_id}.jpg`. Draft or scheduled only.
       requestBody:
         required: true
         content:
@@ -634,6 +647,7 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '415': { $ref: '#/components/responses/UnsupportedType' }
         '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
     get:
       tags: [meetings]
       operationId: getMeetingPicture
@@ -659,6 +673,42 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/InvalidState' }
 
+  /api/agentar/meetings/{meeting_id}/opener-draft:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    post:
+      tags: [meetings]
+      operationId: draftMeetingOpener
+      summary: Propose an opener from the purpose and the meeting's files
+      description: |
+        One SpeechLMM call on the purpose and the BM25 top chunks of the files the meeting uses
+        (meeting scoped, plus `file_ids` or every general file with `use_general_kb`), at most
+        about 1,500 prompt tokens, far under the 8k of the model. The reply is checked like a
+        report claim: a sentence with a number, weekday, month or name that the purpose, the
+        chunks and the owner's name do not state is removed, and so is a sentence that commits
+        the owner. At most three sentences and 500 characters. With nothing left the draft is
+        the purpose sentence. Any status. Does not save: the client patches `opener`.
+        `AGENTAR_OPENER_DRAFTS_PER_MINUTE` (6) per owner, then 429.
+      responses:
+        '200':
+          description: The draft
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OpenerDraft' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: No purpose and no file to draft from (validation shape)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HTTPValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The model is not loaded, failed or timed out (`model_unavailable`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /api/agentar/meetings/{meeting_id}/dispatch:
     parameters:
       - $ref: '#/components/parameters/MeetingId'
@@ -674,13 +724,27 @@ paths:
         joining, live or leaving); global cap `AGENTAR_MAX_LIVE_TOTAL` (1 on the demo, Ditto
         renders one session) across all users (409 `agentar_capacity`). The tick repeats the
         ownership and capacity checks when it claims a scheduled meeting.
-        - mode `now`: `start_at` is set to the request time. The first lifecycle step runs inline:
-          a human in the room moves the meeting to `joining` and calls the worker; an empty
-          room moves it to `waiting_for_human` and the 30 s tick retries until
-          `start_at + grace_minutes`, then `missed`.
-        - mode `scheduled`: status `scheduled`; the tick claims it at `start_at`.
-        A worker error after these checks is recorded as `failed` with `status_reason`; the
-        call still answers 202 with the meeting.
+        - mode `now`: `start_at` is set to the request time. The first lifecycle step runs inline
+          and moves the meeting to `joining` and calls the worker. Nobody needs to be in the
+          room: the Agentar opens it with its room token, and guests waiting for a host are
+          admitted once it is in. `VP_REQUIRE_HUMAN` does not apply. Only when a concurrent
+          dispatch took the global slot does the meeting stay `waiting_for_human`; the 30 s tick
+          retries until `start_at + grace_minutes`, then `missed` with `agentar_capacity`.
+        - mode `scheduled`: status `scheduled`; the tick claims it at `start_at`. While the
+          owner has another Agentar live the claim waits, and after `start_at + grace_minutes`
+          the meeting is `missed` with `another_agentar_live`; a room now held by another user
+          fails it with `room_not_owned`. At the start the bot is sent without waiting for a
+          human, as for `now`.
+        - both modes: once the bot is live the tick counts the humans in the room (Prosody
+          `mod_muc_size`, the bot and the transcriber left out). If nobody has joined
+          `grace_minutes` after the bot went live, the bot says its farewell and leaves, and the
+          meeting is `missed` with `no_human_joined` and no report. A human who joined once
+          ends this check; an empty room later is the worker's alone timeout. Unknown presence
+          never recalls the bot.
+        A worker error after these checks is recorded as `failed` with `status_reason`
+        (`worker_error`, `storage_unavailable`, `jitsi_key_missing`); the call still answers 202
+        with the meeting. A bot still joining `AGENTAR_JOIN_TIMEOUT_SECONDS` (180) after dispatch
+        fails with `join_timeout`.
       responses:
         '202':
           description: Accepted; read `status`
@@ -771,7 +835,7 @@ paths:
       summary: The ready report as Markdown, for download
       description: |
         Rendered from the JSON in `agentar_reports` (source of truth); the copy at
-        `u/{user_id}/m/{meeting_id}/report/report.md` is written when the report becomes ready.
+        `u/{user_id}/m/{meeting_id}/report/{report_id}.md` is written when the report becomes ready.
         `Content-Disposition: attachment; filename="agentar-report-<room>-<date>.md"`, `nosniff`.
       responses:
         '200':
@@ -854,6 +918,29 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '422': { $ref: '#/components/responses/ValidationError' }
 
+  /api/chat:
+    post:
+      tags: [chat]
+      operationId: chat
+      summary: Existing chat route (one response field added)
+      description: |
+        Request unchanged (`MeetweenTaskRequest` in models.py). For a `vp:` caller bound to an
+        Agentar meeting the answer comes from the owner's brief and knowledge base, and
+        `answer_kind` tells the worker whether `result` is an answer or the meeting's exact
+        escalation line (the `escalation_line` it got at dispatch). Null for every other caller.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, description: 'MeetweenTaskRequest, unchanged' }
+      responses:
+        '200':
+          description: The answer
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeetweenTaskResponse' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
   /api/virtual-participants:
     post:
       tags: [virtual-participants]
@@ -861,14 +948,20 @@ paths:
       summary: Existing Butler panel route (changed behaviour)
       description: |
         Body unchanged (`VirtualParticipantCreateRequest`, extra forbidden). Changes:
-        - only the room owner or an admin may add a bot (`VP_REQUIRE_MODERATOR=true`), else 404;
+        - only the room owner or an admin may add a bot, else 404; always on, there is no switch
+          to turn it off;
         - the caller is stored as the bot owner in `vp_bot_owners` (bot_id unique), so list, get,
           delete and say are owner scoped; Agentar bots are owned through `agentar_meetings.bot_id`;
         - the bot token is signed with `JWT_JITSI_SECRET_KEY`, has no `context.user.name`, and lives as
           long as `VP_MAX_LIFETIME_S`; empty key answers 503;
         - the worker suffix becomes " (AI)" and `display_name` takes the widened name pattern
-          without parentheses (W1), so a caller cannot fake the disclosure.
-        Responses as in f8 (202, 200 duplicate, 409, 429, 502, 503).
+          without parentheses (W1), so a caller cannot fake the disclosure;
+        - while `AGENTAR_ENABLED` is true a panel bot competes with the Agentar for the worker
+          and the avatar renderer: a caller who is not an admin gets 403, checked first, and an
+          admin gets 409 when active Agentar meetings (joining, live, leaving) plus active panel
+          bots already fill `AGENTAR_MAX_LIVE_TOTAL`. A duplicate of a bot already in the room is
+          not counted again.
+        Responses as in f8 (202, 200 duplicate, 409, 429, 502, 503), plus 403.
       requestBody:
         required: true
         content:
@@ -889,9 +982,14 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/BotView' }
         '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Agentar is enabled and the caller is not an admin
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlainError' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409':
-          description: Meeting ended, no human, or room limit
+          description: Meeting ended, no human, room limit, or the Agentar capacity `AGENTAR_MAX_LIVE_TOTAL` is in use
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PlainError' }
@@ -1060,7 +1158,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     ServiceUnavailable:
-      description: A dependency is not configured or not reachable (`jitsi_key_missing`, `worker_unavailable`, `storage_unavailable`)
+      description: A dependency is not configured or not reachable (`jitsi_key_missing`, `worker_unavailable`, `storage_unavailable`, `model_unavailable`)
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1106,6 +1204,7 @@ components:
         - jitsi_key_missing
         - worker_unavailable
         - storage_unavailable
+        - model_unavailable
     Error:
       type: object
       required: [detail, code]
@@ -1207,7 +1306,7 @@ components:
             Shown as "<agent_name> Agentar (AI)". Unicode letters and marks, digits, space,
             `_ . ' -`; no parentheses and not the word "agentar", so the "(AI)" disclosure cannot
             be faked. Patterns use ECMA-262 `u` mode; Python checks with `unicodedata`
-            categories. Null falls back to first_name, then "Meetween".
+            categories. Null falls back to first and last name, then first_name, then "Meetween".
         voice:
           oneOf:
             - $ref: '#/components/schemas/VoiceId'
@@ -1344,6 +1443,14 @@ components:
           description: Required for scheduled, at least 1 minute and at most 30 days ahead. Ignored for now.
         grace_minutes: { type: integer, minimum: 1, maximum: 60, default: 15 }
         purpose: { type: string, maxLength: 1000, default: '' }
+        opener:
+          type: string
+          maxLength: 500
+          default: ''
+          description: |
+            Plain text the Agentar speaks once after the greeting; the server folds it to one line.
+            Owner editable; `POST .../opener-draft` proposes one. Empty: the dispatch speaks the
+            purpose sentence as before.
         questions:
           type: array
           maxItems: 10
@@ -1370,7 +1477,7 @@ components:
       unevaluatedProperties: false
     Meeting:
       type: object
-      required: [id, room_name, mode, start_at, grace_minutes, purpose, questions, relevant_info, file_ids, use_general_kb, has_picture, status, created_at, updated_at, report_status]
+      required: [id, room_name, mode, start_at, grace_minutes, purpose, opener, questions, relevant_info, file_ids, use_general_kb, has_picture, status, created_at, updated_at, report_status]
       properties:
         id: { $ref: '#/components/schemas/ObjectId' }
         title: { type: [string, 'null'] }
@@ -1380,6 +1487,7 @@ components:
         start_at: { type: [string, 'null'], format: date-time }
         grace_minutes: { type: integer }
         purpose: { type: string }
+        opener: { type: string, maxLength: 500, description: 'Spoken after the greeting; empty speaks the purpose sentence' }
         questions:
           type: array
           items: { $ref: '#/components/schemas/Question' }
@@ -1392,7 +1500,7 @@ components:
         status: { $ref: '#/components/schemas/MeetingStatus' }
         status_reason:
           type: [string, 'null']
-          description: 'For missed and failed: room_stayed_empty, another_agentar_live, agentar_capacity, room_not_owned, worker_error, join_timeout, bot_lost'
+          description: 'For missed and failed: no_human_joined, another_agentar_live, agentar_capacity, room_not_owned, worker_error, storage_unavailable, jitsi_key_missing, join_timeout, bot_lost; room_stayed_empty on meetings missed before the Agentar opened the room itself'
         display_name: { type: [string, 'null'], description: 'Resolved at dispatch, e.g. "Laura Agentar (AI)"' }
         voice:
           oneOf:
@@ -1409,6 +1517,14 @@ components:
           enum: [none, pending, ready, failed]
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    OpenerDraft:
+      type: object
+      required: [opener]
+      properties:
+        opener:
+          type: string
+          maxLength: 500
+          description: At most three short spoken sentences; every number, date and name is taken from the purpose or the files. Not saved.
     MeetingList:
       type: object
       required: [items, next_cursor]
@@ -1536,13 +1652,32 @@ components:
         text: { type: string }
         at: { type: [string, 'null'], format: date-time }
         source: { type: string, enum: [speech, chat, agentar] }
+    MeetweenTaskResponse:
+      type: object
+      required: [type, room_name, meeting_id, result]
+      properties:
+        type: { type: string, description: 'Task type, SQA for chat' }
+        resultType: { type: string, enum: [audio, text] }
+        room_name: { type: string }
+        meeting_id: { type: string }
+        result: { type: string }
+        language: { type: [string, 'null'] }
+        participant_id: { type: [string, 'null'] }
+        error: { type: [string, 'null'] }
+        answer_kind:
+          oneOf:
+            - type: string
+              enum: [answer, escalate]
+            - type: 'null'
+          description: Agentar callers only; escalate when result is the escalation line
     ActionItem:
       type: object
-      required: [text, owner, due, transcript_refs]
+      required: [text, owner, due, quote, transcript_refs]
       properties:
         text: { type: string }
         owner: { type: string, description: Speaker name or "unassigned" }
         due: { type: [string, 'null'] }
+        quote: { type: [string, 'null'], description: Verbatim substring of the cited line }
         transcript_refs:
           type: array
           minItems: 1

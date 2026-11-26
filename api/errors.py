@@ -6,7 +6,7 @@ working. Request validation keeps the FastAPI default 422 body, and the 401 bodi
 challenges of the existing auth dependencies are untouched.
 """
 import re
-from typing import Mapping, NoReturn
+from typing import Mapping
 
 from bson import ObjectId
 from bson.errors import InvalidId
@@ -55,11 +55,6 @@ def object_id_or_404(value: str) -> ObjectId:
         return ObjectId(value)
     except (InvalidId, TypeError) as exc:
         raise not_found() from exc
-
-
-def not_implemented() -> NoReturn:
-    """Body of a route that is declared but not built yet. Remove the call with the stub."""
-    raise HTTPException(status_code=501, detail="not implemented")
 
 
 _ERROR_DESCRIPTIONS = {

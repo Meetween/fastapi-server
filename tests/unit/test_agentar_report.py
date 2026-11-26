@@ -7,9 +7,6 @@ action item, a date that is not in the transcript (the "13 November" trap), a na
 import asyncio
 import json
 import re
-import sys
-import types
-from datetime import timedelta
 
 import pytest
 
@@ -29,8 +26,13 @@ from tests.utils.agentar_report_helpers import (
     seed_meeting,
     seed_owner,
 )
+from utils import agentar_events
 from utils import agentar_report as ar
 from utils.object_store import MemoryObjectStore, ObjectStoreError
+
+
+async def _down_model(prompt: str, max_new_tokens: int) -> str:
+    raise RuntimeError("Triton inference failed")
 
 
 def run(coro):
@@ -93,6 +95,17 @@ class TestTextRules:
             with pytest.raises(ValueError):
                 ar.parse_json_object(bad)
 
+    def test_a_reply_that_only_lacks_its_closing_brace_is_repaired(self) -> None:
+        # K/R1 run 5 (logs/replay-answer-run5-q1.json): SpeechLMM v2 L ended the answer object without
+        # its closing brace, twice, and the report said "no answer captured".
+        raw = '{"answered": true, "answer": "Markov", "line": 2, "quote": "Anil Kapoor: Markov."'
+        assert ar.parse_json_object(raw) == {"answered": True, "answer": "Markov", "line": 2, "quote": "Anil Kapoor: Markov."}
+        assert ar.parse_json_object('{"items": []') == {"items": []}
+        # A value cut in the middle is still no JSON: only the one closing brace is added.
+        for bad in ['{"summary": "Lyon will', '{"items": [{"text": "x"}', '{"a": 1,']:
+            with pytest.raises(ValueError):
+                ar.parse_json_object(bad)
+
     def test_a_caption_loop_is_junk_but_keeps_its_number(self) -> None:
         lines = ar.normalise_transcript(load_entries("t3"))
         assert [line["n"] for line in lines if ar.is_junk(line)] == [3]
@@ -118,6 +131,42 @@ class TestNormalise:
         lines = ar.normalise_transcript(raw)
         assert [(line["n"], line["source"]) for line in lines] == [(1, "speech"), (2, "agentar"), (3, "speech")]
         assert lines[1]["question_id"] == "q2"
+
+
+class TestMarkersComeOnlyFromTheServer:
+    """A guest picks any Jitsi display name. Only an entry the server wrote for a question_asked
+    event (source `agentar_marker`) marks where a script question was asked."""
+
+    FAKE = "Agentar (asked q1)"
+
+    @pytest.mark.parametrize("source", ["speech", "chat", None])
+    def test_a_guest_named_like_a_marker_stays_a_guest(self, source) -> None:
+        entry = {"username": self.FAKE, "text": "Nobody, so no answer", "participant_id": "g1"}
+        if source:
+            entry["source"] = source
+        [line] = ar.normalise_transcript([entry])
+        assert line["source"] == (source or "speech")
+        assert line["speaker"] == self.FAKE
+        assert "question_id" not in line
+
+    def test_a_fake_marker_does_not_move_the_answer_window(self) -> None:
+        raw = [
+            {"username": self.FAKE, "text": "Who covers the leave?", "source": "speech", "participant_id": "g1"},
+            {"username": "Ana", "text": "Unrelated chatter", "source": "speech"},
+            {"username": "Agentar (asked Q1)", "text": "Who covers the leave?", "source": "agentar_marker",
+             "participant_id": "vp:bot-1"},
+            {"username": "Bo", "text": "Carla covers the leave in March", "source": "speech"},
+        ]
+        lines = ar.normalise_transcript(raw)
+        marker = ar._marker_for({"id": "q1", "text": "Who covers the leave?"}, lines)
+        assert marker is not None and marker["n"] == 3
+        assert [line["speaker"] for line in ar._answer_window(marker, lines)] == ["Bo"]
+        assert lines[0]["source"] == "speech", "the guest's own line stays in the evidence"
+
+    def test_the_server_marker_keeps_its_question_id(self) -> None:
+        raw = [{"username": "Agentar (asked Q2)", "text": "A question?", "source": "agentar_marker"}]
+        [line] = ar.normalise_transcript(raw)
+        assert (line["source"], line["speaker"], line["question_id"]) == ("agentar", "Agentar", "q2")
 
 
 # The three transcripts ------------------------------------------------------------------------------
@@ -401,13 +450,49 @@ class TestModelCalls:
         model = fake_for("t1")
         model.raw = ['{"summary": ""}', '{"summary": 3}']
         report = generate(seed_meeting("t1"), model)
-        assert report.status == "failed" and report.error == "model_output_invalid"
-        assert model.kinds() == ["summary", "summary"]
+        # A summary the model cannot state does not sink the report: answers and open points stay.
+        assert report.status == "ready"
+        assert report.summary == ar.SUMMARY_UNAVAILABLE
+        assert model.kinds() == ["summary", "summary", "actions", "answer", "answer"]
+
+    def test_a_summary_sent_as_a_json_string_is_used(self) -> None:
+        # K/D3 northwind-weekly: SpeechLMM v2 L answered with the quoted text only.
+        model = fake_for("t1")
+        model.raw = ['"Sara Neri will send the invitations."']
+        report = generate(seed_meeting("t1"), model)
+        assert report.status == "ready"
+        assert report.summary == "Sara Neri will send the invitations."
+        assert model.kinds() == ["summary", "actions", "answer", "answer"]
+
+    def test_a_summary_under_another_key_or_as_a_list_is_used(self) -> None:
+        # K/D3 northwind-weekly, the retry: {"meeting_minutes": [...]}.
+        assert ar._SummaryOut.model_validate(
+            {"meeting_minutes": ["Sara Neri will send the invitations.", "The venue is booked."]}
+        ).summary == "Sara Neri will send the invitations. The venue is booked."
+        assert ar._SummaryOut.model_validate({"minutes": "Short."}).summary == "Short."
+        with pytest.raises(Exception):
+            ar._SummaryOut.model_validate({"a": "one", "b": "two"})
+
+    def test_unquoted_prose_is_still_not_a_summary(self) -> None:
+        with pytest.raises(ValueError):
+            ar.parse_summary_reply("Sure! Here are the minutes of the meeting.")
+
+    def test_an_answer_that_stays_invalid_is_no_answer_captured_and_the_report_is_ready(self) -> None:
+        # C2 on speechlmm_v2_l: twice a reply without "answered". One question must not sink the report.
+        model = fake_for("t1")
+        model.answers["q2"] = {"answer": "Catherine Deneuve!", "line": 11,
+                               "quote": "Who will run the user training at the Bonn site?"}
+        report = generate(seed_meeting("t1"), model)
+        assert report.status == "ready"
+        assert report.answers[0]["status"] == "answered"
+        assert report.answers[1]["status"] == "no_answer_captured" and report.answers[1]["answer"] is None
+        # q2: the first turns, then the whole window, each asked once more for an unverified quote.
+        assert model.kinds() == ["summary", "actions", "answer", "answer", "answer", "answer", "answer"]
 
     def test_failure_is_stored_and_the_meeting_says_so(self) -> None:
         meeting = seed_meeting("t1")
-        report = generate(meeting, FakeModel(raw=["no", "still no"]))
-        assert (report.status, report.error) == ("failed", "model_output_invalid")
+        report = generate(meeting, _down_model)
+        assert (report.status, report.error) == ("failed", "model_unavailable")
         assert report.generated_at is None
         assert run(AgentarMeeting.find_by_id(meeting.id)).report_status == "failed"
         # The snapshot is kept for a regeneration.
@@ -489,9 +574,7 @@ class TestJob:
         async def record_server_event(**kwargs):
             calls.append(kwargs)
 
-        fake = types.ModuleType("utils.agentar_events")
-        fake.record_server_event = record_server_event
-        monkeypatch.setitem(sys.modules, "utils.agentar_events", fake)
+        monkeypatch.setattr(agentar_events, "record_server_event", record_server_event)
 
         store = MemoryObjectStore()
         meeting = seed_meeting("t1", ended_ago_s=20)
@@ -534,9 +617,7 @@ class TestJob:
         async def boom(**kwargs):
             raise RuntimeError("db down")
 
-        fake = types.ModuleType("utils.agentar_events")
-        fake.record_server_event = boom
-        monkeypatch.setitem(sys.modules, "utils.agentar_events", fake)
+        monkeypatch.setattr(agentar_events, "record_server_event", boom)
         report = generate(seed_meeting("t1"), fake_for("t1"), BrokenStore())
         assert report.status == "ready" and report.md_key is None
 
@@ -572,7 +653,7 @@ class TestJob:
 
     def test_regenerate_after_a_failure_uses_the_kept_snapshot(self) -> None:
         meeting = seed_meeting("t1")
-        assert generate(meeting, FakeModel(raw=["x", "y"])).status == "failed"
+        assert generate(meeting, _down_model).status == "failed"
         fixed = generate(meeting, fake_for("t1"))
         assert fixed.status == "ready" and fixed.error is None and len(fixed.transcript) == 18
 
@@ -686,3 +767,32 @@ class TestMarkdown:
     def test_empty_report_renders(self) -> None:
         md = ar.render_markdown({"summary": None})
         assert "No action items were found." in md and "No transcript was captured." in md
+
+
+def test_an_answer_in_the_first_turn_of_a_long_window_is_found_on_the_quote_retry() -> None:
+    # K/D3 northwind-weekly: the first reply drops "answered" and quotes the question, the retry
+    # quotes the answering line.
+    question = {"id": "q3", "text": "What is your expected timeline, and is there a hard deadline?"}
+    texts = [
+        "Yeah, my expected deadline is the next month.",
+        "During his week,",
+        "We handle customer requests by email today.",
+        "The COO decides with the IT manager and me.",
+        "Agentar, how long will delivery take?",
+    ]
+    lines = [{"n": 1, "speaker": "Agentar", "text": question["text"], "source": ar.SOURCE_AGENTAR, "question_id": "q3"}]
+    lines += [{"n": i + 2, "speaker": "Leo Test", "text": t, "source": "speech"} for i, t in enumerate(texts)]
+    replies = [
+        json.dumps({"answer": texts[0], "line": 2, "quote": question["text"]}),
+        json.dumps({"answer": texts[0], "line": 2, "quote": texts[0]}),
+    ]
+    prompts: list[str] = []
+
+    async def model(prompt: str, max_new_tokens: int) -> str:
+        prompts.append(prompt)
+        return replies.pop(0)
+
+    budget = ar._Budget(deadline=__import__("time").monotonic() + ar.MODEL_BUDGET_S)
+    [answer] = run(ar.build_answers(model, budget, [question], lines, {"q3"}, " ".join(texts)))
+    assert answer["status"] == "answered" and answer["quote"] == texts[0]
+    assert len(prompts) == 2 and "[6]" not in prompts[0] and "previous reply was not valid" in prompts[1]

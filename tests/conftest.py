@@ -17,8 +17,18 @@ from pydub import AudioSegment
 from main import app
 from core import EngineManager
 from src.database import mongo as mongo_module
+from utils.rate_limit import limiter as rate_limiter
 
 pytest_plugins = ["tests.fixtures_agentar"]
+
+
+@pytest.fixture(autouse=True)
+def fresh_rate_limiter():
+    """The sign up, login and room claim throttles are one process wide window: every test starts
+    and ends with it empty, so the order of tests never decides a 429."""
+    rate_limiter.clear()
+    yield
+    rate_limiter.clear()
 
 
 # ============================================================================

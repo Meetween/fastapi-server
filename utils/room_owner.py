@@ -101,6 +101,18 @@ async def claim_room_moderator(room_name: str, user: User) -> bool:
     return owner.owner_user_id == user.email or _admin(user)
 
 
+async def may_send_agentar(room_name: str, user: User) -> bool:
+    """Whether ``user`` may send an Agentar into the room: the room owner or an admin, as
+    `claim_room_moderator` decides (claiming a free room). With `AGENTAR_ANY_ROOM` a room held by
+    another user is allowed too, without changing its owner."""
+    if await claim_room_moderator(room_name, user):
+        return True
+    if settings.agentar.any_room:
+        logger.info("agentar into a room held by another user room=%s", room_key(room_name))
+        return True
+    return False
+
+
 async def is_room_moderator(*, room_name: str, user_id: str) -> bool:
     """Whether ``user_id`` owns the room or is an admin. Never creates an owner record."""
     owner = await RoomOwner.find_by_room(room_name)

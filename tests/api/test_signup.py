@@ -21,13 +21,6 @@ from utils.rate_limit import limiter
 PASSWORD = "pytest-signup-pass"
 
 
-@pytest.fixture(autouse=True)
-def _fresh_limiter():
-    limiter.clear()
-    yield
-    limiter.clear()
-
-
 @pytest.fixture
 def signup_on(monkeypatch):
     monkeypatch.setattr(settings, "signup_enabled", True)
@@ -213,6 +206,31 @@ def test_wrapped_legacy_user_logs_in_and_is_rehashed(test_client) -> None:
     assert _stored_hash("wrapped@meetween.test").startswith("$argon2id$")
 
 
+@pytest.mark.parametrize("wrapped", [False, True], ids=["raw", "wrapped"])
+def test_old_user_logs_in_after_the_jwt_key_rotation(test_client, monkeypatch, wrapped) -> None:
+    """Gap G: a short JWT_SECRET_KEY is rotated. LEGACY_PASSWORD_PEPPER keeps the old key for the
+    legacy digests, the user keeps the password and is upgraded to argon2id at the login."""
+    old_key, new_key = "short-old-key", "r" * 40
+    monkeypatch.setattr(settings, "legacy_password_pepper", "")
+    monkeypatch.setattr(settings, "_app_jwt", settings.app_jwt.model_copy(update={"secret_key": old_key}))
+    digest = passwords.legacy_digest(PASSWORD)
+    _insert_user("rotated@meetween.test", passwords.wrap_legacy(digest) if wrapped else digest)
+
+    monkeypatch.setattr(settings, "_app_jwt", settings.app_jwt.model_copy(update={"secret_key": new_key}))
+    assert _login(test_client, "rotated@meetween.test", PASSWORD).status_code == 401, "no pepper, locked out"
+
+    monkeypatch.setattr(settings, "legacy_password_pepper", old_key)
+    response = _login(test_client, "rotated@meetween.test", PASSWORD)
+    assert response.status_code == 200, response.text
+    assert _stored_hash("rotated@meetween.test").startswith("$argon2id$v=19$m=19456,t=2,p=1$")
+    claims = auth_utils.verify_jwt_token(response.json()["access_token"], settings.app_jwt.audience_access)
+    assert claims["sub"] == "rotated@meetween.test", "the new token is signed with the new key"
+
+    # Once rehashed the pepper is no longer needed.
+    monkeypatch.setattr(settings, "legacy_password_pepper", "")
+    assert _login(test_client, "rotated@meetween.test", PASSWORD).status_code == 200
+
+
 def test_rehash_does_not_overwrite_a_concurrent_change(monkeypatch) -> None:
     """The upgrade is conditional on the old value: a hash changed meanwhile wins."""
     _insert_user("race@meetween.test", passwords.legacy_digest(PASSWORD))
@@ -300,6 +318,44 @@ def test_a_success_clears_the_address_and_email_counter(monkeypatch) -> None:
     for _ in range(2):
         assert _login(client, "typo@meetween.test", "wrong-password").status_code == 401
     assert _login(client, "typo@meetween.test", PASSWORD).status_code == 200
+
+
+def test_a_concurrent_burst_reaches_the_hasher_at_most_limit_times(monkeypatch) -> None:
+    """Every attempt is recorded before the hash, so parallel requests cannot all pass the check
+    while the first ones are still hashing."""
+    import httpx
+
+    _agentar(monkeypatch, login_fail_limit=10, login_fail_ip_limit=50)
+    _insert_user("burst@meetween.test", passwords.hash_password(PASSWORD))
+    verified = []
+
+    async def slow_verify(stored, password):
+        verified.append(1)
+        await asyncio.sleep(0.05)
+        return passwords.Verification(ok=False, new_hash=None)
+
+    monkeypatch.setattr(passwords, "verify_password_async", slow_verify)
+
+    async def burst() -> list[int]:
+        transport = httpx.ASGITransport(app=app, client=("198.51.100.7", 50000))
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as http:
+            body = {"email": "burst@meetween.test", "password": "wrong-password"}
+            responses = await asyncio.gather(*(http.post("/api/auth/login", json=body) for _ in range(30)))
+        return [r.status_code for r in responses]
+
+    codes = asyncio.run(burst())
+    assert len(verified) <= 10, f"{len(verified)} verifications for a limit of 10"
+    assert codes.count(401) == len(verified)
+    assert codes.count(429) == 30 - len(verified)
+
+
+def test_successful_logins_do_not_use_the_address_budget(monkeypatch) -> None:
+    _agentar(monkeypatch, login_fail_limit=2, login_fail_ip_limit=3)
+    _insert_user("office@meetween.test", passwords.hash_password(PASSWORD))
+    shared = _client("198.51.100.7")
+    for _ in range(5):
+        assert _login(shared, "office@meetween.test", PASSWORD).status_code == 200
+    assert _login(shared, "office@meetween.test", "wrong-password").status_code == 401
 
 
 def test_the_throttle_window_slides(monkeypatch) -> None:

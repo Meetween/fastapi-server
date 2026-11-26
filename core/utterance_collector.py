@@ -7,7 +7,7 @@ from butler import transcribe_audio
 from core.engine_manager import EngineManager
 from core.session_manager import SessionManager
 from config import settings
-from utils import UtteranceBuffer, is_model_reply
+from utils import UtteranceBuffer, caption_plausibility, is_model_reply
 
 logger = logging.getLogger(__name__)
 
@@ -176,6 +176,20 @@ class UtteranceCollector:
             logger.debug(
                 "Dropping model reply utterance: meeting=%s participant=%s text=%r",
                 self.meeting_id, utterance.participant_id, result.text,
+            )
+            caption_plausibility.record_drop(
+                caption_plausibility.MODEL_REPLY, meeting_id=self.meeting_id,
+                participant_id=utterance.participant_id, chars=len(result.text or ""), seconds=utterance.duration_s,
+            )
+            await self._finish(utterance, None)
+            return
+
+        reason = caption_plausibility.drop_reason(result.text, utterance.duration_s)
+        if reason is not None:
+            # Too long for its audio: the final caption falls back to the interim text, as above.
+            caption_plausibility.record_drop(
+                reason, meeting_id=self.meeting_id, participant_id=utterance.participant_id,
+                chars=len(result.text or ""), seconds=utterance.duration_s,
             )
             await self._finish(utterance, None)
             return

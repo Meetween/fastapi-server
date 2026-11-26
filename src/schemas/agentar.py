@@ -24,6 +24,8 @@ from src.schemas.virtual_participants import BOT_ID_PATTERN, ROOM_PATTERN
 
 OBJECT_ID_PATTERN = r"^[a-f0-9]{24}$"
 QUESTION_ID_PATTERN = r"^q[0-9]{1,2}$"
+# Opener of a meeting, in characters: three short spoken sentences.
+OPENER_MAX_CHARS = 500
 
 ObjectId = Annotated[str, StringConstraints(pattern=OBJECT_ID_PATTERN)]
 RoomName = Annotated[str, StringConstraints(pattern=ROOM_PATTERN)]
@@ -58,6 +60,7 @@ ErrorCode = Literal[
     "room_not_owned",
     "length_required",
     "event_clock_skew",
+    "model_unavailable",
 ]
 
 
@@ -222,6 +225,14 @@ class MeetingFields(BaseModel):
     )
     grace_minutes: int = Field(default=settings.agentar.grace_minutes_default, ge=1, le=60)
     purpose: str = Field(default="", max_length=1000)
+    opener: str = Field(
+        default="",
+        max_length=OPENER_MAX_CHARS,
+        description=(
+            "Plain text the Agentar speaks once after the greeting, folded to one line. Empty speaks "
+            "the purpose sentence. POST .../opener-draft proposes one."
+        ),
+    )
     questions: list[QuestionText] = Field(default_factory=list, max_length=10)
     relevant_info: str = Field(default="", max_length=2000)
     file_ids: list[ObjectId] = Field(default_factory=list, max_length=20)
@@ -257,6 +268,7 @@ class Meeting(BaseModel):
     start_at: Optional[datetime] = None
     grace_minutes: int
     purpose: str
+    opener: str = ""
     questions: list[Question]
     relevant_info: str
     file_ids: list[ObjectId]
@@ -266,8 +278,9 @@ class Meeting(BaseModel):
     status_reason: Optional[str] = Field(
         default=None,
         description=(
-            "For missed and failed: room_stayed_empty, another_agentar_live, worker_error, "
-            "join_timeout, bot_lost"
+            "For missed and failed: no_human_joined, another_agentar_live, agentar_capacity, "
+            "room_not_owned, worker_error, storage_unavailable, jitsi_key_missing, join_timeout, bot_lost; "
+            "room_stayed_empty on meetings missed before the Agentar opened the room itself"
         ),
     )
     display_name: Optional[str] = None
@@ -280,6 +293,14 @@ class Meeting(BaseModel):
     report_status: ReportStatus
     created_at: datetime
     updated_at: datetime
+
+
+class OpenerDraft(BaseModel):
+    opener: str = Field(
+        ...,
+        max_length=OPENER_MAX_CHARS,
+        description="At most three short sentences, every figure and name taken from the purpose or the files. Not saved.",
+    )
 
 
 class MeetingList(BaseModel):
@@ -400,6 +421,7 @@ class ActionItem(BaseModel):
     text: str
     owner: str = Field(..., description='Speaker name or "unassigned"')
     due: Optional[str] = None
+    quote: Optional[str] = Field(default=None, description="Verbatim substring of the cited line")
     transcript_refs: list[Annotated[int, Field(ge=1)]] = Field(..., min_length=1)
 
 
@@ -447,6 +469,9 @@ class AgentarWorkerQuestion(BaseModel):
     text: str = Field(..., min_length=1, max_length=300)
 
 
+OWNER_FIRST_NAME_CHARS = 32
+
+
 class AgentarWorkerBot(BaseModel):
     """Mirror of the worker's `CreateBot` (vp-worker-bots.delta.yaml) with `extra="forbid"`.
     Built only by the dispatch code from the meeting and the owner's profile, never from a
@@ -467,6 +492,9 @@ class AgentarWorkerBot(BaseModel):
     avatar_jpeg_b64: Optional[str] = Field(default=None, max_length=546_136)
     agentar_meeting_id: Optional[ObjectId] = None
     events_url: Optional[str] = Field(default=None, max_length=512)
+    # The owner's first name, cleaned to the worker's display name characters; None when the
+    # profile has none. A chat message that starts with it asks the bot (owner decision C).
+    owner_first_name: Optional[str] = Field(default=None, min_length=1, max_length=OWNER_FIRST_NAME_CHARS)
 
     @model_validator(mode="after")
     def _script_or_opener(self) -> "AgentarWorkerBot":

@@ -122,3 +122,45 @@ async def test_no_more_than_four_hashes_run_at_once() -> None:
 
     await asyncio.gather(*(passwords._off_loop(busy) for _ in range(10)))
     assert state["peak"] == passwords.HASH_CONCURRENCY == 4
+
+
+# Key rotation: LEGACY_PASSWORD_PEPPER holds the JWT_SECRET_KEY the legacy digests were made with.
+
+OLD_KEY = "short-old-key"
+NEW_KEY = "n" * 40
+
+
+def _use_key(monkeypatch, key: str) -> None:
+    monkeypatch.setattr(passwords.settings, "_app_jwt", passwords.settings.app_jwt.model_copy(update={"secret_key": key}))
+
+
+def test_legacy_pepper_defaults_to_the_jwt_key(monkeypatch) -> None:
+    monkeypatch.setattr(passwords.settings, "legacy_password_pepper", "")
+    _use_key(monkeypatch, OLD_KEY)
+    assert passwords.legacy_digest(PASSWORD) == hashlib.sha256(f"{OLD_KEY}:{PASSWORD}".encode()).hexdigest()
+
+
+def test_legacy_pepper_replaces_the_jwt_key_when_set(monkeypatch) -> None:
+    _use_key(monkeypatch, NEW_KEY)
+    monkeypatch.setattr(passwords.settings, "legacy_password_pepper", OLD_KEY)
+    assert passwords.legacy_digest(PASSWORD) == hashlib.sha256(f"{OLD_KEY}:{PASSWORD}".encode()).hexdigest()
+
+
+@pytest.mark.parametrize("wrapped", [False, True], ids=["raw", "wrapped"])
+def test_legacy_hashes_verify_after_a_key_rotation(monkeypatch, wrapped: bool) -> None:
+    monkeypatch.setattr(passwords.settings, "legacy_password_pepper", "")
+    _use_key(monkeypatch, OLD_KEY)
+    stored = passwords.legacy_digest(PASSWORD)
+    if wrapped:
+        stored = passwords.wrap_legacy(stored)
+
+    _use_key(monkeypatch, NEW_KEY)
+    assert passwords.verify_password(stored, PASSWORD) == passwords.Verification(ok=False), (
+        "without the pepper a rotated key locks the legacy user out"
+    )
+
+    monkeypatch.setattr(passwords.settings, "legacy_password_pepper", OLD_KEY)
+    result = passwords.verify_password(stored, PASSWORD)
+    assert result.ok and result.new_hash.startswith("$argon2id$v=19$m=19456,t=2,p=1$")
+    assert passwords.verify_password(stored, "wrong password") == passwords.Verification(ok=False)
+    assert passwords.verify_password(result.new_hash, PASSWORD) == passwords.Verification(ok=True)

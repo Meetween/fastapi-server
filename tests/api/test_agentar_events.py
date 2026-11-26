@@ -5,8 +5,6 @@ The lifecycle module (B7) is not part of this branch. `lifecycle` installs a fak
 the call and moves the meeting to ended as the real one will.
 """
 import asyncio
-import sys
-import types
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -15,9 +13,10 @@ from bson import ObjectId
 from fastapi.testclient import TestClient
 
 from config import settings
+from core import SessionManager
 from src.database.models.agentar_event import AgentarEvent
 from src.database.models.agentar_meeting import AgentarMeeting
-from utils import agentar_events, clock
+from utils import agentar_events, agentar_lifecycle, clock
 
 WORKER = {"Authorization": "Bearer worker-key-for-tests"}
 BOT = "bot1"
@@ -29,13 +28,14 @@ def _worker_key(monkeypatch):
 
 
 class Lifecycle:
-    """Stands in for B7's module: records calls, ends the meeting like the real hand over."""
+    """Stands in for `agentar_lifecycle.mark_agentar_ended`: records calls, ends the meeting like
+    the real hand over, without the report job."""
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
         self.fail_next = False
 
-    async def mark_agentar_ended(self, *, meeting_id: str, reason: str) -> None:
+    async def mark_agentar_ended(self, meeting_id: str, reason: str, **kwargs) -> None:
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("lifecycle down")
@@ -54,9 +54,7 @@ def set_agentar(monkeypatch, **fields) -> None:
 @pytest.fixture
 def lifecycle(monkeypatch) -> Lifecycle:
     fake = Lifecycle()
-    module = types.ModuleType("utils.agentar_lifecycle")
-    module.mark_agentar_ended = fake.mark_agentar_ended
-    monkeypatch.setitem(sys.modules, "utils.agentar_lifecycle", module)
+    monkeypatch.setattr(agentar_lifecycle, "mark_agentar_ended", fake.mark_agentar_ended)
     return fake
 
 
@@ -289,6 +287,104 @@ class TestIdempotency:
 
 
 class TestEffects:
+    def test_an_asked_question_enters_the_live_transcript_once(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(SessionManager, "_sessions", {})
+        monkeypatch.setattr(SessionManager, "_ended_meetings", {})
+        monkeypatch.setattr(SessionManager, "_last_activity", {})
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        payload = question(meeting_id)
+        assert post(test_client, payload).status_code == 202
+        assert post(test_client, payload).status_code == 200
+        [entry] = SessionManager.get_session("jm7").transcript
+        assert (entry.username, entry.text, entry.source) == ("Agentar (asked q1)", "Who covers the leave?", "agentar_marker")
+        assert entry.participant_id == f"vp:{BOT}"
+
+    def _fresh_sessions(self, monkeypatch) -> None:
+        monkeypatch.setattr(SessionManager, "_sessions", {})
+        monkeypatch.setattr(SessionManager, "_ended_meetings", {})
+        monkeypatch.setattr(SessionManager, "_last_activity", {})
+
+    def test_an_answered_chat_question_enters_the_transcript_as_two_chat_lines(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        data = {"question": "Agentar, when does Atlas go live?", "answer": "On the 20th.", "asker": "Anil\u202e", "channel": "group"}
+        payload = body(meeting_id, "answer_given", data)
+        assert post(test_client, payload).status_code == 202
+        assert post(test_client, payload).status_code == 200
+        asked, answered = SessionManager.get_session("jm7").transcript
+        assert (asked.username, asked.text, asked.source) == ("Anil", "Agentar, when does Atlas go live?", "chat")
+        assert (answered.username, answered.text, answered.source) == ("Agentar", "On the 20th.", "chat")
+        assert asked.timestamp == answered.timestamp == clock.utcnow().timestamp()
+        assert answered.participant_id == f"vp:{BOT}"
+
+    def test_an_escalation_enters_the_transcript_as_the_askers_chat_line_only(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        data = {"question": "Agentar, can we move 5,000 euros?", "asker": "Anil", "channel": "group"}
+        assert post(test_client, body(meeting_id, "escalation", data)).status_code == 202
+        [asked] = SessionManager.get_session("jm7").transcript
+        assert (asked.username, asked.text, asked.source) == ("Anil", "Agentar, can we move 5,000 euros?", "chat")
+
+    def test_a_chat_question_without_an_asker_is_a_guest_line(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        data = {"question": "Agentar, who is the deputy?", "asker": None}
+        assert post(test_client, body(meeting_id, "escalation", data)).status_code == 202
+        [asked] = SessionManager.get_session("jm7").transcript
+        assert (asked.username, asked.source) == ("Guest", "chat")
+
+    @pytest.mark.parametrize("kind", ["answer_given", "escalation"])
+    def test_a_voice_question_is_not_written_again_as_chat(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch, kind
+    ) -> None:
+        """The guest said it aloud, so the captions already hold it, and the answer was spoken."""
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        data = {"question": "when is the demo?", "asker": "Anil", "channel": "voice"}
+        if kind == "answer_given":
+            data["answer"] = "On Friday."
+        assert post(test_client, body(meeting_id, kind, data)).status_code == 202
+        assert SessionManager.list_sessions() == []
+        assert len(stored_events(meeting_id)) == 1
+
+    @pytest.mark.parametrize("channel", ["group", "private", None])
+    def test_chat_and_unknown_channels_are_written(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch, channel
+    ) -> None:
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner, jitsi_meeting_id="jm7")
+        data = {"question": "when is the demo?", "asker": "Anil", "channel": channel}
+        assert post(test_client, body(meeting_id, "escalation", data)).status_code == 202
+        [asked] = SessionManager.get_session("jm7").transcript
+        assert (asked.username, asked.source, asked.participant_id) == ("Anil", "chat", f"vp:{BOT}")
+
+    def test_a_chat_question_without_a_bound_meeting_is_only_stored(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        self._fresh_sessions(monkeypatch)
+        meeting_id = make_meeting(owner)
+        data = {"question": "Agentar, who is the deputy?", "answer": "Sara.", "asker": "Anil"}
+        assert post(test_client, body(meeting_id, "answer_given", data)).status_code == 202
+        assert SessionManager.list_sessions() == []
+        assert len(stored_events(meeting_id)) == 1
+
+    def test_an_asked_question_without_a_bound_meeting_is_only_stored(
+        self, test_client: TestClient, owner, frozen_clock, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(SessionManager, "_sessions", {})
+        meeting_id = make_meeting(owner)
+        assert post(test_client, question(meeting_id)).status_code == 202
+        assert SessionManager.list_sessions() == []
+        assert len(stored_events(meeting_id)) == 1
+
     def test_joined_moves_joining_to_live(self, test_client: TestClient, owner, frozen_clock) -> None:
         meeting_id = make_meeting(owner, "joining")
         assert post(test_client, body(meeting_id, "joined", {"join_ms": 4200})).status_code == 202

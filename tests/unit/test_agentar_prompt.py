@@ -5,11 +5,15 @@ import re
 import pytest
 from bson import ObjectId
 
+from config import settings
 from src.database.models import AgentarFile, AgentarMeeting, User
 from src.database.models.agentar_file import FileChunk
+from utils import agentar_names as names
+from utils.agentar_worker import build_worker_bot
 from utils.agentar_prompt import (
     BM25,
     MAX_ANSWER_CHARS,
+    MAX_NAME_CHARS,
     MAX_NEW_TOKENS,
     MAX_PROMPT_CHARS,
     AgentarContext,
@@ -412,9 +416,17 @@ def test_a_model_sentinel_with_extra_text_comes_back_as_the_bare_line():
 
 
 def test_bot_id_of_needs_the_vp_prefix_and_an_id():
-    assert bot_id_of("vp:abc-1") == "abc-1"
-    for bad in (None, "", "vp:", "user-1", "VP:abc"):
+    assert bot_id_of("vp:abc") == "abc"
+    for bad in (None, "", "vp:", "vp:-1", "user-1", "VP:abc"):
         assert bot_id_of(bad) is None
+
+
+def test_bot_id_of_drops_the_worker_question_number():
+    # vp_worker/manager.py numbers each question with VP_CHAT_FRESH_HISTORY on (the default).
+    bot = "d2e1ddb7e89246ff85cf5399ef7ac33d"
+    assert bot_id_of(f"vp:{bot}-1") == bot
+    assert bot_id_of(f"vp:{bot}-12") == bot
+    assert bot_id_of(f"vp:{bot}") == bot
 
 
 def make_file(owner="laura@x.test", scope="general", meeting_id=None, text="Trento has 60 seats.",
@@ -457,6 +469,13 @@ def test_lookup_reads_the_brief_the_owner_name_and_meeting_files(laura):
     assert texts(context) == {"Meeting file text"}
 
 
+def test_lookup_finds_the_brief_for_a_numbered_question(laura):
+    # The worker asks as vp:<bot id>-<n>; without the lookup the Butler prompt answered (C2 run 2).
+    meeting = make_meeting()
+    context = run(load_agentar_context("vp:bot1-3"))
+    assert context is not None and context.meeting_id == meeting.id
+
+
 def test_lookup_uses_the_listed_general_files_and_not_the_others(laura):
     listed, unlisted = make_file(text="listed"), make_file(text="unlisted")
     make_meeting(file_ids=[listed.id])
@@ -492,4 +511,22 @@ def test_lookup_ignores_a_malformed_file_id_and_a_meeting_without_a_bot_in_the_r
 
 def test_lookup_without_an_owner_record_falls_back_to_a_neutral_name():
     make_meeting(owner="ghost@x.test", bot_id="bot9")
-    assert run(load_agentar_context("vp:bot9")).owner_name == "the owner"
+    assert run(load_agentar_context("vp:bot9")).owner_name == "the meeting owner"
+
+
+@pytest.mark.parametrize(
+    ("first", "last"),
+    [("Laura", "Rossi"), ("Laura", None), (None, None), ("  Ann\tMarie ", "O'Neil<b>"), ("Zoë", "x" * 90)],
+)
+def test_escalation_line_matches_the_dispatch_payload(monkeypatch, first, last):
+    """The worker compares the chat reply with the line it got at dispatch: same owner, same text."""
+    monkeypatch.setattr(
+        settings, "_agentar", settings.agentar.model_copy(update={"worker_events_base_url": "http://fastapi:8000"})
+    )
+    owner = User(email="laura@x.test", password_hash="x", first_name=first, last_name=last)
+    meeting = AgentarMeeting(owner=owner.email, room_name="weekly", title="Weekly")
+    meeting.id = str(ObjectId())
+    payload = build_worker_bot(meeting=meeting, owner=owner, jwt=None, avatar_jpeg=None)
+    spoken = names.owner_names(first, last)[0]
+    assert payload.escalation_line == escalation_line(neutralise(spoken, MAX_NAME_CHARS))
+    assert payload.escalation_line.endswith(f"check with {spoken} and report back")

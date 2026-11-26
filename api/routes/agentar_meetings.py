@@ -1,4 +1,5 @@
-"""Agentar meetings: create, list, read, edit, delete, picture override, dispatch, recall.
+"""Agentar meetings: create, list, read, edit, delete, picture override, opener draft, dispatch,
+recall.
 
 Thin routes over `utils.agentar_meetings`. The lifecycle tick that moves scheduled meetings is
 separate. Path ids are plain strings: a malformed id is a 404 through
@@ -20,9 +21,12 @@ from src.schemas.agentar import (
     MeetingList,
     MeetingPatch,
     MeetingStatus,
+    OpenerDraft,
     Picture,
 )
 from utils import agentar_meetings as meetings
+from utils import agentar_opener
+from utils.rate_limit import RateLimiter, get_rate_limiter, too_many_requests
 from utils.uploads import FILE_PART, multipart_openapi, read_single_upload
 
 router = APIRouter(prefix="/api/agentar/meetings", tags=["meetings"])
@@ -69,7 +73,7 @@ async def delete_meeting(meeting_id: str, user: CurrentUser, store: ObjectStoreD
     "/{meeting_id}/picture",
     response_model=Picture,
     dependencies=[Depends(require_content_length)],
-    responses=error_responses(401, 404, 409, 411, 413, 415, 422, 503),
+    responses=error_responses(401, 404, 409, 411, 413, 415, 422, 429, 503),
     openapi_extra=multipart_openapi({"file": FILE_PART}, ["file"]),
 )
 async def put_meeting_picture(meeting_id: str, request: Request, user: CurrentUser, store: ObjectStoreDep):
@@ -94,6 +98,26 @@ async def get_meeting_picture(meeting_id: str, user: CurrentUser, store: ObjectS
 async def delete_meeting_picture(meeting_id: str, user: CurrentUser, store: ObjectStoreDep):
     await meetings.delete_picture(user, meeting_id, store)
     return Response(status_code=204)
+
+
+@router.post(
+    "/{meeting_id}/opener-draft",
+    response_model=OpenerDraft,
+    responses=error_responses(401, 404, 422, 429, 503),
+)
+async def draft_meeting_opener(
+    meeting_id: str,
+    user: CurrentUser,
+    limiter: Annotated[RateLimiter, Depends(get_rate_limiter)],
+):
+    """A proposed opener; not saved. The client patches `opener` with the text the owner keeps."""
+    meeting = await meetings.load_owned(meeting_id, user.email)
+    key = f"opener-draft:{user.email}"
+    wait = limiter.retry_after(key, settings.agentar.opener_drafts_per_minute, agentar_opener.WINDOW_S)
+    if wait is not None:
+        raise too_many_requests(wait)
+    limiter.hit(key, agentar_opener.WINDOW_S)
+    return OpenerDraft(opener=await agentar_opener.draft_opener(meeting, user))
 
 
 @router.post(

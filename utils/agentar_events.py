@@ -10,7 +10,6 @@ Every stored event is a dashboard notification. The notification cursor is the e
 Strings in `data` come from guests and the model, so only the known fields of each type are kept,
 control and bidi characters are removed, and the UI renders them as text nodes.
 """
-import importlib
 import logging
 import re
 import uuid
@@ -25,12 +24,19 @@ from pymongo.errors import DuplicateKeyError
 
 from api.errors import AgentarError, not_found, object_id_or_404
 from config import settings
+from core import session_manager
 from src.database.models.agentar_event import AgentarEvent
 from src.database.models.agentar_meeting import AgentarMeeting
 from src.schemas.agentar import Notification, NotificationList, NotificationType, WorkerEvent
-from utils import clock
+from utils import agentar_lifecycle, clock
 
 logger = logging.getLogger(__name__)
+
+# Speaker of the Agentar's own chat lines in the transcript. The report skips them as answers.
+AGENTAR_CHAT_SPEAKER = "Agentar"
+# Participant id prefix of the lines the server writes for the bot. The report reads it to tell a
+# relayed chat line from a guest's; a guest's Jitsi id never has it.
+VP_PARTICIPANT_PREFIX = "vp:"
 
 # Statuses that accept every event type. `left` is also accepted shortly after `ended`.
 ACCEPTING_STATUSES = ("joining", "live", "leaving")
@@ -79,14 +85,9 @@ def event_payload(event: WorkerEvent) -> dict[str, Any]:
 
 
 async def _mark_ended(meeting_id: str, reason: str) -> None:
-    """Hand a live or leaving meeting to the lifecycle module (B7).
-
-    Assumed signature: ``async def mark_agentar_ended(meeting_id: str, reason: str)``. B7 owns the
-    state change to ended, the live slot, the transcript flush and the report queue. The module
-    is imported on use because it lives on another branch; once merged this becomes a plain import.
-    """
-    lifecycle = importlib.import_module("utils.agentar_lifecycle")
-    await lifecycle.mark_agentar_ended(meeting_id=meeting_id, reason=reason)
+    """Hand a live or leaving meeting to the lifecycle module, which owns the state change to
+    ended, the live slot, the transcript flush and the report queue."""
+    await agentar_lifecycle.mark_agentar_ended(meeting_id=meeting_id, reason=reason)
 
 
 async def _fail_joining(meeting_oid: ObjectId, reason: str) -> bool:
@@ -128,8 +129,62 @@ def _check_clock(event: WorkerEvent) -> None:
         raise AgentarError(422, "event_clock_skew", "The event time is too far from the server time")
 
 
+def _record_asked_question(meeting: dict[str, Any], event: WorkerEvent) -> None:
+    """The asked script question as a line of the live transcript, source `agentar_marker`,
+    speaker "Agentar (asked qN)". The source, not the speaker name, is what the report trusts. The bot's own speech is not transcribed, so this line is how the report
+    finds where a question was asked and reads the answer after it. Without a bound Jitsi
+    meeting there is no session to write to: the line is skipped and logged."""
+    jitsi_id = event.jitsi_meeting_id or meeting.get("jitsi_meeting_id")
+    if not jitsi_id:
+        logger.warning("question_asked for meeting %s before a Jitsi meeting is bound; not in the transcript", meeting["_id"])
+        return
+    session_manager.SessionManager.update_transcript(
+        meeting_id=plain_text(jitsi_id),
+        room_name=meeting.get("room_name"),
+        transcript=plain_text(event.data.text),
+        participant_id=f"{VP_PARTICIPANT_PREFIX}{event.bot_id}",
+        timestamp=clock.as_utc(event.at).timestamp(),
+        username=f"Agentar (asked {event.data.question_id})",
+        source=session_manager.SOURCE_AGENTAR_MARKER,
+    )
+
+
+def _record_chat_exchange(meeting: dict[str, Any], event: WorkerEvent) -> None:
+    """A chat question put to the Agentar as chat lines of the live transcript, so the report can
+    cite it: the asker's line with the question, and for `answer_given` the Agentar's line with
+    its answer. Both are source chat; the Agentar's speaker is "Agentar", which the report never
+    reads as a guest's answer to a script question. Both carry the participant id `vp:<bot>`, which
+    is how the report tells a relayed line from a guest's chat message. An escalation has the
+    question line only: the worker's wording of the hand over is not in the event. A `voice`
+    question is not written: the captions hold it and the answer was spoken. Skipped and logged
+    without a bound Jitsi meeting."""
+    if event.data.channel == "voice":
+        return
+    jitsi_id = event.jitsi_meeting_id or meeting.get("jitsi_meeting_id")
+    if not jitsi_id:
+        logger.warning("%s for meeting %s before a Jitsi meeting is bound; not in the transcript", event.type, meeting["_id"])
+        return
+    common = {
+        "meeting_id": plain_text(jitsi_id),
+        "room_name": meeting.get("room_name"),
+        "participant_id": f"{VP_PARTICIPANT_PREFIX}{event.bot_id}",
+        "timestamp": clock.as_utc(event.at).timestamp(),
+        "source": session_manager.SOURCE_CHAT,
+    }
+    session_manager.SessionManager.update_transcript(
+        transcript=plain_text(event.data.question),
+        username=plain_text(event.data.asker or "") or "Guest",
+        **common,
+    )
+    if event.type == "answer_given":
+        session_manager.SessionManager.update_transcript(
+            transcript=plain_text(event.data.answer), username=AGENTAR_CHAT_SPEAKER, **common
+        )
+
+
 async def _apply_effect(meeting: dict[str, Any], event: WorkerEvent) -> None:
-    """Move the meeting for `joined`, `left` and a fatal `error`. The rest are only stored.
+    """Move the meeting for `joined`, `left` and a fatal `error`, and put an asked question and
+    the chat exchange of `answer_given` and `escalation` in the live transcript. The rest are only stored.
 
     Every move is a filtered atomic update or an idempotent hand over, so a worker retry after a
     failed attempt applies it again without harm.
@@ -146,7 +201,11 @@ async def _apply_effect(meeting: dict[str, Any], event: WorkerEvent) -> None:
             {"$set": {"jitsi_meeting_id": plain_text(event.jitsi_meeting_id), "updated_at": now}},
         )
 
-    if event.type == "joined":
+    if event.type == "question_asked":
+        _record_asked_question(meeting, event)
+    elif event.type in ("answer_given", "escalation"):
+        _record_chat_exchange(meeting, event)
+    elif event.type == "joined":
         await collection.update_one(
             {"_id": meeting_oid, "status": "joining"},
             {"$set": {"status": "live", "joined_at": now, "updated_at": now}},
