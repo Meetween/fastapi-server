@@ -26,6 +26,7 @@ from api.routes import (
     auth,
     translation,
     participants,
+    virtual_participants,
 )
 
 from fastapi import FastAPI
@@ -80,6 +81,10 @@ async def startup_event():
 
     if settings.enable_auth and not settings.jigasi_meetween_api_key:
         logger.warning("ENABLE_AUTH is on and JIGASI_MEETWEEN_API_KEY is empty, Jigasi calls will be rejected")
+    if settings.enable_auth and not settings.vp_meetween_api_key:
+        logger.info("ENABLE_AUTH is on and VP_MEETWEEN_API_KEY is empty, virtual participant chat calls will be rejected")
+    if settings.vp_meetween_api_key and settings.vp_meetween_api_key == settings.jigasi_meetween_api_key:
+        logger.warning("VP_MEETWEEN_API_KEY equals JIGASI_MEETWEEN_API_KEY, the worker and Jigasi share one secret")
 
     # Clear in-memory state for meetings that went idle without an end signal.
     # A coroutine runs on the event loop. A plain function runs in a worker thread
@@ -111,6 +116,7 @@ async def shutdown_event():
 
     await SessionManager.cleanup()
     await EngineManager.cleanup()
+    await virtual_participants.close_http_client()
     await async_mongo_manager.close()
 
     logger.info("Server shutdown complete")
@@ -127,6 +133,7 @@ app.include_router(auth.public_router)
 app.include_router(auth.protected_router)
 app.include_router(translation.router)
 app.include_router(participants.router)
+app.include_router(virtual_participants.router)
 
 
 if __name__ == "__main__":
