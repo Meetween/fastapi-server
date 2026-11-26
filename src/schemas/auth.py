@@ -1,8 +1,10 @@
 """Pydantic request/response schemas for the auth router."""
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+from src.schemas.names import person_name
 
 
 class UserCreateRequest(BaseModel):
@@ -18,8 +20,9 @@ class UserCreateResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    # Caps keep a hostile body out of the hasher and the lookup.
+    email: str = Field(..., min_length=1, max_length=254)
+    password: str = Field(..., min_length=1, max_length=128)
 
 
 class TokenPairResponse(BaseModel):
@@ -58,3 +61,36 @@ class JitsiIssueRequest(BaseModel):
 
 class TokenValidationRequest(BaseModel):
     token: str
+
+
+class AuthConfig(BaseModel):
+    """Public feature flags the login panel reads before it renders (GET /api/auth/config)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    signup_enabled: bool
+    email_enabled: bool
+    calendar_enabled: bool
+
+
+class SignupRequest(BaseModel):
+    """Open sign up. The email is stored lower-cased."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: Annotated[str, StringConstraints(max_length=254, strip_whitespace=True)]
+    password: str = Field(..., min_length=10, max_length=128)
+    first_name: Annotated[
+        str, StringConstraints(min_length=1, max_length=64, strip_whitespace=True), AfterValidator(person_name)
+    ]
+    last_name: Annotated[
+        str, StringConstraints(min_length=1, max_length=64, strip_whitespace=True), AfterValidator(person_name)
+    ]
+
+    @field_validator("email")
+    @classmethod
+    def _plausible_email(cls, value: str) -> str:
+        local, sep, domain = value.partition("@")
+        if not sep or not local or "." not in domain or " " in value or "@" in domain:
+            raise ValueError("not a valid email address")
+        return value.lower()

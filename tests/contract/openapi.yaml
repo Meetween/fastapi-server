@@ -1,0 +1,1615 @@
+openapi: 3.1.0
+info:
+  title: Meetween fastapi-server, Agentar demo contract
+  version: 0.5.0-agentar.1
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  description: |
+    Contract for wave A2 of the Agentar demo (PLAN-K.md). Lists every fastapi route the demo
+    needs, new or changed. Routes not listed here are unchanged.
+
+    Aligned with fastapi-trial-f8 2b4d2e3 (api/routes/auth.py, virtual_participants.py,
+    src/schemas/*.py), the room owner design of fastapi-room-owner cf1711e and the worker
+    model CreateBot of vp-worker-trial 0fe7be5.
+
+    Conventions:
+    - Every route sits under the existing `/api` prefix. Auth is the existing Meetween access
+      token (`Authorization: Bearer`), subject = lowercased email, unless a route says otherwise.
+    - Owner scoped routes filter every query by the caller's subject. An id that belongs to
+      another user, or does not exist, answers 404 `not_found`. Never 403.
+    - Ids of new documents are MongoDB ObjectId hex strings (24 lowercase hex characters).
+    - Errors of new routes: `{"detail": "<message>", "code": "<ErrorCode>"}`. `detail` stays a
+      string so clients that read it today keep working. Request validation keeps the FastAPI
+      default 422 body (`detail` is an array, no `code`).
+    - Times are RFC 3339 UTC.
+    - Uploads (files, pictures): `Content-Length` is required (411 `length_required`), the form
+      is parsed with `request.form(max_files=1, max_fields=3, max_part_size=1024)`, so exactly
+      one file part per request.
+    - Throttles key on `X-Real-IP` only when the TCP peer is in `TRUSTED_PROXY_IPS`, else on the
+      peer address; never on the leftmost `X-Forwarded-For`. In process sliding window.
+    - Names: `first_name` and `last_name` refuse `(`, `)`, control characters and the word
+      "agentar" in any case, so nobody can fake or hide the "(AI)" disclosure.
+
+    Removed: `POST /api/auth/jitsi/validate` (public, no caller in the demo, leaked claims).
+    The route is deleted, not deprecated; a call answers 404.
+servers:
+  - url: http://127.0.0.1:18100
+    description: laptop stack (develop), see local/README.md
+  - url: https://149.156.182.197:8443
+    description: VM test stack through the Jitsi web nginx `/api/` proxy
+security:
+  - bearerAuth: []
+tags:
+  - name: auth
+    description: sign up, log in, Jitsi room tokens, public flags
+  - name: profile
+    description: the user's Agentar profile, onboarding state and default picture
+  - name: files
+    description: knowledge base files, general or per meeting
+  - name: meetings
+    description: Agentar meetings, dispatch and recall
+  - name: events
+    description: worker to fastapi events and dashboard notifications
+  - name: reports
+    description: post meeting reports
+  - name: virtual-participants
+    description: existing bot control route, ownership added
+
+paths:
+  /api/auth/config:
+    get:
+      tags: [auth]
+      operationId: getAuthConfig
+      summary: Public feature flags for the login panel
+      description: No auth. The UI reads it before rendering the login or sign up form.
+      security: []
+      responses:
+        '200':
+          description: Flags
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthConfig' }
+
+  /api/auth/signup:
+    post:
+      tags: [auth]
+      operationId: signup
+      summary: Create an account and log in
+      description: |
+        Open sign up, gated by `SIGNUP_ENABLED`. With `EMAIL_ENABLED=false` (demo) the account is
+        active at once and the response is the same token pair as login. The variant with email
+        verification is a backlog item and is not part of this contract.
+        Throttled before hashing per client IP and per email (`SIGNUP_RATE_PER_IP` 5 per hour,
+        `SIGNUP_RATE_PER_EMAIL` 3 per hour). The password is stored as the argon2id PHC string
+        `$argon2id$v=19$m=19456,t=2,p=1$...` (argon2-cffi, hashing in a threadpool behind a
+        semaphore of 4). The 409 `email_taken` is accepted for the demo (A3 ruling 1).
+        Startup exits if `SIGNUP_ENABLED=true` while `ENABLE_AUTH=false`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupRequest' }
+      responses:
+        '201':
+          description: Account created, caller logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '403':
+          description: Sign up is disabled (`signup_disabled`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: An account with this email exists (`email_taken`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log in (unchanged contract)
+      description: |
+        Request and response shapes are unchanged; length caps and 429 are added.
+        Hashes: `$argon2id$...` goes to `verify` then `check_needs_rehash`. A legacy digest,
+        wrapped by the deploy step `cli.py migrate-hashes` as `legacy$` + argon2id(sha256 hex),
+        verifies `sha256(JWT_SECRET_KEY:password)` inside argon2 and is replaced with a plain
+        argon2id hash by a conditional `update_one` on the old value. An unknown email is
+        verified against a fixed dummy hash (no timing oracle); `is_active=false` answers 401.
+        Throttled before hashing: failed logins 10 per 15 min per IP and per email, 50 per IP.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlainError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /api/auth/refresh:
+    post:
+      tags: [auth]
+      operationId: refreshTokens
+      summary: Refresh the token pair (unchanged)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: Token pair
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenPair' }
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlainError' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/auth/jitsi/issue:
+    post:
+      tags: [auth]
+      operationId: issueJitsiToken
+      summary: Join URL for a room, with a moderator token for the owner only (changed)
+      description: |
+        Changed from f8:
+        - The request `moderator` field is deprecated and ignored (cf1711e). The first user issued
+          a token for a room becomes its owner (`room_owner`); the owner and admins moderate.
+        - Only the owner or an admin gets a token. Anyone else gets `jitsi_token: null` and a
+          plain room URL, and joins as a guest.
+        - The token travels in the URL fragment: `<base>/<room>#jwt=<token>`, never the query.
+        - Tokens are signed with `JWT_JITSI_SECRET_KEY` (shared with Prosody as
+          `JWT_APP_SECRET`). If that key is empty the route answers 503 and never falls back
+          to `JWT_SECRET_KEY`.
+        - `room_name` must match the room pattern and is lowercased first.
+        - Token claims: `iss`, `aud=jitsi`, `sub`, `room`, `jti`, `exp` (15 min), plus
+          `context.user {id, name, moderator}` and `moderator` for the owner. No email in any
+          claim: Prosody logs a token on room mismatch.
+        - A first claim of a new room counts against `ROOM_CLAIMS_PER_DAY` (20 per user), 429.
+        - The UI calls this route for every room and clears a stored token before joining
+          another room in the same tab.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/JitsiIssueRequest' }
+      responses:
+        '200':
+          description: Join data
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/JitsiIssueResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: '`JWT_JITSI_SECRET_KEY` not configured (`jitsi_key_missing`)'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/me:
+    get:
+      tags: [profile]
+      operationId: getMe
+      summary: The caller's account and Agentar profile
+      responses:
+        '200':
+          description: Account and profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    patch:
+      tags: [profile]
+      operationId: updateMe
+      summary: Edit names and profile fields; completes onboarding when asked
+      description: |
+        Partial update written with `$set` on the declared fields only (never `save()`, which
+        replaces the document). `complete_onboarding: true` sets `profile.onboarded_at` once.
+        Onboarding and the Settings tab use this same call.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MePatch' }
+      responses:
+        '200':
+          description: Updated account and profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/me/onboarding/skip:
+    post:
+      tags: [profile]
+      operationId: skipOnboarding
+      summary: Mark onboarding skipped
+      description: |
+        Sets `profile.onboarding_skipped_at` when the user has not completed onboarding.
+        Idempotent; a completed onboarding is left as it is. At dispatch a skipped profile falls
+        back to the first name, the default voice and the bundled picture.
+      responses:
+        '200':
+          description: Account and profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/me/picture:
+    put:
+      tags: [profile]
+      operationId: putMyPicture
+      summary: Upload or replace the default Agentar picture
+      description: |
+        PNG or JPEG by magic bytes (Content-Type is ignored), at most `AGENTAR_PICTURE_MAX_BYTES`
+        (5 MB). Pillow 13.0.0 in a thread: `Image.open(fp, formats=["PNG", "JPEG"])`, size read
+        from the header and checked to 256 to 4096 px per side before `load()` or
+        `exif_transpose`, `Image.MAX_IMAGE_PIXELS = 4096 * 4096`, `DecompressionBombWarning`
+        raised as an error, frame 0 only. Then EXIF orientation applied, metadata stripped,
+        centre crop to a square, resized to 512x512, JPEG quality 85, at most 400 KB. Stored at `u/{user_id}/avatar/{file_id}.jpg`; the old
+        object is deleted after the new record is written. No face check in the demo.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  contentMediaType: application/octet-stream
+            encoding:
+              file:
+                contentType: image/png, image/jpeg
+      responses:
+        '200':
+          description: Stored picture
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Picture' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedType' }
+        '422':
+          description: Picture cannot be decoded, too small or too large in pixels (`picture_invalid`), or body invalid
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/Error'
+                  - $ref: '#/components/schemas/HTTPValidationError'
+    get:
+      tags: [profile]
+      operationId: getMyPicture
+      summary: The stored default picture
+      description: |
+        Streams the 512x512 JPEG with `Cache-Control: private, no-store` and `nosniff`. The UI
+        fetches it with the bearer header, wraps the bytes in `new Blob([buf], {type: "image/jpeg"})`
+        and shows the object URL only as `<img src>`, revoked on replace and unmount; never
+        navigated to, opened or framed. 404 when no picture is set: the UI shows the bundled default.
+      responses:
+        '200':
+          description: JPEG
+          headers:
+            ETag:
+              schema: { type: string }
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [profile]
+      operationId: deleteMyPicture
+      summary: Remove the default picture
+      responses:
+        '204':
+          description: Removed (also when none was set)
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/agentar/voices:
+    get:
+      tags: [profile]
+      operationId: listVoices
+      summary: Voices offered in onboarding and settings
+      description: |
+        Static list from `AGENTAR_VOICES`. Each id must be a Kokoro voice the worker accepts
+        (`VP_TTS_VOICES`). Demo set: af_heart (default), af_bella, am_fenrir, am_michael
+        (R10). English only.
+      responses:
+        '200':
+          description: Voices
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/VoiceInfo' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/agentar/voices/{voice_id}/sample:
+    get:
+      tags: [profile]
+      operationId: getVoiceSample
+      summary: Pre-rendered sample sentence for one voice
+      description: |
+        Public, no user data, so an `<audio src>` can load it. Files are rendered once with the
+        worker TTS and shipped with the fastapi image. `Cache-Control: public, max-age=86400`.
+      security: []
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema: { $ref: '#/components/schemas/VoiceId' }
+      responses:
+        '200':
+          description: Audio
+          content:
+            audio/wav:
+              schema:
+                type: string
+                contentMediaType: audio/wav
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/agentar/files:
+    post:
+      tags: [files]
+      operationId: uploadFile
+      summary: Upload a knowledge base file
+      description: |
+        Only through fastapi, no presigned URLs. Order of checks: no `Content-Length` answers
+        411; over `AGENTAR_FILE_MAX_BYTES` + 64 KB answers 413 before parsing; one file part
+        only; the read is capped at `AGENTAR_FILE_MAX_BYTES`; the type is sniffed: pdf by
+        `%PDF-`; docx by a `zipfile` pre-check (at most 500 entries, summed `file_size` at most
+        50 MB, per entry ratio at most 100, `[Content_Types].xml` and `word/document.xml`
+        present; `PK` alone is not a docx), else 415; txt and md must decode as UTF-8 with no
+        NUL byte; per user quota; `put_object` to
+        `u/{user_id}/kb/{file_id}` or `u/{user_id}/m/{meeting_id}/kb/{file_id}`; then the Mongo
+        record (the object is deleted if the insert fails). Text is extracted once, capped at
+        200k characters, chunked to about 150 tokens. pdf (pypdf 6.21.4) and docx extraction run
+        in a `ProcessPoolExecutor(max_workers=1)` with `RLIMIT_AS` 1 GiB and `RLIMIT_CPU` 30 s,
+        called with a 30 s timeout. Extraction failure still stores the file
+        with `text_status: failed`. The client filename is kept as metadata only.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, scope]
+              properties:
+                file:
+                  type: string
+                  contentMediaType: application/octet-stream
+                scope: { $ref: '#/components/schemas/FileScope' }
+                meeting_id:
+                  $ref: '#/components/schemas/ObjectId'
+                  description: Required when scope is `meeting`; the meeting must be the caller's and editable (draft or scheduled)
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AgentarFile' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedType' }
+        '422': { $ref: '#/components/responses/QuotaOrValidation' }
+    get:
+      tags: [files]
+      operationId: listFiles
+      summary: List the caller's files and quota usage
+      parameters:
+        - name: scope
+          in: query
+          schema: { $ref: '#/components/schemas/FileScope' }
+        - name: meeting_id
+          in: query
+          schema: { $ref: '#/components/schemas/ObjectId' }
+      responses:
+        '200':
+          description: Files, newest first
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FileList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/agentar/files/{file_id}:
+    parameters:
+      - $ref: '#/components/parameters/FileId'
+    delete:
+      tags: [files]
+      operationId: deleteFile
+      summary: Delete a file, its chunks and its object
+      description: |
+        409 `file_in_use` while a meeting that lists it is waiting_for_human, joining, live or
+        leaving. Otherwise the id is pulled from every draft or scheduled meeting of the owner.
+      responses:
+        '204':
+          description: Deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /api/agentar/files/{file_id}/download:
+    parameters:
+      - $ref: '#/components/parameters/FileId'
+    get:
+      tags: [files]
+      operationId: downloadFile
+      summary: Stream the original bytes, owner only
+      description: |
+        `Content-Type: application/octet-stream`, `Content-Disposition: attachment` with an
+        RFC 5987 sanitised filename, `X-Content-Type-Options: nosniff`, `Cache-Control: private, no-store`.
+      responses:
+        '200':
+          description: File bytes
+          headers:
+            Content-Disposition:
+              schema: { type: string }
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/agentar/meetings:
+    post:
+      tags: [meetings]
+      operationId: createMeeting
+      summary: Create an Agentar meeting in draft
+      description: |
+        Creates the meeting with status `draft`. Sending it is a separate call to
+        `/dispatch`, so the New meeting dialog can attach meeting files between the two.
+        Quota: `AGENTAR_MEETINGS_PER_DAY` creations per user per UTC day.
+        The caller must own the room: `claim_room_moderator(room, caller)` claims a free room or
+        confirms ownership; a room owned by someone else answers 409 `room_not_owned`. Admins
+        are exempt. The bot holds a room token and is owner in Jitsi, so it is never sent into
+        another user's room.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MeetingCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meeting' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/QuotaOrValidation' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    get:
+      tags: [meetings]
+      operationId: listMeetings
+      summary: List the caller's meetings for the dashboard
+      parameters:
+        - name: status
+          in: query
+          description: Repeat to filter by several statuses
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/MeetingStatus' }
+          style: form
+          explode: true
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+        - name: cursor
+          in: query
+          description: Opaque `next_cursor` of the previous page
+          schema: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: Meetings, ordered by start_at descending, then created_at descending
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MeetingList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/agentar/meetings/{meeting_id}:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    get:
+      tags: [meetings]
+      operationId: getMeeting
+      summary: Read one meeting
+      responses:
+        '200':
+          description: Meeting
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meeting' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [meetings]
+      operationId: updateMeeting
+      summary: Edit a draft or scheduled meeting
+      description: |
+        Allowed in `draft` and `scheduled`. A scheduled meeting stays scheduled and its new
+        `start_at` is validated again. A changed `room` is claimed again (409 `room_not_owned`).
+        Any other status answers 409 `invalid_state`.
+        A sent meeting keeps its own settings; profile edits after dispatch do not reach it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MeetingPatch' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meeting' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [meetings]
+      operationId: deleteMeeting
+      summary: Delete a meeting with its meeting files, picture, report and events
+      description: |
+        Allowed in draft, scheduled, missed, failed and ended. While a bot may be in the room
+        (waiting_for_human, joining, live, leaving) the answer is 409 `invalid_state`: recall first.
+      responses:
+        '204':
+          description: Deleted
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /api/agentar/meetings/{meeting_id}/picture:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    put:
+      tags: [meetings]
+      operationId: putMeetingPicture
+      summary: Picture override for this meeting
+      description: Same checks (411, one file part, header size check) and normalisation as `PUT /api/me/picture`. Stored at `u/{user_id}/m/{meeting_id}/avatar/{file_id}.jpg`. Draft or scheduled only.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  contentMediaType: application/octet-stream
+      responses:
+        '200':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Picture' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '411': { $ref: '#/components/responses/LengthRequired' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedType' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    get:
+      tags: [meetings]
+      operationId: getMeetingPicture
+      summary: The meeting picture override
+      responses:
+        '200':
+          description: JPEG
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                contentMediaType: image/jpeg
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [meetings]
+      operationId: deleteMeetingPicture
+      summary: Drop the override, fall back to the profile picture
+      responses:
+        '204':
+          description: Removed
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /api/agentar/meetings/{meeting_id}/dispatch:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    post:
+      tags: [meetings]
+      operationId: dispatchMeeting
+      summary: Send Agentar now, or arm the scheduled start
+      description: |
+        Allowed from draft, missed and failed. Checks before any change: worker secret and
+        `JWT_JITSI_SECRET_KEY` configured (503); room ownership through
+        `claim_room_moderator` (409 `room_not_owned`, admins exempt); one live Agentar per user
+        (409 `live_agentar_exists` when another meeting of the caller is waiting_for_human,
+        joining, live or leaving); global cap `AGENTAR_MAX_LIVE_TOTAL` (1 on the demo, Ditto
+        renders one session) across all users (409 `agentar_capacity`). The tick repeats the
+        ownership and capacity checks when it claims a scheduled meeting.
+        - mode `now`: `start_at` is set to the request time. The first lifecycle step runs inline:
+          a human in the room moves the meeting to `joining` and calls the worker; an empty
+          room moves it to `waiting_for_human` and the 30 s tick retries until
+          `start_at + grace_minutes`, then `missed`.
+        - mode `scheduled`: status `scheduled`; the tick claims it at `start_at`.
+        A worker error after these checks is recorded as `failed` with `status_reason`; the
+        call still answers 202 with the meeting.
+      responses:
+        '202':
+          description: Accepted; read `status`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meeting' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422':
+          description: The scheduled start is in the past (`start_in_past`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/agentar/meetings/{meeting_id}/recall:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    post:
+      tags: [meetings]
+      operationId: recallMeeting
+      summary: Stop Agentar
+      description: |
+        - scheduled or waiting_for_human: back to `draft`, no bot was sent.
+        - joining or live: `leaving`; fastapi asks the worker to say the farewell and leave
+          (`DELETE /bots/{id}?farewell=1`). The worker `left` event, or the tick, moves it to
+          `ended` and queues the report.
+        - leaving: idempotent, 202.
+        - any other status: 409 `invalid_state`.
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Meeting' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+
+  /api/agentar/meetings/{meeting_id}/report:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    get:
+      tags: [reports]
+      operationId: getReport
+      summary: The meeting report
+      description: |
+        200 with `status: pending` while it is generated, `ready` when done, `failed` with
+        `error`. 404 when the meeting has no report (never reached `ended`) or is not the
+        caller's.
+      responses:
+        '200':
+          description: Report
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/agentar/meetings/{meeting_id}/report/regenerate:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    post:
+      tags: [reports]
+      operationId: regenerateReport
+      summary: Run the report again on the stored transcript snapshot
+      responses:
+        '202':
+          description: Queued; the report is back to `pending`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Report' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Meeting not ended, or a run is pending (`invalid_state`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/agentar/meetings/{meeting_id}/report.md:
+    parameters:
+      - $ref: '#/components/parameters/MeetingId'
+    get:
+      tags: [reports]
+      operationId: downloadReportMarkdown
+      summary: The ready report as Markdown, for download
+      description: |
+        Rendered from the JSON in `agentar_reports` (source of truth); the copy at
+        `u/{user_id}/m/{meeting_id}/report/report.md` is written when the report becomes ready.
+        `Content-Disposition: attachment; filename="agentar-report-<room>-<date>.md"`, `nosniff`.
+      responses:
+        '200':
+          description: Markdown
+          content:
+            text/markdown:
+              schema: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Report not ready (`report_not_ready`)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/agentar/events:
+    post:
+      tags: [events]
+      operationId: postWorkerEvent
+      summary: Event from vp-worker
+      description: |
+        Worker only: `Authorization: Bearer <VP_MEETWEEN_API_KEY>` (`require_vp_worker`, the key
+        the worker already sends to `/api/chat`). A user token answers 401.
+        The dependency checks the key even when `ENABLE_AUTH=false`.
+        The pair (`agentar_meeting_id`, `bot_id`) must match the meeting record, else 404.
+        State check: accepted only while the meeting is joining, live or leaving, and `left`
+        also up to 5 min after ended, else 409 `invalid_state`. Clock check: `at` within 10 min
+        of server time, else 422 `event_clock_skew`.
+        `event_id` makes the call idempotent: a repeat answers 200 `duplicate: true`.
+        Effects: `joined` moves joining to live; `left` moves live or leaving to ended and
+        queues the report; `error` with `fatal: true` moves the meeting to failed (or ended
+        when it was live, so a report is still made); every event is a dashboard notification.
+      security:
+        - workerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WorkerEvent' }
+      responses:
+        '200':
+          description: Duplicate, already stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAck' }
+        '202':
+          description: Stored
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EventAck' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/InvalidState' }
+        '422': { $ref: '#/components/responses/QuotaOrValidation' }
+
+  /api/agentar/notifications:
+    get:
+      tags: [events]
+      operationId: listNotifications
+      summary: Dashboard notifications, polled
+      description: |
+        The welcome tab polls every 2 s while it is open, so an escalation shows within 5 s
+        (S8). Every string in `data` comes from guests or the model: the UI renders it as a
+        React text node only. Without `since`: the newest 20 of the last 24 h. With `since`: everything after
+        that cursor, oldest first, at most `limit`.
+      parameters:
+        - name: since
+          in: query
+          description: The `cursor` of the previous answer
+          schema: { type: string, maxLength: 64 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/virtual-participants:
+    post:
+      tags: [virtual-participants]
+      operationId: createVirtualParticipant
+      summary: Existing Butler panel route (changed behaviour)
+      description: |
+        Body unchanged (`VirtualParticipantCreateRequest`, extra forbidden). Changes:
+        - only the room owner or an admin may add a bot (`VP_REQUIRE_MODERATOR=true`), else 404;
+        - the caller is stored as the bot owner in `vp_bot_owners` (bot_id unique), so list, get,
+          delete and say are owner scoped; Agentar bots are owned through `agentar_meetings.bot_id`;
+        - the bot token is signed with `JWT_JITSI_SECRET_KEY`, has no `context.user.name`, and lives as
+          long as `VP_MAX_LIFETIME_S`; empty key answers 503;
+        - the worker suffix becomes " (AI)" and `display_name` takes the widened name pattern
+          without parentheses (W1), so a caller cannot fake the disclosure.
+        Responses as in f8 (202, 200 duplicate, 409, 429, 502, 503).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [room_name]
+              properties:
+                room_name: { $ref: '#/components/schemas/RoomName' }
+                display_name: { type: string, pattern: '^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 _.''-]{0,47}$', default: Agentar }
+                script: { type: [string, 'null'], maxLength: 2000 }
+                meeting_id: { type: [string, 'null'], minLength: 1, maxLength: 128 }
+      responses:
+        '202':
+          description: Bot created (worker view relayed)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Meeting ended, no human, or room limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlainError' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    get:
+      tags: [virtual-participants]
+      operationId: listVirtualParticipants
+      summary: List bots (now only the caller's bots; admins see all)
+      parameters:
+        - name: room_name
+          in: query
+          schema: { $ref: '#/components/schemas/RoomName' }
+      responses:
+        '200':
+          description: Bots
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/BotView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/virtual-participants/{bot_id}:
+    parameters:
+      - $ref: '#/components/parameters/BotId'
+    get:
+      tags: [virtual-participants]
+      operationId: getVirtualParticipant
+      summary: One bot, owner only (404 otherwise)
+      responses:
+        '200':
+          description: Bot
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [virtual-participants]
+      operationId: deleteVirtualParticipant
+      summary: Remove a bot, owner only (404 otherwise)
+      responses:
+        '200':
+          description: Final bot view
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/virtual-participants/{bot_id}/say:
+    parameters:
+      - $ref: '#/components/parameters/BotId'
+    post:
+      tags: [virtual-participants]
+      operationId: sayVirtualParticipant
+      summary: Make a bot speak, owner only (404 otherwise)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [text]
+              properties:
+                text: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        '202':
+          description: Queued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BotView' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Bot busy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PlainError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Meetween access token from login, signup or refresh (60 min). Subject is the lowercased email.
+    workerKey:
+      type: http
+      scheme: bearer
+      description: The shared worker key `VP_MEETWEEN_API_KEY`, checked in constant time. Never a user token.
+
+  parameters:
+    MeetingId:
+      name: meeting_id
+      in: path
+      required: true
+      description: Agentar meeting id (not the Jitsi meetingUniqueId)
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    FileId:
+      name: file_id
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/ObjectId' }
+    BotId:
+      name: bot_id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait
+      schema: { type: integer, minimum: 1 }
+
+  responses:
+    Unauthorized:
+      description: Missing, invalid or expired bearer token (existing `WWW-Authenticate` challenge)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/PlainError' }
+    NotFound:
+      description: Unknown id, or an id owned by another user (`not_found`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InvalidState:
+      description: Not allowed in the current state (`invalid_state`, `live_agentar_exists`, `agentar_capacity`, `room_not_owned`, `file_in_use`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    LengthRequired:
+      description: No Content-Length header, for example a chunked body (`length_required`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooLarge:
+      description: Body over the cap (`file_too_large`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    UnsupportedType:
+      description: Magic bytes not in the allowed list (`unsupported_type`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    QuotaOrValidation:
+      description: Quota exceeded (`quota_files`, `quota_bytes`, `quota_meetings_per_day`), `room_invalid`, `event_clock_skew`, or body invalid
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/Error'
+              - $ref: '#/components/schemas/HTTPValidationError'
+    ValidationError:
+      description: Request validation failed (FastAPI default body)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/HTTPValidationError' }
+    TooManyRequests:
+      description: Throttled (`rate_limited`)
+      headers:
+        Retry-After: { $ref: '#/components/headers/RetryAfter' }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: A dependency is not configured or not reachable (`jitsi_key_missing`, `worker_unavailable`, `storage_unavailable`)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    ObjectId:
+      type: string
+      pattern: '^[a-f0-9]{24}$'
+    RoomName:
+      type: string
+      pattern: '^[a-z0-9][a-z0-9_-]{0,62}$'
+      description: Jitsi room segment, lowercased by the server before validation (ROOM_PATTERN, shared with vp-worker)
+    VoiceId:
+      type: string
+      enum: [af_heart, af_bella, am_fenrir, am_michael]
+    Language:
+      type: string
+      enum: [en]
+      description: Demo is English only; other languages are backlog
+    ErrorCode:
+      type: string
+      enum:
+        - signup_disabled
+        - email_taken
+        - rate_limited
+        - not_found
+        - invalid_state
+        - live_agentar_exists
+        - agentar_capacity
+        - room_not_owned
+        - length_required
+        - event_clock_skew
+        - file_in_use
+        - file_too_large
+        - unsupported_type
+        - picture_invalid
+        - quota_files
+        - quota_bytes
+        - quota_meetings_per_day
+        - room_invalid
+        - start_in_past
+        - report_not_ready
+        - jitsi_key_missing
+        - worker_unavailable
+        - storage_unavailable
+    Error:
+      type: object
+      required: [detail, code]
+      properties:
+        detail: { type: string, description: 'Human readable, English, may change' }
+        code: { $ref: '#/components/schemas/ErrorCode' }
+    PlainError:
+      type: object
+      description: Existing FastAPI HTTPException body of unchanged routes
+      required: [detail]
+      properties:
+        detail: { type: string }
+    HTTPValidationError:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            required: [loc, msg, type]
+            properties:
+              loc:
+                type: array
+                items:
+                  anyOf: [{ type: string }, { type: integer }]
+              msg: { type: string }
+              type: { type: string }
+
+    AuthConfig:
+      type: object
+      additionalProperties: false
+      required: [signup_enabled, email_enabled, calendar_enabled]
+      properties:
+        signup_enabled: { type: boolean, description: 'SIGNUP_ENABLED, demo true' }
+        email_enabled: { type: boolean, description: 'EMAIL_ENABLED, demo false: no verify step, no forgot password link' }
+        calendar_enabled: { type: boolean, description: 'CALENDAR_ENABLED, demo false' }
+    SignupRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, first_name, last_name]
+      properties:
+        email: { type: string, format: email, maxLength: 254, description: Stored lowercased }
+        password: { type: string, minLength: 10, maxLength: 128 }
+        first_name: { type: string, minLength: 1, maxLength: 64, pattern: '^[^()\p{Cc}\p{Cf}]+$', not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' } }
+        last_name: { type: string, minLength: 1, maxLength: 64, pattern: '^[^()\p{Cc}\p{Cf}]+$', not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' } }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, minLength: 1, maxLength: 254 }
+        password: { type: string, minLength: 1, maxLength: 128 }
+    TokenPair:
+      type: object
+      required: [access_token, refresh_token, token_type]
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        token_type: { type: string, const: bearer }
+    JitsiIssueRequest:
+      type: object
+      required: [room_name]
+      properties:
+        room_name: { $ref: '#/components/schemas/RoomName' }
+        meeting_id:
+          type: [string, 'null']
+          format: uuid
+          description: Optional app id stored on meeting_context, unchanged
+        moderator:
+          type: boolean
+          default: false
+          deprecated: true
+          description: Ignored. The server computes the moderator claim (cf1711e).
+        metadata:
+          type: [object, 'null']
+    JitsiIssueResponse:
+      type: object
+      required: [room, jitsi_token, moderator, meeting_context, meet_join_url]
+      properties:
+        room: { $ref: '#/components/schemas/RoomName' }
+        jitsi_token:
+          type: [string, 'null']
+          description: Set for the room owner and admins only; null means join as a guest
+        moderator: { type: boolean }
+        meeting_context: { type: object }
+        meet_join_url:
+          type: [string, 'null']
+          description: '`<JITSI_MEET_BASE_URL>/<room>#jwt=<token>` for the owner, `<base>/<room>` otherwise, null when the base URL is unset'
+          examples: ['https://149.156.182.197:8443/weekly-sync#jwt=eyJhbGciOi...']
+
+    Profile:
+      type: object
+      required: [agent_name, voice, language, onboarded_at, onboarding_skipped_at, has_picture]
+      properties:
+        agent_name:
+          type: [string, 'null']
+          pattern: '^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 _.''-]{0,31}$'
+          not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' }
+          description: |
+            Shown as "<agent_name> Agentar (AI)". Unicode letters and marks, digits, space,
+            `_ . ' -`; no parentheses and not the word "agentar", so the "(AI)" disclosure cannot
+            be faked. Patterns use ECMA-262 `u` mode; Python checks with `unicodedata`
+            categories. Null falls back to first_name, then "Meetween".
+        voice:
+          oneOf:
+            - $ref: '#/components/schemas/VoiceId'
+            - type: 'null'
+        language: { $ref: '#/components/schemas/Language' }
+        onboarded_at: { type: [string, 'null'], format: date-time, readOnly: true }
+        onboarding_skipped_at: { type: [string, 'null'], format: date-time, readOnly: true }
+        has_picture: { type: boolean, readOnly: true }
+    Me:
+      type: object
+      required: [email, first_name, last_name, is_admin, profile, onboarding_state]
+      properties:
+        email: { type: string }
+        first_name: { type: [string, 'null'] }
+        last_name: { type: [string, 'null'] }
+        is_admin: { type: boolean }
+        profile: { $ref: '#/components/schemas/Profile' }
+        onboarding_state:
+          type: string
+          enum: [pending, done, skipped]
+          description: pending opens the onboarding dialog after login; skipped shows the banner
+    MePatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        first_name: { type: string, minLength: 1, maxLength: 64, pattern: '^[^()\p{Cc}\p{Cf}]+$', not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' } }
+        last_name: { type: string, minLength: 1, maxLength: 64, pattern: '^[^()\p{Cc}\p{Cf}]+$', not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' } }
+        profile:
+          type: object
+          additionalProperties: false
+          minProperties: 1
+          properties:
+            agent_name:
+              type: [string, 'null']
+              pattern: '^[\p{L}\p{M}0-9][\p{L}\p{M}0-9 _.''-]{0,31}$'
+              not: { pattern: '[Aa][Gg][Ee][Nn][Tt][Aa][Rr]' }
+            voice: { $ref: '#/components/schemas/VoiceId' }
+            language: { $ref: '#/components/schemas/Language' }
+        complete_onboarding:
+          type: boolean
+          const: true
+          description: Sets profile.onboarded_at if unset
+    Picture:
+      type: object
+      required: [width, height, bytes, sha256, updated_at]
+      properties:
+        width: { type: integer, const: 512 }
+        height: { type: integer, const: 512 }
+        bytes: { type: integer, maximum: 409600 }
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        updated_at: { type: string, format: date-time }
+    VoiceInfo:
+      type: object
+      required: [id, label, gender, sample_url, default]
+      properties:
+        id: { $ref: '#/components/schemas/VoiceId' }
+        label: { type: string, examples: [Heart] }
+        gender: { type: string, enum: [female, male] }
+        sample_url: { type: string, format: uri-reference, examples: [/api/agentar/voices/af_heart/sample] }
+        default: { type: boolean }
+
+    FileScope:
+      type: string
+      enum: [general, meeting]
+      description: general is the user's knowledge base, meeting belongs to one meeting
+    AgentarFile:
+      type: object
+      required: [id, scope, meeting_id, name, size, content_type, sha256, text_status, text_chars, chunk_count, created_at]
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        scope: { $ref: '#/components/schemas/FileScope' }
+        meeting_id:
+          oneOf:
+            - $ref: '#/components/schemas/ObjectId'
+            - type: 'null'
+        name: { type: string, maxLength: 255, description: 'Client filename, sanitised, display only' }
+        size: { type: integer, minimum: 1 }
+        content_type:
+          type: string
+          enum: [text/plain, text/markdown, application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document]
+          description: Sniffed by the server
+        sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        text_status: { type: string, enum: [ok, empty, truncated, failed] }
+        text_chars: { type: integer, minimum: 0, maximum: 200000 }
+        chunk_count: { type: integer, minimum: 0 }
+        error: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    Usage:
+      type: object
+      required: [files, files_max, bytes, bytes_max, file_max_bytes]
+      properties:
+        files: { type: integer }
+        files_max: { type: integer, description: 'AGENTAR_USER_MAX_FILES, default 20' }
+        bytes: { type: integer }
+        bytes_max: { type: integer, description: 'AGENTAR_USER_MAX_BYTES, default 100 MB' }
+        file_max_bytes: { type: integer, description: 'AGENTAR_FILE_MAX_BYTES, default 10 MB' }
+    FileList:
+      type: object
+      required: [items, usage]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AgentarFile' }
+        usage: { $ref: '#/components/schemas/Usage' }
+
+    MeetingStatus:
+      type: string
+      enum: [draft, scheduled, waiting_for_human, joining, live, leaving, ended, missed, failed]
+    MeetingMode:
+      type: string
+      enum: [now, scheduled]
+    Question:
+      type: object
+      required: [id, text]
+      properties:
+        id: { type: string, pattern: '^q[0-9]{1,2}$', readOnly: true, description: Assigned by position on every write }
+        text: { type: string, minLength: 1, maxLength: 300 }
+    MeetingFields:
+      type: object
+      properties:
+        title: { type: [string, 'null'], maxLength: 120 }
+        room:
+          type: string
+          minLength: 1
+          maxLength: 300
+          description: |
+            A room name or a link on `JITSI_MEET_BASE_URL`. The server keeps the last path
+            segment, lowercased, and checks RoomName. Another host answers 422 `room_invalid`.
+        mode: { $ref: '#/components/schemas/MeetingMode' }
+        start_at:
+          type: [string, 'null']
+          format: date-time
+          description: Required for scheduled, at least 1 minute and at most 30 days ahead. Ignored for now.
+        grace_minutes: { type: integer, minimum: 1, maximum: 60, default: 15 }
+        purpose: { type: string, maxLength: 1000, default: '' }
+        questions:
+          type: array
+          maxItems: 10
+          items: { type: string, minLength: 1, maxLength: 300 }
+          description: Script questions, asked in order. Read back as Question objects.
+        relevant_info: { type: string, maxLength: 2000, default: '' }
+        file_ids:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/ObjectId' }
+          description: The caller's general files to use; meeting scoped files are always used. Unknown or foreign ids answer 404.
+        use_general_kb: { type: boolean, default: false, description: true uses every general file instead of file_ids }
+    MeetingCreate:
+      allOf:
+        - $ref: '#/components/schemas/MeetingFields'
+        - type: object
+          required: [room, mode]
+      unevaluatedProperties: false
+    MeetingPatch:
+      allOf:
+        - $ref: '#/components/schemas/MeetingFields'
+      minProperties: 1
+      unevaluatedProperties: false
+    Meeting:
+      type: object
+      required: [id, room_name, mode, start_at, grace_minutes, purpose, questions, relevant_info, file_ids, use_general_kb, has_picture, status, created_at, updated_at, report_status]
+      properties:
+        id: { $ref: '#/components/schemas/ObjectId' }
+        title: { type: [string, 'null'] }
+        room_name: { $ref: '#/components/schemas/RoomName' }
+        join_url: { type: [string, 'null'], description: 'Plain room URL for humans, no token' }
+        mode: { $ref: '#/components/schemas/MeetingMode' }
+        start_at: { type: [string, 'null'], format: date-time }
+        grace_minutes: { type: integer }
+        purpose: { type: string }
+        questions:
+          type: array
+          items: { $ref: '#/components/schemas/Question' }
+        relevant_info: { type: string }
+        file_ids:
+          type: array
+          items: { $ref: '#/components/schemas/ObjectId' }
+        use_general_kb: { type: boolean }
+        has_picture: { type: boolean, description: A meeting picture override is set }
+        status: { $ref: '#/components/schemas/MeetingStatus' }
+        status_reason:
+          type: [string, 'null']
+          description: 'For missed and failed: room_stayed_empty, another_agentar_live, agentar_capacity, room_not_owned, worker_error, join_timeout, bot_lost'
+        display_name: { type: [string, 'null'], description: 'Resolved at dispatch, e.g. "Laura Agentar (AI)"' }
+        voice:
+          oneOf:
+            - $ref: '#/components/schemas/VoiceId'
+            - type: 'null'
+          description: Resolved at dispatch
+        bot_id: { type: [string, 'null'] }
+        jitsi_meeting_id: { type: [string, 'null'], description: 'Jitsi meetingUniqueId, bound once the bot reports it' }
+        dispatched_at: { type: [string, 'null'], format: date-time }
+        joined_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        report_status:
+          type: string
+          enum: [none, pending, ready, failed]
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MeetingList:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Meeting' }
+        next_cursor: { type: [string, 'null'] }
+
+    EventType:
+      type: string
+      enum: [joined, question_asked, answer_given, escalation, left, error]
+    WorkerEvent:
+      type: object
+      additionalProperties: false
+      required: [event_id, agentar_meeting_id, bot_id, type, at, data]
+      properties:
+        event_id: { type: string, format: uuid, description: 'Generated by the worker, idempotency key' }
+        agentar_meeting_id: { $ref: '#/components/schemas/ObjectId' }
+        bot_id: { type: string, pattern: '^[A-Za-z0-9_-]{1,64}$' }
+        type: { $ref: '#/components/schemas/EventType' }
+        at: { type: string, format: date-time, description: Worker clock }
+        jitsi_meeting_id: { type: [string, 'null'], maxLength: 128 }
+        data:
+          description: Shape depends on type
+          oneOf:
+            - $ref: '#/components/schemas/EventJoined'
+            - $ref: '#/components/schemas/EventQuestionAsked'
+            - $ref: '#/components/schemas/EventAnswerGiven'
+            - $ref: '#/components/schemas/EventEscalation'
+            - $ref: '#/components/schemas/EventLeft'
+            - $ref: '#/components/schemas/EventError'
+    EventJoined:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: { const: joined }
+        join_ms: { type: integer, minimum: 0 }
+    EventQuestionAsked:
+      type: object
+      additionalProperties: false
+      required: [kind, question_id, text]
+      properties:
+        kind: { const: question_asked }
+        question_id: { type: string, pattern: '^q[0-9]{1,2}$' }
+        text: { type: string, maxLength: 300 }
+        first_word_ms: { type: integer, minimum: 0 }
+    EventAnswerGiven:
+      type: object
+      additionalProperties: false
+      required: [kind, question, answer, asker]
+      properties:
+        kind: { const: answer_given }
+        question: { type: string, maxLength: 2048 }
+        answer: { type: string, maxLength: 2000 }
+        asker: { type: [string, 'null'], maxLength: 64, description: Display name from the chat or caption }
+        channel: { type: string, enum: [group, private, voice] }
+        first_word_ms: { type: integer, minimum: 0 }
+    EventEscalation:
+      type: object
+      additionalProperties: false
+      required: [kind, question, asker]
+      properties:
+        kind: { const: escalation }
+        question: { type: string, maxLength: 2048 }
+        asker: { type: [string, 'null'], maxLength: 64 }
+        channel: { type: string, enum: [group, private, voice] }
+    EventLeft:
+      type: object
+      additionalProperties: false
+      required: [kind, reason]
+      properties:
+        kind: { const: left }
+        reason: { type: string, enum: [recalled, alone, max_lifetime, conference_ended, error] }
+    EventError:
+      type: object
+      additionalProperties: false
+      required: [kind, message, fatal]
+      properties:
+        kind: { const: error }
+        message: { type: string, maxLength: 500, description: 'No secrets, no tokens' }
+        fatal: { type: boolean }
+    EventAck:
+      type: object
+      required: [accepted, duplicate]
+      properties:
+        accepted: { type: boolean, const: true }
+        duplicate: { type: boolean }
+
+    NotificationType:
+      type: string
+      enum: [joined, question_asked, answer_given, escalation, left, error, missed, failed, report_ready]
+    Notification:
+      type: object
+      required: [id, at, meeting_id, type, severity, data]
+      properties:
+        id: { type: string, description: 'Opaque, ordered' }
+        at: { type: string, format: date-time, description: Server receive time }
+        meeting_id: { $ref: '#/components/schemas/ObjectId' }
+        meeting_title: { type: [string, 'null'] }
+        type: { $ref: '#/components/schemas/NotificationType' }
+        severity:
+          type: string
+          enum: [info, warning, error]
+          description: escalation and missed are warning, error and failed are error
+        data:
+          type: object
+          description: The event data, or for server events `{reason}`
+    NotificationList:
+      type: object
+      required: [items, cursor]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Notification' }
+        cursor: { type: [string, 'null'], description: Pass as `since` on the next poll; unchanged when nothing new }
+
+    TranscriptLine:
+      type: object
+      required: [n, speaker, text, at, source]
+      properties:
+        n: { type: integer, minimum: 1, description: Line number cited by transcript_refs }
+        speaker: { type: string }
+        text: { type: string }
+        at: { type: [string, 'null'], format: date-time }
+        source: { type: string, enum: [speech, chat, agentar] }
+    ActionItem:
+      type: object
+      required: [text, owner, due, transcript_refs]
+      properties:
+        text: { type: string }
+        owner: { type: string, description: Speaker name or "unassigned" }
+        due: { type: [string, 'null'] }
+        transcript_refs:
+          type: array
+          minItems: 1
+          items: { type: integer, minimum: 1 }
+    Answer:
+      type: object
+      required: [question_id, question, status, answer, quote, transcript_refs]
+      properties:
+        question_id: { type: string }
+        question: { type: string }
+        status:
+          type: string
+          enum: [answered, no_answer_captured, not_asked]
+          description: no_answer_captured is shown as "No answer captured", never a guess
+        answer: { type: [string, 'null'] }
+        speaker: { type: [string, 'null'] }
+        quote: { type: [string, 'null'], description: Verbatim substring of the cited lines }
+        transcript_refs:
+          type: array
+          items: { type: integer, minimum: 1 }
+    OpenPoint:
+      type: object
+      required: [kind, text, transcript_refs]
+      properties:
+        kind: { type: string, enum: [escalation, unanswered_question, action_for_owner] }
+        text: { type: string }
+        asker: { type: [string, 'null'] }
+        transcript_refs:
+          type: array
+          items: { type: integer, minimum: 1 }
+    Report:
+      type: object
+      required: [meeting_id, status, generated_at]
+      properties:
+        meeting_id: { $ref: '#/components/schemas/ObjectId' }
+        status: { type: string, enum: [pending, ready, failed] }
+        error: { type: [string, 'null'] }
+        room_name: { $ref: '#/components/schemas/RoomName' }
+        title: { type: [string, 'null'] }
+        started_at: { type: [string, 'null'], format: date-time }
+        ended_at: { type: [string, 'null'], format: date-time }
+        generated_at: { type: [string, 'null'], format: date-time }
+        generation_ms: { type: [integer, 'null'], description: From ended_at to ready; the bar is 60000 }
+        summary: { type: [string, 'null'] }
+        action_items:
+          type: array
+          items: { $ref: '#/components/schemas/ActionItem' }
+        answers:
+          type: array
+          items: { $ref: '#/components/schemas/Answer' }
+        open_points:
+          type: array
+          items: { $ref: '#/components/schemas/OpenPoint' }
+        transcript:
+          type: array
+          description: The stored snapshot, from the automatic transcript, with Agentar's asked questions as source agentar
+          items: { $ref: '#/components/schemas/TranscriptLine' }
+
+    BotView:
+      type: object
+      description: vp-worker bot view, relayed unchanged (extra fields allowed)
+      required: [id, room, display_name, state]
+      properties:
+        id: { type: string }
+        room: { type: string }
+        display_name: { type: string }
+        state: { type: string, enum: [joining, joined, speaking, leaving, left, error, lost] }
+        agentar_meeting_id: { type: [string, 'null'] }
+        meeting_id: { type: [string, 'null'] }
+      additionalProperties: true
